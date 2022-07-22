@@ -1,5 +1,7 @@
 import requests
 import requests.auth
+import os
+import pandas as pd
 
 
 class Marple:
@@ -20,6 +22,9 @@ class Marple:
         bearer_token = f"Bearer {access_token}"
         self.session = requests.Session()
         self.session.headers.update({"Authorization": bearer_token})
+        self.data = {}
+
+    # User functions #
 
     def check_connection(self):
         r = self.session.get('{}/version'.format(self.api_url))
@@ -34,16 +39,34 @@ class Marple:
                               files={'file': file})
         source_id, path = r.json()['message']['source_id'], r.json()['message']['path']
 
-        plugin = self.guess_plugin(file_path)
+        plugin = self._guess_plugin(file_path)
         body = {'path': path, 'plugin': plugin}
         self.session.post('{}/library/file/import'.format(self.api_url), json=body)
         return source_id
 
-    def guess_plugin(self, file_path):
-        extension = file_path.split('.')[0].lower()
-        if extension in self.plugin_map:
-            return self.plugin_map[extension]
-        return 'csv_plugin'
+    def upload_dataframe(self, dataframe, name, marple_folder, metadata={}):
+        file_name = f'{name}.csv'
+        dataframe.to_csv(file_name, sep=',', index=False)
+        source_id = self.upload_data_file(file_name, marple_folder, metadata=metadata)
+        os.remove(file_name)
+        return source_id
+
+    def add_data(self, data_dict):
+        if self.data == {}:
+            self.data = {s: [v] for s, v in data_dict.items()}
+        else:
+            for key in data_dict:
+                if key not in self.data:
+                    raise Exception(f'Key {key} not known in data.')
+                self.data[key].append(data_dict[key])
+
+    def clear_data(self):
+        self.data = {}
+
+    def send_data(self, name, marple_folder, metadata={}):
+        df = pd.DataFrame.from_dict(self.data)
+        self.clear_data()
+        return self.upload_dataframe(df, name, marple_folder, metadata={})
 
     def check_import_status(self, source_id):
         r = self.session.get('{}/sources/status'.format(self.api_url), params={'id': source_id})
@@ -60,3 +83,11 @@ class Marple:
         link = r.json()['message']
         print('View your data: {}'.format(link))
         return link
+
+    # Internal functions #
+
+    def _guess_plugin(self, file_path):
+        extension = file_path.split('.')[0].lower()
+        if extension in self.plugin_map:
+            return self.plugin_map[extension]
+        return 'csv_plugin'
