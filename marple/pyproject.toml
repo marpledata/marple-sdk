@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "marpledata"
-version = "0.0.3"
+version = "0.0.4"
 authors = [
   { name="Matthias Baert", email="support@marpledata.com" },
 ]

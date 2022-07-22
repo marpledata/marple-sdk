@@ -22,7 +22,8 @@ m.check_connection()
 print('Connection OK')
 
 # Upload a file
-source_id = m.upload_data_file(new_file_path, 'API_test')
+metadata = {'Source': 'SDK test', 'Type': 'Data file'}
+source_id = m.upload_data_file(new_file_path, 'API_test', metadata=metadata)
 print(f'Source id: {source_id} uploaded')
 
 # get a link to the data and project

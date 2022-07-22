@@ -39,6 +39,12 @@ class Marple:
                               files={'file': file})
         source_id, path = r.json()['message']['source_id'], r.json()['message']['path']
 
+        # convert to name, value structure
+        if metadata:
+            metadata_marple = [{'name': key, 'value': value} for key, value in metadata.items()]
+            r = self.session.post('{}/library/metadata'.format(self.api_url),
+                                  json={'source_id': source_id, 'metadata': metadata_marple})
+
         plugin = self._guess_plugin(file_path)
         body = {'path': path, 'plugin': plugin}
         self.session.post('{}/library/file/import'.format(self.api_url), json=body)
