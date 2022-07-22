@@ -1,5 +1,5 @@
 [build-system]
-requires = ["setuptools>=61.0", "requests"]
+requires = ["setuptools>=61.0", "requests>=2.28", "pandas>=1.4"]
 build-backend = "setuptools.build_meta"
 
 [project]
