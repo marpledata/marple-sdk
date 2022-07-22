@@ -1,6 +1,6 @@
 # Marple SDK
 
-A simple SDK to upload data to Marple
+A simple SDK to upload data to [Marple](https://www.marpledata.com/)
 
 ## Installation
 Install the Marple SDK using:
