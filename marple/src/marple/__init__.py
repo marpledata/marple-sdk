@@ -1,5 +1,6 @@
 import requests
 import requests.auth
+from requests.exceptions import ConnectionError
 import os
 import pandas as pd
 
@@ -28,9 +29,16 @@ class Marple:
     # User functions #
 
     def check_connection(self):
-        r = self.session.get('{}/version'.format(self.api_url))
-        if r.status_code != 200:
-            raise Exception('Could not connect to server at {}'.format(self.api_url))
+        msg_fail_connect = 'Could not connect to server at {}'.format(self.api_url)
+
+        try:
+            r = self.session.get('{}/version'.format(self.api_url))
+            if r.status_code != 200:
+                raise Exception(msg_fail_connect)
+
+        except ConnectionError:
+            raise Exception(msg_fail_connect)
+
         return True
 
     def upload_data_file(self, file_path, marple_folder, plugin=None, metadata={}):
