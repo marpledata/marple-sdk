@@ -5,6 +5,7 @@ import os
 import pandas as pd
 
 SAAS_URL = 'https://app.marpledata.com/api/v1'
+DEFAULT_IMPORT_CONFIG = {'common':  [], 'signals_groups': []}
 
 
 class Marple:
@@ -48,7 +49,7 @@ class Marple:
 
         return True
 
-    def upload_data_file(self, file_path, marple_folder, plugin=None, metadata={}):
+    def upload_data_file(self, file_path, marple_folder, metadata={}, config=DEFAULT_IMPORT_CONFIG):
         file = open(file_path, 'rb')
         r = self.session.post('{}/library/file/upload'.format(self.api_url),
                               params={'path': marple_folder},
@@ -62,7 +63,7 @@ class Marple:
                                   json={'source_id': source_id, 'metadata': metadata_marple})
 
         plugin = self._guess_plugin(file_path)
-        body = {'path': path, 'plugin': plugin}
+        body = {'path': path, 'plugin': plugin, 'config': config}
         self.session.post('{}/library/file/import'.format(self.api_url), json=body)
         return source_id
 
