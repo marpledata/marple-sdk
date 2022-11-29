@@ -3,10 +3,10 @@ import requests.auth
 import os
 import pandas as pd
 
+SAAS_URL = 'https://app.marpledata.com/api/v1'
+
 
 class Marple:
-
-    api_url = 'https://app.marpledata.com/api/v1'
 
     plugin_map = {
         'csv': 'csv_plugin',
@@ -18,10 +18,11 @@ class Marple:
         'ulg': 'ulog_plugin'
     }
 
-    def __init__(self, access_token):
+    def __init__(self, access_token, api_url=SAAS_URL):
         bearer_token = f"Bearer {access_token}"
         self.session = requests.Session()
         self.session.headers.update({"Authorization": bearer_token})
+        self.api_url = api_url
         self.data = {}
 
     # User functions #
