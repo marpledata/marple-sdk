@@ -30,11 +30,18 @@ class Marple:
 
     def check_connection(self):
         msg_fail_connect = 'Could not connect to server at {}'.format(self.api_url)
+        msg_fail_auth = 'Could not authenticate with token'
 
         try:
+            # unauthenticated endpoints
             r = self.session.get('{}/version'.format(self.api_url))
             if r.status_code != 200:
                 raise Exception(msg_fail_connect)
+
+            # authenticated endpoint
+            r = self.session.get('{}/user/info'.format(self.api_url))
+            if r.status_code != 200:
+                raise Exception(msg_fail_auth)
 
         except ConnectionError:
             raise Exception(msg_fail_connect)
