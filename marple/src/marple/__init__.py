@@ -13,12 +13,14 @@ class Marple:
         'txt': 'csv_plugin',
         'mat': 'mat_plugin',
         'h5': 'hdf5_plugin',
-        'zip': 'hdf5_plugin',
+        'zip': 'csv_zip_plugin',
         'bag': 'rosbag_plugin',
         'ulg': 'ulog_plugin'
     }
 
     def __init__(self, access_token):
+        if access_token == '':
+            raise Exception('Invalid access token')
         bearer_token = f"Bearer {access_token}"
         self.session = requests.Session()
         self.session.headers.update({"Authorization": bearer_token})
@@ -29,7 +31,7 @@ class Marple:
     def check_connection(self):
         r = self.session.get('{}/version'.format(self.api_url))
         if r.status_code != 200:
-            raise Exception('Could not connect to server at {}'.format(self.api_url))
+            raise Exception(r.json()['message'])
         return True
 
     def upload_data_file(self, file_path, marple_folder, plugin=None, metadata={}):
@@ -37,6 +39,8 @@ class Marple:
         r = self.session.post('{}/library/file/upload'.format(self.api_url),
                               params={'path': marple_folder},
                               files={'file': file})
+        if r.status_code != 200:
+            raise Exception(r.json()['message'])
         source_id, path = r.json()['message']['source_id'], r.json()['message']['path']
 
         # convert to name, value structure
@@ -44,10 +48,15 @@ class Marple:
             metadata_marple = [{'name': key, 'value': value} for key, value in metadata.items()]
             r = self.session.post('{}/library/metadata'.format(self.api_url),
                                   json={'source_id': source_id, 'metadata': metadata_marple})
+            if r.status_code != 200:
+                raise Exception(r.json()['message'])
 
-        plugin = self._guess_plugin(file_path)
+        if plugin is None:
+            plugin = self._guess_plugin(file_path)
         body = {'path': path, 'plugin': plugin}
         self.session.post('{}/library/file/import'.format(self.api_url), json=body)
+        if r.status_code != 200:
+            raise Exception(r.json()['message'])
         return source_id
 
     def upload_dataframe(self, dataframe, name, marple_folder, metadata={}):
@@ -76,16 +85,22 @@ class Marple:
 
     def check_import_status(self, source_id):
         r = self.session.get('{}/sources/status'.format(self.api_url), params={'id': source_id})
+        if r.status_code != 200:
+            raise Exception(r.json()['message'])
         return r.json()['message'][0]['status']
 
     def get_link(self, source_id, project_name, open_link=True):
         # make new share link
         body = {'workbook_name': project_name, 'source_ids': [source_id]}
         r = self.session.post('{}/library/share/new'.format(self.api_url), json=body)
+        if r.status_code != 200:
+            raise Exception(r.json()['message'])
         share_id = r.json()['message']
 
         # Generate clickable link in terminal
         r = self.session.get('{}/library/share/{}/link'.format(self.api_url, share_id))
+        if r.status_code != 200:
+            raise Exception(r.json()['message'])
         link = r.json()['message']
         print('View your data: {}'.format(link))
         return link
