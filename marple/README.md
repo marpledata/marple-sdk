@@ -15,11 +15,16 @@ Import the package using:
 ### Setup
 Create a Marple connection using:
 
-`from marple import Marple`
-
-`m = Marple(ACCESS_TOKEN)`
+```python
+from marple import Marple
+m = Marple(ACCESS_TOKEN)
+```
 
 You can find your personal access token in your account settings.
+
+If you are using Marple on-premise, you can add the custom URL:
+
+`m = Marple(ACCESS_TOKEN, api_url='https://marple.company.com/api/v1')`
 
 To check your connection, use:
 
