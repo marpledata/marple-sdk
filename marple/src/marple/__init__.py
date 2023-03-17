@@ -57,7 +57,7 @@ class Marple:
                               params={'path': marple_folder},
                               files={'file': file})
         if r.status_code != 200:
-            raise Exception(r.json())
+            r.raise_for_status()
         source_id, path = r.json()['message']['source_id'], r.json()['message']['path']
 
         # convert to name, value structure
@@ -65,14 +65,14 @@ class Marple:
             r = self.session.post('{}/library/metadata'.format(self.api_url),
                                   json={'source_id': source_id, 'metadata': metadata})
             if r.status_code != 200:
-                raise Exception(r.json())
+                r.raise_for_status()
 
         if plugin is None:
             plugin = self._guess_plugin(file_path)
         body = {'path': path, 'plugin': plugin, 'config': config}
         self.session.post('{}/library/file/import'.format(self.api_url), json=body)
         if r.status_code != 200:
-            raise Exception(r.json())
+            r.raise_for_status()
         return source_id
 
     def upload_dataframe(self, dataframe, name, marple_folder, metadata={}):
@@ -102,7 +102,7 @@ class Marple:
     def check_import_status(self, source_id):
         r = self.session.get('{}/sources/status'.format(self.api_url), params={'id': source_id})
         if r.status_code != 200:
-            raise Exception(r.json())
+            r.raise_for_status()
         return r.json()['message'][0]['status']
 
     def get_link(self, source_id, project_name, open_link=True):
@@ -110,13 +110,13 @@ class Marple:
         body = {'workbook_name': project_name, 'source_ids': [source_id]}
         r = self.session.post('{}/library/share/new'.format(self.api_url), json=body)
         if r.status_code != 200:
-            raise Exception(r.json())
+            r.raise_for_status()
         share_id = r.json()['message']
 
         # Generate clickable link in terminal
         r = self.session.get('{}/library/share/{}/link'.format(self.api_url, share_id))
         if r.status_code != 200:
-            raise Exception(r.json())
+            r.raise_for_status()
         link = r.json()['message']
         print('View your data: {}'.format(link))
         return link
@@ -124,7 +124,7 @@ class Marple:
     # Internal functions #
 
     def _guess_plugin(self, file_path):
-        extension = file_path.split('.')[0].lower()
+        extension = file_path.split('.')[-1].lower()
         if extension in self.plugin_map:
             return self.plugin_map[extension]
         return 'csv_plugin'

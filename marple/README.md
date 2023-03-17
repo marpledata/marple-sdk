@@ -42,7 +42,7 @@ If your data is already in a file format, use this function to upload the data t
 ### Upload a dataframe
 If your data is in a pandas dataframe, use this function to upload the data to Marple.
 
-`source_id = m.upload_data_pandas(dataframe, target_name, marple_folder, metadata={})`
+`source_id = m.upload_dataframe(dataframe, target_name, marple_folder, metadata={})`
 
 - `target_name`: the target name for the dataset, this is how it will appear in Marple.
 
