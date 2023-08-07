@@ -1,4 +1,5 @@
 import os
+import webbrowser
 
 import pandas as pd
 import requests
@@ -115,7 +116,7 @@ class Marple:
             r.raise_for_status()
         return r.json()["message"][0]["status"]
 
-    def get_link(self, source_id, project_name):
+    def get_link(self, source_id, project_name, open_link=True):
         # make new share link
         body = {"workbook_name": project_name, "source_ids": [source_id]}
         r = self.post("/library/share/new", json=body)
@@ -128,7 +129,9 @@ class Marple:
         if r.status_code != 200:
             r.raise_for_status()
         link = r.json()["message"]
-        print("View your data: {}".format(link))
+        if open_link:
+            webbrowser.open(link)
+        print(f"View your data: {link}")
         return link
 
     # Internal functions #
