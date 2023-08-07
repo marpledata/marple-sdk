@@ -55,7 +55,7 @@ class Marple:
                 raise Exception(msg_fail_connect)
 
             # authenticated endpoint
-            r = self.get("/user/info")
+            r = self.get("/")
             if r.status_code != 200:
                 raise Exception(msg_fail_auth)
 
@@ -64,7 +64,7 @@ class Marple:
 
         return True
 
-    def upload_data_file(self, file_path, marple_folder, plugin=None, metadata={}, config=DEFAULT_IMPORT_CONFIG):
+    def upload_data_file(self, file_path, marple_folder='/', plugin=None, metadata={}, config=DEFAULT_IMPORT_CONFIG):
         file = open(file_path, "rb")
         r = self.post("/library/file/upload", params={"path": marple_folder}, files={"file": file})
         if r.status_code != 200:
@@ -85,7 +85,7 @@ class Marple:
             r.raise_for_status()
         return source_id
 
-    def upload_dataframe(self, dataframe, name, marple_folder, metadata={}):
+    def upload_dataframe(self, dataframe, name, marple_folder='/', metadata={}):
         file_name = f"{name}.csv"
         dataframe.to_csv(file_name, sep=",", index=False)
         source_id = self.upload_data_file(file_name, marple_folder, metadata=metadata)
@@ -104,10 +104,10 @@ class Marple:
     def clear_data(self):
         self._data = {}
 
-    def send_data(self, name, marple_folder, metadata={}):
+    def send_data(self, name, marple_folder='/', metadata={}):
         df = pd.DataFrame.from_dict(self._data)
         self.clear_data()
-        return self.upload_dataframe(df, name, marple_folder, metadata={})
+        return self.upload_dataframe(df, name, marple_folder, metadata)
 
     def check_import_status(self, source_id):
         r = self.get("/sources/status", params={"id": source_id})
