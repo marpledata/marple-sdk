@@ -12,6 +12,7 @@ DEFAULT_IMPORT_CONFIG = {"common": [], "signals_groups": []}
 
 
 class Marple:
+
     plugin_map = {
         "csv": "csv_plugin",
         "txt": "csv_plugin",
@@ -23,6 +24,8 @@ class Marple:
     }
 
     def __init__(self, access_token, api_url=SAAS_URL):
+        self._deprecation_warning()
+
         if access_token == "":
             raise Exception("Invalid access token")
         bearer_token = f"Bearer {access_token}"
@@ -152,3 +155,10 @@ class Marple:
         if extension in self.plugin_map:
             return self.plugin_map[extension]
         return "csv_plugin"
+
+    def _deprecation_warning(self):
+        print(
+            "Marple is launching their next generation of products: Marple Insight and Marple DB!"
+        )
+        print("This part of the SDK will be deprecated in the future.")
+        print("Find out more at https://www.marpledata.com")
