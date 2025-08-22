@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "marpledata"
-version = "0.1.3"
+version = "2.0.0"
 authors = [{ name = "Matthias Baert", email = "support@marpledata.com" }]
 description = "Marple SDK"
 readme = "README.md"
