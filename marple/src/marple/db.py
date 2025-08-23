@@ -53,12 +53,19 @@ class DB:
         return r.json()
 
     def get_datasets(self, stream_name):
-        stream_id = None
+        stream_id = self._stream_name_to_id(stream_name)
+        r = self.get(f"/stream/{stream_id}/datasets")
+        return r.json()
+
+    # Internal functions #
+
+    def _stream_name_to_id(self, stream_name):
         streams = self.get_streams()["streams"]
         for stream in streams:
             if stream["name"].lower() == stream_name.lower():
-                stream_id = stream["id"]
-                break
+                return stream["id"]
 
-        r = self.get(f"/stream/{stream_id}/datasets")
-        return r.json()
+        available_streams = ", ".join([s["name"] for s in streams])
+        raise Exception(
+            f'Stream "{stream_name}" not found \nAvailable streams: {available_streams}'
+        )

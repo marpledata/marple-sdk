@@ -7,3 +7,4 @@ ACCESS_TOKEN = "TODO"
 db = DB(ACCESS_TOKEN)
 db.check_connection()
 pprint.pprint(db.get_streams())
+pprint.pprint(db.get_datasets("charles river"))
