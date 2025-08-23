@@ -51,3 +51,14 @@ class DB:
     def get_streams(self):
         r = self.get("/streams")
         return r.json()
+
+    def get_datasets(self, stream_name):
+        stream_id = None
+        streams = self.get_streams()["streams"]
+        for stream in streams:
+            if stream["name"].lower() == stream_name.lower():
+                stream_id = stream["id"]
+                break
+
+        r = self.get(f"/stream/{stream_id}/datasets")
+        return r.json()
