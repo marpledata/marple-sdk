@@ -13,7 +13,7 @@ It has a free tier for 20h of MATLAB / month.
 
 **Local testing**
 
-- To do instructions without build
+- `PYTHONPATH=src poetry run python tests/test_db.py`
 
 **Local build**
 
