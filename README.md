@@ -4,7 +4,12 @@ A simple SDK to upload data to [Marple](https://www.marpledata.com/)
 
 Open [README in subfolder](marple/README.md) for docs
 
-## Development
+## Development (MATLAB)
+
+You can use [MATLAB online](https://matlab.mathworks.com/) for testing.
+It has a free tier for 20h of MATLAB / month.
+
+## Development (Python)
 
 **Local testing**
 
