@@ -47,3 +47,7 @@ class DB:
             raise Exception(msg_fail_connect)
 
         return True
+
+    def get_streams(self):
+        r = self.get("/streams")
+        return r.json()
