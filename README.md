@@ -37,9 +37,11 @@ For every build
 
 To install the test pypi package
 
-`py -m pip install --index-url https://test.pypi.org/simple/ --no-deps marpledata`
+`pip install --upgrade -i https://test.pypi.org/simple/ --extra-index-url https://pypi.org/simple marpledata` (e.g. inside `python:latest` docker container)
 
 **Publishing (real Pypi)**
-To deploy on actual pypi, but be careful!
 
-`py -m twine upload dist/*`
+⚠ **Impacts users, be careful**
+
+- `poetry config pypi-token.pypi pypi-XXXXXXXXXXXXXXXXXXXXXXXXXXXX`
+- `poetry publish --build`
