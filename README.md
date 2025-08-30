@@ -23,14 +23,23 @@ It has a free tier for 20h of MATLAB / month.
 - (inside shell) `python`
 - (inside repl) `from marple import Marple, Insight, DB`
 
-**Publishing**
+**Publishing (Test Pypi)**
 
-`py -m twine upload --repository testpypi dist/*`
+Only once on your laptop
+
+- `poetry config repositories.testpypi https://test.pypi.org/legacy/`
+- `poetry config http-basic.testpypi __token__ pypi-XXXXXXXXXXXXXXXXXXXXXXXXXXXX` (see 1Password)
+
+For every build
+
+- Bump the version number in `pyproject.toml`
+- `poetry publish -r testpypi --build`
 
 To install the test pypi package
 
 `py -m pip install --index-url https://test.pypi.org/simple/ --no-deps marpledata`
 
+**Publishing (real Pypi)**
 To deploy on actual pypi, but be careful!
 
 `py -m twine upload dist/*`
