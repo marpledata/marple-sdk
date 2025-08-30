@@ -73,7 +73,12 @@ class DB:
             r = self.post(f"/stream/{stream_id}/ingest", files=files, data=data)
             if r.status_code != 200:
                 r.raise_for_status()
-            return r.json()
+
+            r_json = r.json()
+            if r_json["status"] != "success":
+                raise Exception("Upload failed")
+
+            return r_json["dataset_id"]
 
     # Internal functions #
 
