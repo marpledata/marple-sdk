@@ -1,8 +1,8 @@
 # Marple SDK
 
-A simple SDK to upload data to [Marple](https://www.marpledata.com/)
+Powerful SDKs for [Marple](https://www.marpledata.com) products.
 
-Open [README in subfolder](marple/README.md) for docs
+All documentation is available on [docs.marpledata.com/sdk](https://docs.marpledata.com/docs/marple-db/api-and-sdk).
 
 ## Development (MATLAB)
 
