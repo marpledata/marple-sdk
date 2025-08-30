@@ -3,6 +3,7 @@ import pprint
 from marple import DB
 
 ACCESS_TOKEN = "TODO"
+STREAM_CSV = "Compulsory Salty Vaccine"
 
 db = DB(ACCESS_TOKEN)
 
@@ -17,9 +18,13 @@ response = db.post("/query", json={"query": query})
 print(response.json())
 
 # Test uploading a file
-response = db.push_file(
-    "Compulsory Salty Vaccine",
+dataset_id = db.push_file(
+    STREAM_CSV,
     "tests/examples_race.csv",
     metadata={"source": "test_db.py"},
 )
-print(response)
+while True:
+    status = db.get_status(STREAM_CSV, dataset_id)
+    print(status)
+    if status["import_status"] in ["FINISHED", "FAILED"]:
+        break

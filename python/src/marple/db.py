@@ -80,6 +80,21 @@ class DB:
 
             return r_json["dataset_id"]
 
+    def get_status(self, stream_name, dataset_id):
+        stream_id = self._stream_name_to_id(stream_name)
+        r = self.post(f"/stream/{stream_id}/datasets/status", json=[dataset_id])
+        if r.status_code != 200:
+            r.raise_for_status()
+
+        datasets = r.json()
+        for dataset in datasets:
+            if dataset["dataset_id"] == dataset_id:
+                return dataset
+
+        raise Exception(
+            f"No status found for dataset {dataset_id} in stream {stream_name}"
+        )
+
     # Internal functions #
 
     def _stream_name_to_id(self, stream_name):
