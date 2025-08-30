@@ -1,3 +1,6 @@
+import json
+from pathlib import Path
+
 import requests
 from requests import Response
 
@@ -56,6 +59,21 @@ class DB:
         stream_id = self._stream_name_to_id(stream_name)
         r = self.get(f"/stream/{stream_id}/datasets")
         return r.json()
+
+    def push_file(self, stream_name, file_path, metadata={}):
+        stream_id = self._stream_name_to_id(stream_name)
+
+        with open(file_path, "rb") as file:
+            files = {"file": file}
+            data = {
+                "dataset_name": Path(file_path).name,
+                "metadata": json.dumps(metadata),
+            }
+
+            r = self.post(f"/stream/{stream_id}/ingest", files=files, data=data)
+            if r.status_code != 200:
+                r.raise_for_status()
+            return r.json()
 
     # Internal functions #
 
