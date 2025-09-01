@@ -95,6 +95,21 @@ class DB:
             f"No status found for dataset {dataset_id} in stream {stream_name}"
         )
 
+    def download_original(self, stream_name, dataset_id, destination="."):
+        stream_id = self._stream_name_to_id(stream_name)
+        response = self.get(f"/stream/{stream_id}/dataset/{dataset_id}/backup")
+        temporary_link = Path(response.json()["path"])
+
+        download_url = f"{self.api_url}/download/{temporary_link}"
+        target_path = Path(destination) / temporary_link.name
+
+        with requests.get(download_url, stream=True) as r:
+            r.raise_for_status()
+            with open(target_path, "wb") as f:
+                for chunk in r.iter_content(chunk_size=65536):  # 64kB
+                    if chunk:  # filter out keep-alive chunks
+                        f.write(chunk)
+
     # Internal functions #
 
     def _stream_name_to_id(self, stream_name):

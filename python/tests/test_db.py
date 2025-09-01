@@ -1,9 +1,10 @@
 import pprint
+import random
 
 from marple import DB
 
 ACCESS_TOKEN = "TODO"
-STREAM_CSV = "Compulsory Salty Vaccine"
+STREAM_CSV = "Compulsory Salty Vaccine"  # Data x Island
 
 db = DB(ACCESS_TOKEN)
 
@@ -28,3 +29,8 @@ while True:
     print(status)
     if status["import_status"] in ["FINISHED", "FAILED"]:
         break
+
+# Test downloading a file
+datasets = db.get_datasets(STREAM_CSV)
+dataset = random.choice(datasets)
+db.download_original(STREAM_CSV, dataset["id"], destination="/home/nero/Downloads")
