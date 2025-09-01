@@ -92,13 +92,13 @@ Returns
 - `stream_name`: Name of an existing datastream
 - `dataset_id`: Id of a dataset, obtained using e.g. `db.push_file(...)`
 
-**db.download_original**
+**`db.download_original(stream_name, dataset_id, destination)`**
 
 Requires
 
 - `stream_name`
 - `dataset_id`
-- `destination` (_optional_): the target directory on your local machine
+- `destination` (_optional_): the target directory on your local machine (default '.')
 
 Returns
 
@@ -114,3 +114,40 @@ db.post('/stream/4/dataset/67/metadata', json={'Driver': 'Don Luigi'})
 ```
 
 The full list of endpoints can be found in the Swagger Documentation: [https://db.marpledata.com/api/docs](https://db.marpledata.com/api/docs).
+
+## Marple Insight
+
+### Example: generating a MAT file export from a Marple DB file
+
+```python
+from marple import DB, Insight
+
+INSIGHT_TOKEN = "<your api token>"
+DB_TOKEN = "<your api token>"
+DATASTREAM = "Car data"
+
+insight = Insight(INSIGHT_TOKEN)
+db = DB(DB_TOKEN)
+
+stream_id = db._stream_name_to_id(DATASTREAM)
+dataset = db.get_datasets(DATASTREAM)[0]
+
+insight.export_mdb(stream_id, dataset["id"], format="h5", destination="/home/nero/Downloads")
+```
+
+### Available functions
+
+**`db.export_db(stream_name, file_path, metadata)`**
+
+Requires
+
+- `stream_id`
+- `dataset_id`
+- `format`: File format, one of [mat, h5]
+- `timestamp_start` (_optional_): Left time cutoff for export
+- `timestamp_stop` (_optional_): Right time cutoff for export
+- `destination` (_optional_): the target directory on your local machine (default '.')
+
+Returns
+
+- Nothing, but downloads a file "export.ext" to destination folder, with ".ext" depending on your export format (e.g. export.mat, export.h5, export.csv)

@@ -3,10 +3,10 @@ import random
 
 from marple import DB
 
-ACCESS_TOKEN = "TODO"
+DB_TOKEN = "TODO"
 STREAM_CSV = "Compulsory Salty Vaccine"  # Data x Island
 
-db = DB(ACCESS_TOKEN)
+db = DB(DB_TOKEN)
 
 # Test basic built-in functions
 db.check_connection()
