@@ -1,3 +1,49 @@
+import requests
+from requests import Response
+
+SAAS_URL = "https://insight.marpledata.com/api/v1"
+
+
 class Insight:
-    def __init__(self):
-        raise NotImplementedError
+    def __init__(self, api_token, api_url=SAAS_URL):
+        self.api_url = api_url
+        self.api_token = api_token
+
+        bearer_token = f"Bearer {api_token}"
+        self.session = requests.Session()
+        self.session.headers.update({"Authorization": bearer_token})
+        self.session.headers.update({"X-Request-Source": "sdk/python"})
+
+    # User functions #
+
+    def get(self, url: str, *args, **kwargs) -> Response:
+        return self.session.get(f"{self.api_url}{url}", *args, **kwargs)
+
+    def post(self, url: str, *args, **kwargs) -> Response:
+        return self.session.post(f"{self.api_url}{url}", *args, **kwargs)
+
+    def patch(self, url: str, *args, **kwargs) -> Response:
+        return self.session.patch(f"{self.api_url}{url}", *args, **kwargs)
+
+    def delete(self, url: str, *args, **kwargs) -> Response:
+        return self.session.delete(f"{self.api_url}{url}", *args, **kwargs)
+
+    def check_connection(self):
+        msg_fail_connect = "Could not connect to server at {}".format(self._api_url)
+        msg_fail_auth = "Could not authenticate with token"
+
+        try:
+            # unauthenticated endpoints
+            r = self.get("/version")
+            if r.status_code != 200:
+                raise Exception(msg_fail_connect)
+
+            # authenticated endpoint
+            r = self.get("/")
+            if r.status_code != 200:
+                raise Exception(msg_fail_auth)
+
+        except ConnectionError:
+            raise Exception(msg_fail_connect)
+
+        return True
