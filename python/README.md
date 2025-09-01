@@ -1,84 +1,104 @@
 # Marple SDK
 
-A simple SDK to upload data to Marple
+An SDK to interact with [Marple](https://www.marpledata.com) products.
 
-## Installation
+## Installation and importing
 
-Install the Marple SDK using:
+Install the Marple SDK using your package manager:
 
-`pip install marpledata`
+- `poetry add marpledata`
+- `uv add marpledata`
+- `pip install marpledata`
 
-Import the package using:
-
-`import marple`
-
-## Usage
-
-### Setup
-
-Create a Marple connection using:
+The SDK can interact with three Marple products:
 
 ```python
-from marple import Marple
-m = Marple(ACCESS_TOKEN)
+from marple import Marple  # deprecated old SDK
+from marple import DB  # Marple DB
+from marple import Insight  # Marple Insight
 ```
 
-You can generate access tokens in the app, under _Settings->Tokens_.
+## Marple DB
 
-If you are using Marple on-premise, you can add the custom URL:
+To get started, make sure you set up Marple DB in the user interface. Create
 
-`m = Marple(ACCESS_TOKEN, api_url='https://marple.company.com/api/v1')`
+1. A **datastream**, to configure what kind of files you want to import
+2. An **API token** (in user settings)
 
-To check your connection, use:
+⚠ If you are using a VPC or self-hosted version, you should also submit a custom `api_url` to the `DB` object.
 
-`m.check_connection()`
+### Example: importing a file
+
+This example shows the primary flow of importing a new file into Marple DB:
+
+```python
+import time
+from marple import DB
+
+# create a datastream and API token in the Marple DB web application
+DATASTREAM = 'Car data'
+API_TOKEN = '<your api token>'
+
+db = DB(API_TOKEN)
+
+if not db.check_connection()
+  raise Exception("Could not connect")
+
+id = db.push_file(DATASTREAM, "tests/example_race.csv", metadata={"driver": "Mbaerto"})
+
+is_importing = True
+while is_importing:
+    status = db.get_status(STREAM_CSV, dataset_id)
+    if status["import_status"] in ["FINISHED", "FAILED"]:
+        is_importing = False
+    time.sleep(1)
+
+```
+
+### Available functions
+
+Functions are available for common actions.
+
+**`db.get_streams()`**
+
+Returns
+
+- List of all datastreams, their configuration, and statistics about their data sizes.
+
+**`db.get_datasets(stream_name)`**
+
+Requires
+
+- `stream_name`: Name of an existing datastream
+
+Returns
+
+- List of all datasets, their import status, and detailed statistics.
+
+**`db.push_file(stream_name, file_path, metadata)`**
+
+Requires
+
+- `stream_name`: Name of an existing datastream
+- `file_path`: Path to a local file on disk, e.g. `~/Downloads/test_data.mat`
+- `metadata`: Dictionary with key-value pairs, e.g. `{'location': 'Munich', 'machine': 'C-3PO'}`
+
+Returns
+
+- Id of the new dataset
+
+**`db.get_status(stream_name, dataset_id)`**
+
+- `stream_name`: Name of an existing datastream
+- `dataset_id`: Id of a dataset, obtained using e.g. `db.push_file(...)`
 
 ### Calling endpoints
 
-Call endpoints by their METHOD:
+For more advanced use cases, you can directly call endpoints by their METHOD:
 
 ```python
-m.get('/version')
-m.post('/sources/info', json={'id': 98})
+db.get('/health')
+db.post('/stream/4/dataset/67/metadata', json={'Driver': 'Don Luigi'})
 ```
 
-### Upload data files
-
-If your data is already in a file format, use this function to upload the data to Marple.
-
-`source_id = m.upload_data_file(file_path, marple_folder='/', metadata={})`
-
-- `file_path`: the file_path of your data set
-- `marple_folder`: in what folder you would like to upload the data
-- `metadata`: dictionary with metadata. Example: `{'Pilot': 'John Doe'}'` Note that the metadata fields need to be added to your workspace before you will see them.
-
-### Upload a dataframe
-
-If your data is in a pandas dataframe, use this function to upload the data to Marple.
-
-`source_id = m.upload_dataframe(dataframe, target_name, marple_folder='/', metadata={})`
-
-- `target_name`: the target name for the dataset, this is how it will appear in Marple.
-
-### Add and send data
-
-You can also use the Marple SDK to add data piece by piece and send it to Marple.
-First use:
-
-`m.add_data(data_dict)`
-
-- `data_dict` = dictionary with signal, value pairs in it.
-  Example: `{'time': 2, 'signal 1': 0, 'signal 2': 5}`
-
-Once all the data has been added, use:
-
-`source_id = m.send_data(target_name, marple_folder, metadata={})`
-
-### Get a link to the data
-
-You can generate a link to Marple that opens the data and a project immediately. This can be very useful to see the results of a simulation directly.
-
-`link = m.get_link(source_id, project_name)`
-
-- `source_id`: identifier for the data set, is returned by all above functions.
-- `project_name`: name of the project that you want to open the data in.
+The full list of endpoints can be found in the Swagger Documentation: [https://db.marpledata.com/api/docs](https://db.marpledata.com/api/docs).
