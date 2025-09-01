@@ -92,6 +92,18 @@ Returns
 - `stream_name`: Name of an existing datastream
 - `dataset_id`: Id of a dataset, obtained using e.g. `db.push_file(...)`
 
+**db.download_original**
+
+Requires
+
+- `stream_name`
+- `dataset_id`
+- `destination` (_optional_): the target directory on your local machine
+
+Returns
+
+- Nothing, but downloads the file to destination folder
+
 ### Calling endpoints
 
 For more advanced use cases, you can directly call endpoints by their METHOD:
