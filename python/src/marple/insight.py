@@ -1,3 +1,5 @@
+from pathlib import Path
+
 import requests
 from requests import Response
 
@@ -20,6 +22,7 @@ class Insight:
         return self.session.get(f"{self.api_url}{url}", *args, **kwargs)
 
     def post(self, url: str, *args, **kwargs) -> Response:
+        print(f"{self.api_url}{url}")
         return self.session.post(f"{self.api_url}{url}", *args, **kwargs)
 
     def patch(self, url: str, *args, **kwargs) -> Response:
@@ -47,3 +50,61 @@ class Insight:
             raise Exception(msg_fail_connect)
 
         return True
+
+    def export_mdb(
+        self,
+        stream_id,
+        dataset_id,
+        format="mat",
+        timestamp_start=None,
+        timestamp_stop=None,
+        destination=".",
+    ):
+        t_range = self._get_time_range(stream_id, dataset_id)
+        print(t_range)
+        file_name = f"export.{format}"
+
+        response = self.post(
+            "/export",
+            json={
+                "dataset_filter": {"dataset": dataset_id, "stream": stream_id},
+                "export_format": format,
+                "file_name": file_name,
+                "signals": self._get_signals(stream_id, dataset_id),
+                "timestamp_start": (
+                    timestamp_start if timestamp_start is not None else t_range[0]
+                ),
+                "timestamp_stop": (
+                    timestamp_stop if timestamp_stop is not None else t_range[1]
+                ),
+            },
+        )
+        temporary_link = response.json()["message"]["download_path"]
+
+        download_url = f"{self.api_url}/download/{temporary_link}"
+        target_path = Path(destination) / file_name
+
+        with requests.get(download_url, stream=True) as r:
+            r.raise_for_status()
+            with open(target_path, "wb") as f:
+                for chunk in r.iter_content(chunk_size=65536):  # 64kB
+                    if chunk:  # filter out keep-alive chunks
+                        f.write(chunk)
+
+    # Internal functions #
+
+    def _get_signals(self, stream_id, dataset_id):
+        dataset_filter = {"dataset": dataset_id, "stream": stream_id}
+        response = self.post(
+            f"/sources/signals", json={"dataset_filter": dataset_filter}
+        )
+        return response.json()["message"]["signal_list"]
+
+    def _get_time_range(self, stream_id, dataset_id):
+        response = self.post(
+            "/sources/search", json={"library_filter": {"stream": stream_id}}
+        )
+        datasets = response.json()["message"]
+        for dataset in datasets:
+            if dataset["dataset_filter"]["dataset"] == dataset_id:
+                return (dataset["timestamp_start"], dataset["timestamp_stop"])
