@@ -13,7 +13,10 @@ It has a free tier for 20h of MATLAB / month.
 
 **Local testing**
 
+There are two small tests scripts, you do need to add your own API token in the scripts:
+
 - `PYTHONPATH=src poetry run python tests/test_db.py`
+- `PYTHONPATH=src poetry run python tests/test_insight.py`
 
 **Local build**
 
@@ -33,6 +36,7 @@ Only once on your laptop
 For every build
 
 - Bump the version number in `pyproject.toml`
+- `poetry build`
 - `poetry publish -r testpypi --build`
 
 To install the test pypi package
@@ -44,4 +48,5 @@ To install the test pypi package
 ⚠ **Impacts users, be careful**
 
 - `poetry config pypi-token.pypi pypi-XXXXXXXXXXXXXXXXXXXXXXXXXXXX`
+- `poetry build`
 - `poetry publish --build`
