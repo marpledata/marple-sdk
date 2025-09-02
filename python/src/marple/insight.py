@@ -1,5 +1,5 @@
 from pathlib import Path
-from typing import Tuple
+from typing import Optional, Tuple
 
 import requests
 from requests import Response
@@ -56,8 +56,8 @@ class Insight:
         stream_id: int,
         dataset_id: int,
         format: str = "mat",
-        timestamp_start: int | None = None,
-        timestamp_stop: int | None = None,
+        timestamp_start: Optional[int] = None,
+        timestamp_stop: Optional[int] = None,
         destination: str = ".",
     ):
         t_range = self._get_time_range(stream_id, dataset_id)
