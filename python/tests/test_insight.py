@@ -1,3 +1,4 @@
+import os
 import random
 
 from marple import DB, Insight
