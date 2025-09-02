@@ -1,4 +1,5 @@
 from pathlib import Path
+from typing import Tuple
 
 import requests
 from requests import Response
@@ -92,7 +93,7 @@ class Insight:
         response = self.post(f"/sources/signals", json={"dataset_filter": dataset_filter})
         return response.json()["message"]["signal_list"]
 
-    def _get_time_range(self, stream_id: int, dataset_id: int) -> tuple[int, int]:
+    def _get_time_range(self, stream_id: int, dataset_id: int) -> Tuple[int, int]:
         response = self.post("/sources/search", json={"library_filter": {"stream": stream_id}})
         datasets = response.json()["message"]
         for dataset in datasets:
