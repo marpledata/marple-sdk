@@ -1,32 +1,52 @@
 # Marple SDK
 
-A simple SDK to upload data to [Marple](https://www.marpledata.com/)
+Powerful SDKs for [Marple](https://www.marpledata.com) products.
 
-Open [README in subfolder](marple/README.md) for docs
+All documentation is available on [docs.marpledata.com/sdk](https://docs.marpledata.com/docs/marple-db/api-and-sdk).
 
+## Development (MATLAB)
 
+You can use [MATLAB online](https://matlab.mathworks.com/) for testing.
+It has a free tier for 20h of MATLAB / month.
 
-**Development**
+## Development (Python)
 
-To install from this git repo to your local python,
-```bash
-cd <where pyproject.toml is>
-pip install .
-```
+**Local testing**
 
-To build the package
+There are two small tests scripts, you do need to add your own API token in the scripts:
 
-`py -m build`
+- `PYTHONPATH=src poetry run python tests/test_db.py`
+- `PYTHONPATH=src poetry run python tests/test_insight.py`
 
-To upload the package to test pypi
+**Local build**
 
-`py -m twine upload --repository testpypi dist/*`
+- `poetry build`
+- `poetry shell `
+- (inside shell) `pip install dist/*.whl`
+- (inside shell) `python`
+- (inside repl) `from marple import Marple, Insight, DB`
+
+**Publishing (Test Pypi)**
+
+Only once on your laptop
+
+- `poetry config repositories.testpypi https://test.pypi.org/legacy/`
+- `poetry config http-basic.testpypi __token__ pypi-XXXXXXXXXXXXXXXXXXXXXXXXXXXX` (see 1Password)
+
+For every build
+
+- Bump the version number in `pyproject.toml`
+- `poetry build`
+- `poetry publish -r testpypi --build`
 
 To install the test pypi package
 
-`py -m pip install --index-url https://test.pypi.org/simple/ --no-deps marpledata`
+`pip install --upgrade -i https://test.pypi.org/simple/ --extra-index-url https://pypi.org/simple marpledata` (e.g. inside `python:latest` docker container)
 
-To deploy on actual pypi, but be careful!
+**Publishing (real Pypi)**
 
-`py -m twine upload dist/*`
+⚠ **Impacts users, be careful**
 
+- `poetry config pypi-token.pypi pypi-XXXXXXXXXXXXXXXXXXXXXXXXXXXX`
+- `poetry build`
+- `poetry publish --build`

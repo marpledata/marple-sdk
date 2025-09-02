@@ -1,0 +1,10 @@
+{
+    "s3_access_key": "ADD_HERE",
+    "s3_secret_key": "ADD_HERE",
+    "s3_region": "eu-central-1",
+    "s3_bucket": "mdb-saas-2025",
+    "api_key": "ADD_HERE",
+    "api_url": "https://db.marpledata.com/api/v1",
+    "workspace": "data_island",
+    "datapool": "default"
+}

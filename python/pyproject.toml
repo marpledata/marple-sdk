@@ -1,0 +1,27 @@
+[tool.poetry]
+name = "marpledata"
+version = "2.0.1"
+description = "Marple SDK"
+authors = ["Matthias Baert <support@marpledata.com>"]
+readme = "README.md"
+license = "Apache-2.0"
+homepage = "https://www.marpledata.com/"
+documentation = "https://docs.marpledata.com/docs"
+packages = [
+  { include = "marple", from = "src" }
+]
+include = [
+  { path = "src/marple/py.typed" }
+]
+
+[tool.poetry.dependencies]
+python = ">=3.8,<4.0"
+requests = ">=2.28"
+pandas = ">=2.0"
+
+[tool.poetry.group.dev.dependencies]
+numpy = ">=2.3"
+
+[build-system]
+requires = ["poetry-core>=1.0.0"]
+build-backend = "poetry.core.masonry.api"

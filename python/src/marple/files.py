@@ -12,6 +12,7 @@ DEFAULT_IMPORT_CONFIG = {"common": [], "signals_groups": []}
 
 
 class Marple:
+
     plugin_map = {
         "csv": "csv_plugin",
         "txt": "csv_plugin",
@@ -23,6 +24,8 @@ class Marple:
     }
 
     def __init__(self, access_token, api_url=SAAS_URL):
+        self._deprecation_warning()
+
         if access_token == "":
             raise Exception("Invalid access token")
         bearer_token = f"Bearer {access_token}"
@@ -65,16 +68,27 @@ class Marple:
 
         return True
 
-    def upload_data_file(self, file_path, marple_folder='/', plugin=None, metadata={}, config=DEFAULT_IMPORT_CONFIG):
+    def upload_data_file(
+        self,
+        file_path,
+        marple_folder="/",
+        plugin=None,
+        metadata={},
+        config=DEFAULT_IMPORT_CONFIG,
+    ):
         file = open(file_path, "rb")
-        r = self.post("/library/file/upload", params={"path": marple_folder}, files={"file": file})
+        r = self.post(
+            "/library/file/upload", params={"path": marple_folder}, files={"file": file}
+        )
         if r.status_code != 200:
             r.raise_for_status()
         source_id, path = r.json()["message"]["source_id"], r.json()["message"]["path"]
 
         # convert to name, value structure
         if metadata:
-            r = self.post("/library/metadata", json={"source_id": source_id, "metadata": metadata})
+            r = self.post(
+                "/library/metadata", json={"source_id": source_id, "metadata": metadata}
+            )
             if r.status_code != 200:
                 r.raise_for_status()
 
@@ -86,7 +100,7 @@ class Marple:
             r.raise_for_status()
         return source_id
 
-    def upload_dataframe(self, dataframe, name, marple_folder='/', metadata={}):
+    def upload_dataframe(self, dataframe, name, marple_folder="/", metadata={}):
         file_name = f"{name}.csv"
         dataframe.to_csv(file_name, sep=",", index=False)
         source_id = self.upload_data_file(file_name, marple_folder, metadata=metadata)
@@ -105,7 +119,7 @@ class Marple:
     def clear_data(self):
         self._data = {}
 
-    def send_data(self, name, marple_folder='/', metadata={}):
+    def send_data(self, name, marple_folder="/", metadata={}):
         df = pd.DataFrame.from_dict(self._data)
         self.clear_data()
         return self.upload_dataframe(df, name, marple_folder, metadata)
@@ -141,3 +155,10 @@ class Marple:
         if extension in self.plugin_map:
             return self.plugin_map[extension]
         return "csv_plugin"
+
+    def _deprecation_warning(self):
+        print(
+            "Marple is launching their next generation of products: Marple Insight and Marple DB!"
+        )
+        print("This part of the SDK will be deprecated in the future.")
+        print("Find out more at https://www.marpledata.com")
