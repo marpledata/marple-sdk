@@ -31,7 +31,7 @@ class Insight:
         return self.session.delete(f"{self.api_url}{url}", *args, **kwargs)
 
     def check_connection(self):
-        msg_fail_connect = "Could not connect to server at {}".format(self._api_url)
+        msg_fail_connect = "Could not connect to server at {}".format(self.api_url)
         msg_fail_auth = "Could not authenticate with token"
 
         try:

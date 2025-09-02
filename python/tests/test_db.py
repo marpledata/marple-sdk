@@ -29,8 +29,10 @@ while True:
     print(status)
     if status["import_status"] in ["FINISHED", "FAILED"]:
         break
+    time.sleep(0.5)
 
 # Test downloading a file
 datasets = db.get_datasets(STREAM_CSV)
 dataset = random.choice(datasets)
-db.download_original(STREAM_CSV, dataset["id"], destination="/home/nero/Downloads")
+os.mkdir("tests/downloads")
+db.download_original(STREAM_CSV, dataset["id"], destination="tests/downloads")

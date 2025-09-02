@@ -60,13 +60,13 @@ class DB:
         r = self.get(f"/stream/{stream_id}/datasets")
         return r.json()
 
-    def push_file(self, stream_name, file_path, metadata={}):
+    def push_file(self, stream_name, file_path, metadata={}, file_name=None):
         stream_id = self._stream_name_to_id(stream_name)
 
         with open(file_path, "rb") as file:
             files = {"file": file}
             data = {
-                "dataset_name": Path(file_path).name,
+                "dataset_name": file_name or Path(file_path).name,
                 "metadata": json.dumps(metadata),
             }
 
@@ -119,6 +119,4 @@ class DB:
                 return stream["id"]
 
         available_streams = ", ".join([s["name"] for s in streams])
-        raise Exception(
-            f'Stream "{stream_name}" not found \nAvailable streams: {available_streams}'
-        )
+        raise Exception(f'Stream "{stream_name}" not found \nAvailable streams: {available_streams}')

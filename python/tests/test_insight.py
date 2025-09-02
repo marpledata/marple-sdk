@@ -14,6 +14,5 @@ stream_id = db._stream_name_to_id(STREAM_CSV)
 datasets = db.get_datasets(STREAM_CSV)
 dataset = random.choice(datasets)
 
-insight.export_mdb(
-    stream_id, dataset["id"], format="h5", destination="/home/nero/Downloads"
-)
+os.mkdir("tests/downloads")
+insight.export_mdb(stream_id, dataset["id"], format="h5", destination="tests/downloads")
