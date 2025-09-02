@@ -1,6 +1,6 @@
 [tool.poetry]
 name = "marpledata"
-version = "2.0.0"
+version = "2.0.1"
 description = "Marple SDK"
 authors = ["Matthias Baert <support@marpledata.com>"]
 readme = "README.md"
@@ -9,6 +9,9 @@ homepage = "https://www.marpledata.com/"
 documentation = "https://docs.marpledata.com/docs"
 packages = [
   { include = "marple", from = "src" }
+]
+include = [
+  { path = "src/marple/py.typed" }
 ]
 
 [tool.poetry.dependencies]

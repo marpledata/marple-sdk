@@ -1,5 +1,6 @@
 import json
 from pathlib import Path
+from typing import Optional
 
 import requests
 from requests import Response
@@ -8,7 +9,7 @@ SAAS_URL = "https://db.marpledata.com/api/v1"
 
 
 class DB:
-    def __init__(self, api_token, api_url=SAAS_URL):
+    def __init__(self, api_token: str, api_url: str = SAAS_URL):
         self.api_url = api_url
         self.api_token = api_token
 
@@ -31,7 +32,7 @@ class DB:
     def delete(self, url: str, *args, **kwargs) -> Response:
         return self.session.delete(f"{self.api_url}{url}", *args, **kwargs)
 
-    def check_connection(self):
+    def check_connection(self) -> bool:
         msg_fail_connect = "Could not connect to server at {}".format(self.api_url)
         msg_fail_auth = "Could not authenticate with token"
 
@@ -51,16 +52,16 @@ class DB:
 
         return True
 
-    def get_streams(self):
+    def get_streams(self) -> dict:
         r = self.get("/streams")
         return r.json()
 
-    def get_datasets(self, stream_name):
+    def get_datasets(self, stream_name: str) -> dict:
         stream_id = self._stream_name_to_id(stream_name)
         r = self.get(f"/stream/{stream_id}/datasets")
         return r.json()
 
-    def push_file(self, stream_name, file_path, metadata={}, file_name=None):
+    def push_file(self, stream_name: str, file_path: str, metadata: dict = {}, file_name: Optional[str] = None) -> int:
         stream_id = self._stream_name_to_id(stream_name)
 
         with open(file_path, "rb") as file:
@@ -80,7 +81,7 @@ class DB:
 
             return r_json["dataset_id"]
 
-    def get_status(self, stream_name, dataset_id):
+    def get_status(self, stream_name: str, dataset_id: str) -> dict:
         stream_id = self._stream_name_to_id(stream_name)
         r = self.post(f"/stream/{stream_id}/datasets/status", json=[dataset_id])
         if r.status_code != 200:
@@ -91,11 +92,9 @@ class DB:
             if dataset["dataset_id"] == dataset_id:
                 return dataset
 
-        raise Exception(
-            f"No status found for dataset {dataset_id} in stream {stream_name}"
-        )
+        raise Exception(f"No status found for dataset {dataset_id} in stream {stream_name}")
 
-    def download_original(self, stream_name, dataset_id, destination="."):
+    def download_original(self, stream_name: str, dataset_id: str, destination: str = ".") -> None:
         stream_id = self._stream_name_to_id(stream_name)
         response = self.get(f"/stream/{stream_id}/dataset/{dataset_id}/backup")
         temporary_link = Path(response.json()["path"])
@@ -112,7 +111,7 @@ class DB:
 
     # Internal functions #
 
-    def _stream_name_to_id(self, stream_name):
+    def _stream_name_to_id(self, stream_name: str) -> int:
         streams = self.get_streams()["streams"]
         for stream in streams:
             if stream["name"].lower() == stream_name.lower():
