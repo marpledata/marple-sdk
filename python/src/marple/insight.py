@@ -22,7 +22,6 @@ class Insight:
         return self.session.get(f"{self.api_url}{url}", *args, **kwargs)
 
     def post(self, url: str, *args, **kwargs) -> Response:
-        print(f"{self.api_url}{url}")
         return self.session.post(f"{self.api_url}{url}", *args, **kwargs)
 
     def patch(self, url: str, *args, **kwargs) -> Response:
@@ -61,7 +60,6 @@ class Insight:
         destination=".",
     ):
         t_range = self._get_time_range(stream_id, dataset_id)
-        print(t_range)
         file_name = f"export.{format}"
 
         response = self.post(
