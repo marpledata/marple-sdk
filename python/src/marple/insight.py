@@ -1,4 +1,5 @@
 from pathlib import Path
+from typing import Optional, Tuple
 
 import requests
 from requests import Response
@@ -7,7 +8,7 @@ SAAS_URL = "https://insight.marpledata.com/api/v1"
 
 
 class Insight:
-    def __init__(self, api_token, api_url=SAAS_URL):
+    def __init__(self, api_token: str, api_url: str = SAAS_URL):
         self.api_url = api_url
         self.api_token = api_token
 
@@ -30,7 +31,7 @@ class Insight:
     def delete(self, url: str, *args, **kwargs) -> Response:
         return self.session.delete(f"{self.api_url}{url}", *args, **kwargs)
 
-    def check_connection(self):
+    def check_connection(self) -> bool:
         msg_fail_connect = "Could not connect to server at {}".format(self.api_url)
         msg_fail_auth = "Could not authenticate with token"
 
@@ -52,12 +53,12 @@ class Insight:
 
     def export_mdb(
         self,
-        stream_id,
-        dataset_id,
-        format="mat",
-        timestamp_start=None,
-        timestamp_stop=None,
-        destination=".",
+        stream_id: int,
+        dataset_id: int,
+        format: str = "mat",
+        timestamp_start: Optional[int] = None,
+        timestamp_stop: Optional[int] = None,
+        destination: str = ".",
     ):
         t_range = self._get_time_range(stream_id, dataset_id)
         file_name = f"export.{format}"
@@ -69,12 +70,8 @@ class Insight:
                 "export_format": format,
                 "file_name": file_name,
                 "signals": self._get_signals(stream_id, dataset_id),
-                "timestamp_start": (
-                    timestamp_start if timestamp_start is not None else t_range[0]
-                ),
-                "timestamp_stop": (
-                    timestamp_stop if timestamp_stop is not None else t_range[1]
-                ),
+                "timestamp_start": (timestamp_start if timestamp_start is not None else t_range[0]),
+                "timestamp_stop": (timestamp_stop if timestamp_stop is not None else t_range[1]),
             },
         )
         temporary_link = response.json()["message"]["download_path"]
@@ -91,18 +88,15 @@ class Insight:
 
     # Internal functions #
 
-    def _get_signals(self, stream_id, dataset_id):
+    def _get_signals(self, stream_id: int, dataset_id: int) -> list:
         dataset_filter = {"dataset": dataset_id, "stream": stream_id}
-        response = self.post(
-            f"/sources/signals", json={"dataset_filter": dataset_filter}
-        )
+        response = self.post(f"/sources/signals", json={"dataset_filter": dataset_filter})
         return response.json()["message"]["signal_list"]
 
-    def _get_time_range(self, stream_id, dataset_id):
-        response = self.post(
-            "/sources/search", json={"library_filter": {"stream": stream_id}}
-        )
+    def _get_time_range(self, stream_id: int, dataset_id: int) -> Tuple[int, int]:
+        response = self.post("/sources/search", json={"library_filter": {"stream": stream_id}})
         datasets = response.json()["message"]
         for dataset in datasets:
             if dataset["dataset_filter"]["dataset"] == dataset_id:
                 return (dataset["timestamp_start"], dataset["timestamp_stop"])
+        raise Exception(f"No time range found for dataset {dataset_id} in stream {stream_id}")
