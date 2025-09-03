@@ -11,14 +11,14 @@ It has a free tier for 20h of MATLAB / month.
 
 ## Development (Python)
 
-**Local testing**
+### Local testing
 
 There are two small tests scripts, you do need to add your own API token in the scripts:
 
 - `PYTHONPATH=src poetry run python tests/test_db.py`
 - `PYTHONPATH=src poetry run python tests/test_insight.py`
 
-**Local build**
+### Local build
 
 - `poetry build`
 - `poetry shell `
@@ -26,7 +26,7 @@ There are two small tests scripts, you do need to add your own API token in the 
 - (inside shell) `python`
 - (inside repl) `from marple import Marple, Insight, DB`
 
-**Publishing (Test Pypi)**
+### Publishing (Test Pypi)
 
 Only once on your laptop
 
@@ -39,11 +39,20 @@ For every build
 - `poetry build`
 - `poetry publish -r testpypi --build`
 
-To install the test pypi package
+**Versioning** 
+To ensure pip correctly updates our package, correct versioning is important. Use `major.minor.patch`
+- `major` when they make incompatible API changes
+- `minor` when they add functionality in a backwards-compatible manner
+- `patch` when they make backwards-compatible bug fixes
 
-`pip install --upgrade -i https://test.pypi.org/simple/ --extra-index-url https://pypi.org/simple marpledata` (e.g. inside `python:latest` docker container)
 
-**Publishing (real Pypi)**
+**Recommended test workflow**
+- Publish to test Pypi
+- Open a docker container with the desired python version: `docker run -it python:x.y.z sh`
+- Install the test pypi package `pip install --upgrade -i https://test.pypi.org/simple/ --extra-index-url https://pypi.org/simple marpledata` 
+- If you want to publish again, delete the previous build (with the same version) from Pypi test via [the UI](https://test.pypi.org/manage/project/marpledata/releases/) and redo the steps above.
+
+### Publishing (real Pypi)
 
 ⚠ **Impacts users, be careful**
 
