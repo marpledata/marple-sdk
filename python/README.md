@@ -38,8 +38,9 @@ from marple import DB
 # create a datastream and API token in the Marple DB web application
 DATASTREAM = 'Car data'
 API_TOKEN = '<your api token>'
+API_URL = '<optional, if you are not on db.marpledata.com. e.g. db.customer.marpledata.com/api/v1 - link to db, ending in /api/v1>'
 
-db = DB(API_TOKEN)
+db = DB(API_TOKEN, API_URL)
 
 if not db.check_connection()
   raise Exception("Could not connect")
@@ -123,11 +124,13 @@ The full list of endpoints can be found in the Swagger Documentation: [https://d
 from marple import DB, Insight
 
 INSIGHT_TOKEN = "<your api token>"
+INSIGHT_URL = "<optional, if you are not on insight.marpledata.com. e.g. insight.customer.marpledata.com/api/v1 - link to insight, ending in /api/v1>"
 DB_TOKEN = "<your api token>"
+DB_URL = "<optional, if you are not on db.marpledata.com. e.g. db.customer.marpledata.com/api/v1 - link to db, ending in /api/v1>"
 DATASTREAM = "Car data"
 
-insight = Insight(INSIGHT_TOKEN)
-db = DB(DB_TOKEN)
+insight = Insight(INSIGHT_TOKEN, INSIGHT_URL)
+db = DB(DB_TOKEN, DB_URL)
 
 stream_id = db._stream_name_to_id(DATASTREAM)
 dataset = db.get_datasets(DATASTREAM)[0]
