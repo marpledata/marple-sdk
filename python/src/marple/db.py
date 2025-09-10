@@ -1,7 +1,10 @@
 import json
+from collections import defaultdict
+from io import BytesIO
 from pathlib import Path
-from typing import Optional
+from typing import Literal, Optional
 
+import pandas as pd
 import requests
 from requests import Response
 
@@ -39,13 +42,11 @@ class DB:
         try:
             # unauthenticated endpoints
             r = self.get("/health")
-            if r.status_code != 200:
-                raise Exception(msg_fail_connect)
+            self._validate_response(r, msg_fail_connect)
 
             # authenticated endpoint
             r = self.get("/user/info")
-            if r.status_code != 200:
-                raise Exception(msg_fail_auth)
+            self._validate_response(r, msg_fail_auth)
 
         except ConnectionError:
             raise Exception(msg_fail_connect)
@@ -72,12 +73,7 @@ class DB:
             }
 
             r = self.post(f"/stream/{stream_id}/ingest", files=files, data=data)
-            if r.status_code != 200:
-                r.raise_for_status()
-
-            r_json = r.json()
-            if r_json["status"] != "success":
-                raise Exception("Upload failed")
+            r_json = self._validate_response(r, "File upload failed")
 
             return r_json["dataset_id"]
 
@@ -109,6 +105,112 @@ class DB:
                     if chunk:  # filter out keep-alive chunks
                         f.write(chunk)
 
+    def add_dataset(self, stream_name: str, dataset_name: str, metadata: dict = {}) -> int:
+        """
+        Create a new empty dataset in the specified stream.
+        Returns the ID of the newly created dataset.
+
+        Use `dataset_append` to add data to the dataset and `upsert_signals` to define signals.
+        If you already have data in a file, use `push_file` instead.
+        """
+        stream_id = self._stream_name_to_id(stream_name)
+        r = self.post(
+            f"/stream/{stream_id}/datasets/add",
+            data={
+                "dataset_name": dataset_name,
+                "metadata": metadata,
+            },
+        )
+        r_json = self._validate_response(r, "Add dataset failed")
+
+        return r_json["dataset_id"]
+
+    def upsert_signals(self, stream_name: str, dataset_id: int, signals: list[dict]) -> None:
+        """
+        Add signals to a dataset or update existing ones.
+
+        Each signal in the `signals` list should be a dictionary with the following keys:
+        - `signal`: Name of the signal
+        - `unit`: (optional) Unit of the signal
+        - `description`: (optional) Description of the signal
+        - All other keys will be combined into a `metadata` field.
+        """
+        stream_id = self._stream_name_to_id(stream_name)
+
+        r = self.post(f"/stream/{stream_id}/dataset/{dataset_id}/signals", json=signals)
+        r_json = self._validate_response(r, "Upsert signals failed")
+
+    def dataset_append(self, stream_name: str, dataset_id: int, data: pd.DataFrame) -> None:
+        """
+        Append new data to an existing dataset.
+
+        `data` is a DataFrame with the following columns:
+        - `time`: Unix timestamp in nanoseconds.
+        - `signal`: Name of the signal as a string. Signals not yet present in the dataset are automatically added. Use `upsert_signals` to set units, descriptions and metadata.
+        - `value`: (optional) Value of the signal as a float or integer.
+        - `value_text`: (optional) Text value of the signal as a string.
+
+        At least one of the `value` or `value_text` columns must be present.
+        """
+        stream_id = self._stream_name_to_id(stream_name)
+        if "time" not in data.columns or "signal" not in data.columns:
+            raise Exception('DataFrame must contain "time" and "signal" columns')
+        if "value" not in data.columns and "value_text" not in data.columns:
+            raise Exception('DataFrame must contain at least one of "value" or "value_text" columns')
+        if "value" in data.columns and not pd.api.types.is_numeric_dtype(data["value"]):
+            raise Exception('"value" column must be numeric')
+        if "value_text" in data.columns and not pd.api.types.is_string_dtype(data["value_text"]):
+            raise Exception('"value_text" column must be string')
+
+        buf = BytesIO()
+        data.to_feather(buf)
+        buf.seek(0)
+        r = self.post(f"/stream/{stream_id}/dataset/{dataset_id}/append", files={"file": buf})
+        self._validate_response(r, "Append data failed")
+
+    def create_stream(
+        self,
+        name: str,
+        description: Optional[str] = None,
+        type: Literal["files", "realtime"] = "files",
+        layer_shifts: Optional[list[int]] = None,
+        partition_shift: Optional[int] = None,
+        datapool: Optional[str] = None,
+        plugin: Optional[str] = None,
+        plugin_args: Optional[str] = None,
+        signal_reduction: Optional[dict] = None,
+        insight_workspace: Optional[str] = None,
+        insight_project: Optional[str] = None,
+    ) -> int:
+        r = self.post(
+            "/stream",
+            json={
+                "name": name,
+                "description": description,
+                "type": type,
+                "layer_shifts": layer_shifts,
+                "partition_shift": partition_shift,
+                "datapool": datapool,
+                "plugin": plugin,
+                "plugin_args": plugin_args,
+                "signal_reduction": signal_reduction,
+                "insight_workspace": insight_workspace,
+                "insight_project": insight_project,
+            },
+        )
+        r_json = r.json()
+        return r_json["id"]
+
+    def delete_stream(self, stream_name: str) -> None:
+        """
+        Delete a datastream and all its datasets.
+
+        This is a destructive operation that cannot be undone.
+        """
+        stream_id = self._stream_name_to_id(stream_name)
+        r = self.post(f"/stream/{stream_id}/delete")
+        self._validate_response(r, "Delete stream failed")
+
     # Internal functions #
 
     def _stream_name_to_id(self, stream_name: str) -> int:
@@ -119,3 +221,12 @@ class DB:
 
         available_streams = ", ".join([s["name"] for s in streams])
         raise Exception(f'Stream "{stream_name}" not found \nAvailable streams: {available_streams}')
+
+    @staticmethod
+    def _validate_response(response: Response, failure_message: str) -> dict:
+        if response.status_code != 200:
+            response.raise_for_status()
+        r_json = response.json()
+        if r_json["status"] != "success":
+            raise Exception(failure_message)
+        return r_json
