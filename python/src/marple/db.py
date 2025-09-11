@@ -5,6 +5,8 @@ from pathlib import Path
 from typing import Literal, Optional
 
 import pandas as pd
+import pyarrow as pa
+import pyarrow.parquet as pq
 import requests
 from requests import Response
 
@@ -161,11 +163,18 @@ class DB:
             raise Exception('"value" column must be numeric')
         if "value_text" in data.columns and not pd.api.types.is_string_dtype(data["value_text"]):
             raise Exception('"value_text" column must be string')
-
+        
+        table = pa.Table.from_pandas(data)
         buf = BytesIO()
-        data.to_feather(buf)
+        pq.write_table(table, buf)
         buf.seek(0)
-        r = self.post(f"/stream/{stream_id}/dataset/{dataset_id}/append", files={"file": buf})
+
+        # Send as multipart/form-data
+        files = {
+            "file": ("data.parquet", buf, "application/octet-stream")
+        }
+
+        r = self.post(f"/stream/{stream_id}/dataset/{dataset_id}/append", files=files)
         self._validate_response(r, "Append data failed")
 
     def create_stream(
