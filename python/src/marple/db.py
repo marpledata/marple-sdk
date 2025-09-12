@@ -1,9 +1,9 @@
 import json
-from collections import defaultdict
 from io import BytesIO
 from pathlib import Path
 from typing import Literal, Optional
 
+import numpy as np
 import pandas as pd
 import pyarrow as pa
 import pyarrow.parquet as pq
@@ -11,6 +11,11 @@ import requests
 from requests import Response
 
 SAAS_URL = "https://db.marpledata.com/api/v1"
+
+COL_TIME = "time"
+COL_SIG = "signal"
+COL_VAL = "value"
+COL_VAL_TEXT = "value_text"
 
 
 class DB:
@@ -142,7 +147,9 @@ class DB:
         r = self.post(f"/stream/{stream_id}/dataset/{dataset_id}/signals", json=signals)
         r_json = self._validate_response(r, "Upsert signals failed")
 
-    def dataset_append(self, stream_name: str, dataset_id: int, data: pd.DataFrame) -> None:
+    def dataset_append(
+        self, stream_name: str, dataset_id: int, data: pd.DataFrame, shape: Optional[Literal["wide", "long"]] = None
+    ) -> None:
         """
         Append new data to an existing dataset.
 
@@ -155,6 +162,10 @@ class DB:
         At least one of the `value` or `value_text` columns must be present.
         """
         stream_id = self._stream_name_to_id(stream_name)
+
+        if self._detect_shape(shape, data) == "wide":
+            data = self._wide_to_long(data)
+
         if "time" not in data.columns or "signal" not in data.columns:
             raise Exception('DataFrame must contain "time" and "signal" columns')
         if "value" not in data.columns and "value_text" not in data.columns:
@@ -163,16 +174,14 @@ class DB:
             raise Exception('"value" column must be numeric')
         if "value_text" in data.columns and not pd.api.types.is_string_dtype(data["value_text"]):
             raise Exception('"value_text" column must be string')
-        
+
         table = pa.Table.from_pandas(data)
         buf = BytesIO()
         pq.write_table(table, buf)
         buf.seek(0)
 
         # Send as multipart/form-data
-        files = {
-            "file": ("data.parquet", buf, "application/octet-stream")
-        }
+        files = {"file": ("data.parquet", buf, "application/octet-stream")}
 
         r = self.post(f"/stream/{stream_id}/dataset/{dataset_id}/append", files=files)
         self._validate_response(r, "Append data failed")
@@ -207,7 +216,7 @@ class DB:
                 "insight_project": insight_project,
             },
         )
-        r_json = r.json()
+        r_json = self._validate_response(r, "Create stream failed")
         return r_json["id"]
 
     def delete_stream(self, stream_name: str) -> None:
@@ -239,3 +248,43 @@ class DB:
         if r_json["status"] != "success":
             raise Exception(failure_message)
         return r_json
+
+    @staticmethod
+    def _detect_shape(shape: Optional[Literal["long", "wide"]], df: pd.DataFrame) -> Literal["long", "wide"]:
+        if shape is not None:
+            return shape
+
+        if "signal" in df.columns and (("value" in df.columns) or ("value_text" in df.columns)):
+            return "long"
+        else:
+            return "wide"
+
+    @staticmethod
+    def _wide_to_long(
+        df: pd.DataFrame,
+    ) -> pd.DataFrame:
+        numeric_cols = df.select_dtypes(include=np.number).columns
+        long_numeric = df.melt(
+            id_vars=[COL_TIME],
+            value_vars=[c for c in numeric_cols if c != COL_TIME],
+            var_name=COL_SIG,
+            value_name=COL_VAL,
+        )
+
+        text_cols = df.select_dtypes(include="object").columns
+        long_text = df.melt(
+            id_vars=[COL_TIME],
+            value_vars=[c for c in text_cols if c != COL_TIME],
+            var_name=COL_SIG,
+            value_name=COL_VAL_TEXT,
+        )
+
+        long_numeric[COL_VAL_TEXT] = np.nan
+        long_text[COL_VAL] = np.nan
+
+        long_df = pd.concat([long_numeric, long_text], ignore_index=True)
+
+        long_df = long_df[[COL_TIME, COL_SIG, COL_VAL, COL_VAL_TEXT]]
+        long_df[COL_SIG] = long_df[COL_SIG].astype("string")
+        long_df[COL_VAL_TEXT] = long_df[COL_VAL_TEXT].astype("string")
+        return long_df
