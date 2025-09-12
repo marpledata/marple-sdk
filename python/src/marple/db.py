@@ -141,7 +141,7 @@ class DB:
         - `signal`: Name of the signal
         - `unit`: (optional) Unit of the signal
         - `description`: (optional) Description of the signal
-        - [any metadata key]': (optional) Any metadata value
+        - `[any metadata key]`: (optional) Any metadata value
         """
         stream_id = self._stream_name_to_id(stream_name)
 
