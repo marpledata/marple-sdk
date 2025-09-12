@@ -114,11 +114,12 @@ class DB:
 
     def add_dataset(self, stream_name: str, dataset_name: str, metadata: dict = {}) -> int:
         """
-        Create a new empty dataset in the specified stream.
+        Create a new empty dataset in the specified live stream.
         Returns the ID of the newly created dataset.
-
+        
         Use `dataset_append` to add data to the dataset and `upsert_signals` to define signals.
-        If you already have data in a file, use `push_file` instead.
+        
+        To add datasets from a file to a file stream, use `push_file` instead.
         """
         stream_id = self._stream_name_to_id(stream_name)
         r = self.post(
