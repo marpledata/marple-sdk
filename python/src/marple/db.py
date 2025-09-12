@@ -49,11 +49,11 @@ class DB:
         try:
             # unauthenticated endpoints
             r = self.get("/health")
-            self._validate_response(r, msg_fail_connect)
+            self._validate_response(r, msg_fail_connect, check_status=False)
 
             # authenticated endpoint
             r = self.get("/user/info")
-            self._validate_response(r, msg_fail_auth)
+            self._validate_response(r, msg_fail_auth, check_status=False)
 
         except ConnectionError:
             raise Exception(msg_fail_connect)
@@ -140,7 +140,7 @@ class DB:
         - `signal`: Name of the signal
         - `unit`: (optional) Unit of the signal
         - `description`: (optional) Description of the signal
-        - All other keys will be combined into a `metadata` field.
+        - [any metadata key]': (optional) Any metadata value
         """
         stream_id = self._stream_name_to_id(stream_name)
 
@@ -153,11 +153,14 @@ class DB:
         """
         Append new data to an existing dataset.
 
-        `data` is a DataFrame with the following columns:
-        - `time`: Unix timestamp in nanoseconds.
-        - `signal`: Name of the signal as a string. Signals not yet present in the dataset are automatically added. Use `upsert_signals` to set units, descriptions and metadata.
-        - `value`: (optional) Value of the signal as a float or integer.
-        - `value_text`: (optional) Text value of the signal as a string.
+        `data` is a DataFrame with the following columns. It can be in either "long" or "wide" format. If `shape` is not specified, the format is automatically detected.
+        - `"long"` format: Each row represents a single measurement for a single signal at a specific time. The following columns are expected:
+            - `time`: Unix timestamp in nanoseconds.
+            - `signal`: Name of the signal as a string. Signals not yet present in the dataset are automatically added. Use `upsert_signals` to set units, descriptions and metadata.
+            - `value`: (optional) Value of the signal as a float or integer.
+            - `value_text`: (optional) Text value of the signal as a string.
+        - `"wide"` format: Each row represents a single time point with multiple signals as columns. Expects at least a `time` column.
+
 
         At least one of the `value` or `value_text` columns must be present.
         """
@@ -192,7 +195,6 @@ class DB:
         description: Optional[str] = None,
         type: Literal["files", "realtime"] = "files",
         layer_shifts: Optional[list[int]] = None,
-        partition_shift: Optional[int] = None,
         datapool: Optional[str] = None,
         plugin: Optional[str] = None,
         plugin_args: Optional[str] = None,
@@ -207,7 +209,6 @@ class DB:
                 "description": description,
                 "type": type,
                 "layer_shifts": layer_shifts,
-                "partition_shift": partition_shift,
                 "datapool": datapool,
                 "plugin": plugin,
                 "plugin_args": plugin_args,
@@ -241,11 +242,13 @@ class DB:
         raise Exception(f'Stream "{stream_name}" not found \nAvailable streams: {available_streams}')
 
     @staticmethod
-    def _validate_response(response: Response, failure_message: str) -> dict:
+    def _validate_response(response: Response, failure_message: str, check_status: bool = True) -> dict:
+        if response.status_code == 400 or response.status_code == 500:
+            raise Exception(f"{failure_message}: {response.json().get('error', 'Unknown error')}")
         if response.status_code != 200:
             response.raise_for_status()
         r_json = response.json()
-        if r_json["status"] != "success":
+        if check_status and r_json["status"] != "success":
             raise Exception(failure_message)
         return r_json
 
