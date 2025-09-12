@@ -160,10 +160,10 @@ class DB:
             - `signal`: Name of the signal as a string. Signals not yet present in the dataset are automatically added. Use `upsert_signals` to set units, descriptions and metadata.
             - `value`: (optional) Value of the signal as a float or integer.
             - `value_text`: (optional) Text value of the signal as a string.
+            - At least one of the `value` or `value_text` columns must be present.
         - `"wide"` format: Each row represents a single time point with multiple signals as columns. Expects at least a `time` column.
 
 
-        At least one of the `value` or `value_text` columns must be present.
         """
         stream_id = self._stream_name_to_id(stream_name)
 
