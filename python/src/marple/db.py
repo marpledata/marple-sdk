@@ -17,6 +17,15 @@ COL_SIG = "signal"
 COL_VAL = "value"
 COL_VAL_TEXT = "value_text"
 
+SCHEMA = pa.schema(
+    [
+        pa.field(COL_TIME, pa.int64()),
+        pa.field(COL_SIG, pa.string()),
+        pa.field(COL_VAL, pa.float64()),
+        pa.field(COL_VAL_TEXT, pa.string()),
+    ]
+)
+
 
 class DB:
     _known_streams = {}
@@ -176,19 +185,20 @@ class DB:
         """
         stream_id = self._get_stream_id(stream_key)
 
+        print(self._detect_shape(shape, data))
         if self._detect_shape(shape, data) == "wide":
-            data = self._wide_to_long(data)
+            table = _wide_to_long(data)
+        else:
+            if COL_TIME not in data.columns or COL_SIG not in data.columns:
+                raise Exception('DataFrame must contain "time" and "signal" columns')
+            if not (COL_VAL in data.columns or COL_VAL_TEXT in data.columns):
+                raise Exception('DataFrame must contain at least one of "value" or "value_text" columns')
+            value = (
+                pd.to_numeric(data[COL_VAL], errors="coerce") if COL_VAL in data.columns else pa.nulls(len(data))
+            )
+            value_text = data[COL_VAL_TEXT] if COL_VAL_TEXT in data.columns else pa.nulls(len(data))
+            table = pa.Table.from_arrays([data[COL_TIME], data[COL_SIG], value, value_text], schema=SCHEMA)
 
-        if "time" not in data.columns or "signal" not in data.columns:
-            raise Exception('DataFrame must contain "time" and "signal" columns')
-        if "value" not in data.columns and "value_text" not in data.columns:
-            raise Exception('DataFrame must contain at least one of "value" or "value_text" columns')
-        if "value" in data.columns:
-            data["value"] = pd.to_numeric(data["value"], errors="coerce")
-        if "value_text" in data.columns:
-            data["value_text"] = data["value_text"].fillna("").astype("string")
-
-        table = pa.Table.from_pandas(data)
         buf = BytesIO()
         pq.write_table(table, buf)
         buf.seek(0)
@@ -279,32 +289,27 @@ class DB:
         else:
             return "wide"
 
-    @staticmethod
-    def _wide_to_long(
-        df: pd.DataFrame,
-    ) -> pd.DataFrame:
-        numeric_cols = df.select_dtypes(include=np.number).columns
-        long_numeric = df.melt(
-            id_vars=[COL_TIME],
-            value_vars=[c for c in numeric_cols if c != COL_TIME],
-            var_name=COL_SIG,
-            value_name=COL_VAL,
-        )
 
-        text_cols = df.select_dtypes(include="object").columns
-        long_text = df.melt(
-            id_vars=[COL_TIME],
-            value_vars=[c for c in text_cols if c != COL_TIME],
-            var_name=COL_SIG,
-            value_name=COL_VAL_TEXT,
-        )
+def _wide_to_long(df: pd.DataFrame) -> pa.Table:
+    signals = []
+    if COL_TIME not in df.columns:
+        raise ValueError("DataFrame must contain a time column")
+    time = df[COL_TIME].to_numpy()
+    for col in df.columns:
+        if col == COL_TIME:
+            continue
+        if (value := _to_numeric(df[col])) is not None:
+            (value, value_text) = (value.to_numpy().astype(np.float64), pa.nulls(len(time)))
+        else:
+            (value, value_text) = (pa.nulls(len(time)), df[col].fillna("").to_numpy().astype(str))
+        signals.append(pa.Table.from_arrays([time, [col] * len(time), value, value_text], schema=SCHEMA))
+    return pa.concat_tables(signals)
 
-        long_numeric[COL_VAL_TEXT] = np.nan
-        long_text[COL_VAL] = np.nan
 
-        long_df = pd.concat([long_numeric, long_text], ignore_index=True)
-
-        long_df = long_df[[COL_TIME, COL_SIG, COL_VAL, COL_VAL_TEXT]]
-        long_df[COL_SIG] = long_df[COL_SIG].astype("string")
-        long_df[COL_VAL_TEXT] = long_df[COL_VAL_TEXT].astype("string")
-        return long_df
+def _to_numeric(col: pd.Series) -> pd.Series | None:
+    if pd.api.types.is_numeric_dtype(col.dtype):
+        return col
+    null_count = col.isnull().sum()
+    numeric_col = pd.to_numeric(col, errors="coerce")
+    is_numeric = (numeric_col.isnull().sum() - null_count) / max(len(col), 1) < 0.2
+    return numeric_col if is_numeric else None
