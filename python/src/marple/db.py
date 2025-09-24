@@ -19,6 +19,8 @@ COL_VAL_TEXT = "value_text"
 
 
 class DB:
+    _known_streams = {}
+
     def __init__(self, api_token: str, api_url: str = SAAS_URL):
         self.api_url = api_url
         self.api_token = api_token
@@ -64,13 +66,19 @@ class DB:
         r = self.get("/streams")
         return r.json()
 
-    def get_datasets(self, stream_name: str) -> dict:
-        stream_id = self._stream_name_to_id(stream_name)
+    def get_datasets(self, stream_key: str | int) -> dict:
+        stream_id = self._get_stream_id(stream_key)
         r = self.get(f"/stream/{stream_id}/datasets")
         return r.json()
 
-    def push_file(self, stream_name: str, file_path: str, metadata: dict = {}, file_name: Optional[str] = None) -> int:
-        stream_id = self._stream_name_to_id(stream_name)
+    def push_file(
+        self,
+        stream_key: str | int,
+        file_path: str,
+        metadata: dict = {},
+        file_name: Optional[str] = None,
+    ) -> int:
+        stream_id = self._get_stream_id(stream_key)
 
         with open(file_path, "rb") as file:
             files = {"file": file}
@@ -84,8 +92,8 @@ class DB:
 
             return r_json["dataset_id"]
 
-    def get_status(self, stream_name: str, dataset_id: str) -> dict:
-        stream_id = self._stream_name_to_id(stream_name)
+    def get_status(self, stream_key: str | int, dataset_id: str) -> dict:
+        stream_id = self._get_stream_id(stream_key)
         r = self.post(f"/stream/{stream_id}/datasets/status", json=[dataset_id])
         if r.status_code != 200:
             r.raise_for_status()
@@ -95,10 +103,10 @@ class DB:
             if dataset["dataset_id"] == dataset_id:
                 return dataset
 
-        raise Exception(f"No status found for dataset {dataset_id} in stream {stream_name}")
+        raise Exception(f"No status found for dataset {dataset_id} in stream {stream_key}")
 
-    def download_original(self, stream_name: str, dataset_id: str, destination: str = ".") -> None:
-        stream_id = self._stream_name_to_id(stream_name)
+    def download_original(self, stream_key: str | int, dataset_id: str, destination: str = ".") -> None:
+        stream_id = self._get_stream_id(stream_key)
         response = self.get(f"/stream/{stream_id}/dataset/{dataset_id}/backup")
         temporary_link = Path(response.json()["path"])
 
@@ -112,28 +120,25 @@ class DB:
                     if chunk:  # filter out keep-alive chunks
                         f.write(chunk)
 
-    def add_dataset(self, stream_name: str, dataset_name: str, metadata: dict = {}) -> int:
+    def add_dataset(self, stream_key: str | int, dataset_name: str, metadata: dict | None = None) -> int:
         """
         Create a new empty dataset in the specified live stream.
         Returns the ID of the newly created dataset.
-        
+
         Use `dataset_append` to add data to the dataset and `upsert_signals` to define signals.
-        
+
         To add datasets from a file to a file stream, use `push_file` instead.
         """
-        stream_id = self._stream_name_to_id(stream_name)
+        stream_id = self._get_stream_id(stream_key)
         r = self.post(
-            f"/stream/{stream_id}/datasets/add",
-            data={
-                "dataset_name": dataset_name,
-                "metadata": metadata,
-            },
+            f"/stream/{stream_id}/dataset/add",
+            json={"dataset_name": dataset_name, "metadata": metadata or {}},
         )
         r_json = self._validate_response(r, "Add dataset failed")
 
         return r_json["dataset_id"]
 
-    def upsert_signals(self, stream_name: str, dataset_id: int, signals: list[dict]) -> None:
+    def upsert_signals(self, stream_key: str | int, dataset_id: int, signals: list[dict]) -> None:
         """
         Add signals to a dataset or update existing ones.
 
@@ -143,13 +148,17 @@ class DB:
         - `description`: (optional) Description of the signal
         - `[any metadata key]`: (optional) Any metadata value
         """
-        stream_id = self._stream_name_to_id(stream_name)
+        stream_id = self._get_stream_id(stream_key)
 
         r = self.post(f"/stream/{stream_id}/dataset/{dataset_id}/signals", json=signals)
-        r_json = self._validate_response(r, "Upsert signals failed")
+        self._validate_response(r, "Upsert signals failed")
 
     def dataset_append(
-        self, stream_name: str, dataset_id: int, data: pd.DataFrame, shape: Optional[Literal["wide", "long"]] = None
+        self,
+        stream_key: str | int,
+        dataset_id: int,
+        data: pd.DataFrame,
+        shape: Optional[Literal["wide", "long"]] = None,
     ) -> None:
         """
         Append new data to an existing dataset.
@@ -165,7 +174,7 @@ class DB:
 
 
         """
-        stream_id = self._stream_name_to_id(stream_name)
+        stream_id = self._get_stream_id(stream_key)
 
         if self._detect_shape(shape, data) == "wide":
             data = self._wide_to_long(data)
@@ -174,10 +183,10 @@ class DB:
             raise Exception('DataFrame must contain "time" and "signal" columns')
         if "value" not in data.columns and "value_text" not in data.columns:
             raise Exception('DataFrame must contain at least one of "value" or "value_text" columns')
-        if "value" in data.columns and not pd.api.types.is_numeric_dtype(data["value"]):
-            raise Exception('"value" column must be numeric')
-        if "value_text" in data.columns and not pd.api.types.is_string_dtype(data["value_text"]):
-            raise Exception('"value_text" column must be string')
+        if "value" in data.columns:
+            data["value"] = pd.to_numeric(data["value"], errors="coerce")
+        if "value_text" in data.columns:
+            data["value_text"] = data["value_text"].fillna("").astype("string")
 
         table = pa.Table.from_pandas(data)
         buf = BytesIO()
@@ -221,26 +230,33 @@ class DB:
         r_json = self._validate_response(r, "Create stream failed")
         return r_json["id"]
 
-    def delete_stream(self, stream_name: str) -> None:
+    def delete_stream(self, stream_key: str | int) -> None:
         """
         Delete a datastream and all its datasets.
 
         This is a destructive operation that cannot be undone.
         """
-        stream_id = self._stream_name_to_id(stream_name)
+        stream_id = self._get_stream_id(stream_key)
         r = self.post(f"/stream/{stream_id}/delete")
         self._validate_response(r, "Delete stream failed")
 
     # Internal functions #
 
-    def _stream_name_to_id(self, stream_name: str) -> int:
+    def _get_stream_id(self, stream_key: str | int) -> int:
+        if isinstance(stream_key, int):
+            return stream_key
+
+        if stream_key in self._known_streams:
+            return self._known_streams[stream_key]
+
         streams = self.get_streams()["streams"]
         for stream in streams:
-            if stream["name"].lower() == stream_name.lower():
+            if stream["name"].lower() == stream_key.lower():
+                self._known_streams[stream_key] = stream["id"]
                 return stream["id"]
 
         available_streams = ", ".join([s["name"] for s in streams])
-        raise Exception(f'Stream "{stream_name}" not found \nAvailable streams: {available_streams}')
+        raise Exception(f'Stream "{stream_key}" not found \nAvailable streams: {available_streams}')
 
     @staticmethod
     def _validate_response(response: Response, failure_message: str, check_status: bool = True) -> dict:
