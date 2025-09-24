@@ -19,6 +19,8 @@ COL_VAL_TEXT = "value_text"
 
 
 class DB:
+    _known_streams = {}
+
     def __init__(self, api_token: str, api_url: str = SAAS_URL):
         self.api_url = api_url
         self.api_token = api_token
@@ -244,9 +246,13 @@ class DB:
         if isinstance(stream_key, int):
             return stream_key
 
+        if stream_key in self._known_streams:
+            return self._known_streams[stream_key]
+
         streams = self.get_streams()["streams"]
         for stream in streams:
             if stream["name"].lower() == stream_key.lower():
+                self._known_streams[stream_key] = stream["id"]
                 return stream["id"]
 
         available_streams = ", ".join([s["name"] for s in streams])
