@@ -185,8 +185,9 @@ class DB:
         """
         stream_id = self._get_stream_id(stream_key)
 
-        print(self._detect_shape(shape, data))
         if self._detect_shape(shape, data) == "wide":
+            if COL_TIME not in data.columns:
+                raise ValueError("DataFrame must contain a time column")
             table = _wide_to_long(data)
         else:
             if COL_TIME not in data.columns or COL_SIG not in data.columns:
@@ -199,12 +200,12 @@ class DB:
             value_text = data[COL_VAL_TEXT] if COL_VAL_TEXT in data.columns else pa.nulls(len(data))
             table = pa.Table.from_arrays([data[COL_TIME], data[COL_SIG], value, value_text], schema=SCHEMA)
 
-        buf = BytesIO()
-        pq.write_table(table, buf)
-        buf.seek(0)
+        parquet_buffer = BytesIO()
+        pq.write_table(table, parquet_buffer)
+        parquet_buffer.seek(0)
 
         # Send as multipart/form-data
-        files = {"file": ("data.parquet", buf, "application/octet-stream")}
+        files = {"file": ("data.parquet", parquet_buffer, "application/octet-stream")}
 
         r = self.post(f"/stream/{stream_id}/dataset/{dataset_id}/append", files=files)
         self._validate_response(r, "Append data failed")
@@ -292,9 +293,7 @@ class DB:
 
 def _wide_to_long(df: pd.DataFrame) -> pa.Table:
     signals = []
-    if COL_TIME not in df.columns:
-        raise ValueError("DataFrame must contain a time column")
-    time = df[COL_TIME].to_numpy()
+    time = pa.array(df[COL_TIME], type=pa.int64())
     for col in df.columns:
         if col == COL_TIME:
             continue
