@@ -1,13 +1,13 @@
-% load configuration from config.yaml
+%% Load configuration from config.yaml
 mdb = DB.from_config();
 
-% Example 1: Calculating max(turbidity) of 2020
+%% Example 1: Calculating max(turbidity) of 2020
 
 T = mdb.get_data('charles-river-2020_clean.csv', 'turbidity');
 max_turbidity = max(T.turbidity);
 disp(max_turbidity)
 
-% Example 2: Boxplot of every pH per year
+%% Example 2: Boxplot of every pH per year
 
 datasets = mdb.get_datasets('charles river');
 T = table();
@@ -24,7 +24,7 @@ boxplot(T.pH, T.year);
 xlabel('Year')
 ylabel('pH');
 
-% Example 3: 3D scatter (2020)
+%% Example 3: 3D scatter (2020)
 
 function TT = toTT(tbl, signalName)
     t = datetime(tbl.time/1e9, 'ConvertFrom','posixtime', 'TimeZone','UTC');
