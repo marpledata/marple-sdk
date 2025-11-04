@@ -89,7 +89,7 @@ classdef DB
     function signals = get_signals(obj, stream_name, dataset_id)
       % Get signals for a stream by name and dataset ID
       stream_id = obj.find_stream_id(stream_name);
-      endpoint = sprintf('/stream/%s/dataset/%s/signals', stream_id, dataset_id);
+      endpoint = sprintf('/stream/%d/dataset/%d/signals', stream_id, dataset_id);
       signals = obj.make_request('GET', endpoint);
     end
 
