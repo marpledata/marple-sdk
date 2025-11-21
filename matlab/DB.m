@@ -105,7 +105,7 @@ classdef DB
       s3_url = sprintf(url_structure, obj.s3_bucket, obj.workspace, obj.datapool, dataset_name, signal_name);
 
       local_structure = '_marplecache/%s/%s/dataset=%s/signal=%s/';
-      local_dir = sprintf(local_structure, obj.s3_bucket, obj.workspace, obj.datapool, dataset_name, signal_name);
+      local_dir = sprintf(local_structure, obj.workspace, obj.datapool, dataset_name, signal_name);
       T = obj.get_parquet(s3_url, local_dir);
 
       if is_text
