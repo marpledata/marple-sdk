@@ -93,6 +93,12 @@ classdef DB
       signals = obj.make_request('GET', endpoint);
     end
 
+    % compatible if name contains only alphanumeric or one of "!-_.*'()"
+    function result = is_compatible(obj, str)
+        safe_pattern = '^[a-zA-Z0-9!\-_.*''()]*$';
+        result = ~isempty(regexp(str, safe_pattern, 'once'));
+    end
+
     function T = get_data(obj, dataset_name, signal_name, is_text)
       arguments
         obj

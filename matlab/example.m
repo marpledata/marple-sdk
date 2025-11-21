@@ -14,6 +14,11 @@ T = table();
 
 for i = 1:length(datasets)
   dataset = datasets(i);
+  if ~mdb.is_compatible(dataset.path)
+        fprintf('Skipping %s [Incompatible]\n', dataset.path)
+        continue
+    end
+
   fprintf('Fetching %s\n', dataset.path)
   current_T = mdb.get_data(dataset.path, 'pH');
   current_T.year = repmat(dataset.metadata.Year, height(current_T), 1);
