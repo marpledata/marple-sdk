@@ -2,6 +2,7 @@ import json
 from io import BytesIO
 from pathlib import Path
 from typing import Literal, Optional
+from urllib import parse, request
 
 import numpy as np
 import pandas as pd
@@ -117,17 +118,13 @@ class DB:
     def download_original(self, stream_key: str | int, dataset_id: str, destination: str = ".") -> None:
         stream_id = self._get_stream_id(stream_key)
         response = self.get(f"/stream/{stream_id}/dataset/{dataset_id}/backup")
-        temporary_link = Path(response.json()["path"])
+        download_url = response.json()["path"]
+        if not download_url.startswith("http"):
+            download_url = f"{self.api_url}/download/{download_url}"
 
-        download_url = f"{self.api_url}/download/{temporary_link}"
-        target_path = Path(destination) / temporary_link.name
-
-        with requests.get(download_url, stream=True) as r:
-            r.raise_for_status()
-            with open(target_path, "wb") as f:
-                for chunk in r.iter_content(chunk_size=65536):  # 64kB
-                    if chunk:  # filter out keep-alive chunks
-                        f.write(chunk)
+        target_path = Path(destination) / parse.urlparse(download_url).path.rsplit("/")[1]
+        (path, response) = request.urlretrieve(download_url, target_path)
+        return path
 
     def add_dataset(self, stream_key: str | int, dataset_name: str, metadata: dict | None = None) -> int:
         """
