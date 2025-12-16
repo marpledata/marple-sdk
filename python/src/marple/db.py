@@ -81,6 +81,12 @@ class DB:
         r = self.get(f"/stream/{stream_id}/datasets")
         return r.json()
 
+    def get_signals(self, stream_key: str | int, dataset_id: int) -> dict:
+        stream_id = self._get_stream_id(stream_key)
+        r = self.get(f"/stream/{stream_id}/dataset/{dataset_id}/signals")
+        self._validate_response(r, "Get signals failed", check_status=False)
+        return r.json()
+
     def push_file(
         self,
         stream_key: str | int,
@@ -98,7 +104,10 @@ class DB:
             }
 
             r = self.post(f"/stream/{stream_id}/ingest", files=files, data=data)
-            r_json = self._validate_response(r, "File upload failed")
+            r_json = self._validate_response(
+                r,
+                "File upload failed",
+            )
 
             return r_json["dataset_id"]
 
@@ -115,16 +124,34 @@ class DB:
 
         raise Exception(f"No status found for dataset {dataset_id} in stream {stream_key}")
 
-    def download_original(self, stream_key: str | int, dataset_id: str, destination: str = ".") -> None:
+    def download_original(self, stream_key: str | int, dataset_id: int, destination_folder: str = ".") -> None:
+        """
+        Download the original file from the dataset to the destination folder.
+        """
         stream_id = self._get_stream_id(stream_key)
         response = self.get(f"/stream/{stream_id}/dataset/{dataset_id}/backup")
+        self._validate_response(response, "Download original file failed", check_status=False)
         download_url = response.json()["path"]
         if not download_url.startswith("http"):
             download_url = f"{self.api_url}/download/{download_url}"
 
-        target_path = Path(destination) / parse.urlparse(download_url).path.rsplit("/")[1]
-        (path, response) = request.urlretrieve(download_url, target_path)
-        return path
+        target_path = Path(destination_folder) / parse.urlparse(download_url).path.rsplit("/")[1]
+        request.urlretrieve(download_url, target_path)
+        return target_path
+
+    def download_parquet(
+        self, stream_key: str | int, dataset_id: int, signal_id: int, destination_folder: str = "."
+    ) -> None:
+        stream_id = self._get_stream_id(stream_key)
+        r = self.get(f"/stream/{stream_id}/dataset/{dataset_id}/signal/{signal_id}/path")
+        self._validate_response(r, "Get parquet path failed", check_status=False)
+        dest = Path(destination_folder)
+        parquet_paths = []
+        for path in r.json()["paths"]:
+            dest_path = dest / parse.urlparse(path).path.rsplit("/")[1]
+            request.urlretrieve(path, dest_path)
+            parquet_paths.append(dest_path)
+        return parquet_paths
 
     def add_dataset(self, stream_key: str | int, dataset_name: str, metadata: dict | None = None) -> int:
         """

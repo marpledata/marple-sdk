@@ -1,14 +1,14 @@
 import os
+import random
 import time
 from datetime import datetime
 from pathlib import Path
 from tempfile import TemporaryDirectory
 
 import marple
+import pyarrow.parquet as pq
 import pytest
 from marple import DB
-
-STREAM_NAME = "Salty Compulsory Pytest"
 
 
 def _required_env(name: str) -> str:
@@ -18,20 +18,28 @@ def _required_env(name: str) -> str:
     return value
 
 
-@pytest.fixture(scope="session")
+@pytest.fixture(scope="session", autouse=True)
 def db() -> DB:
     return DB(_required_env("MDB_TOKEN"))
+
+
+@pytest.fixture(scope="session", autouse=True)
+def stream_name(db: DB) -> str:
+    name = "Salty Compulsory Pytest " + datetime.now().isoformat()
+    stream_id = db.create_stream(name)
+    yield name
+    db.delete_stream(stream_id)
 
 
 def test_db_check_connection(db: DB) -> None:
     assert db.check_connection() is True
 
 
-def test_db_get_streams_and_datasets(db: DB) -> None:
+def test_db_get_streams_and_datasets(db: DB, stream_name: str) -> None:
     streams = db.get_streams()["streams"]
-    assert STREAM_NAME in [stream["name"] for stream in streams]
+    assert stream_name in [stream["name"] for stream in streams]
 
-    datasets = db.get_datasets(STREAM_NAME)
+    datasets = db.get_datasets(stream_name)
     assert isinstance(datasets, list)
 
 
@@ -42,13 +50,13 @@ def test_db_query_endpoint(db: DB) -> None:
     assert response.json() is not None
 
 
-def test_db_upload_status_and_download(db: DB) -> None:
+def test_db_upload_status_and_download(db: DB, stream_name: str) -> None:
     example_csv = Path(__file__).parent / "examples_race.csv"
     assert example_csv.exists()
 
     file_name = f"pytest-sdk-{datetime.now().strftime('%Y-%m-%d-%H-%M-%S')}.csv"
     dataset_id = db.push_file(
-        STREAM_NAME,
+        stream_name,
         str(example_csv),
         metadata={
             "source": "pytest:test_db.py",
@@ -62,7 +70,7 @@ def test_db_upload_status_and_download(db: DB) -> None:
 
     last_status: dict | None = None
     while time.monotonic() < deadline:
-        last_status = db.get_status(STREAM_NAME, dataset_id)
+        last_status = db.get_status(stream_name, dataset_id)
         import_status = last_status.get("import_status")
         if import_status in {"FINISHED", "FAILED"}:
             break
@@ -72,7 +80,19 @@ def test_db_upload_status_and_download(db: DB) -> None:
     assert last_status.get("import_status") == "FINISHED", f"Ingest did not finish: {last_status}"
 
     with TemporaryDirectory() as tmp_path:
-        file_path = db.download_original(STREAM_NAME, dataset_id, destination=tmp_path)
+        file_path = db.download_original(stream_name, dataset_id, destination_folder=tmp_path)
         p = Path(file_path)
         assert p.exists()
         assert p.stat().st_size == example_csv.stat().st_size
+
+    signals = db.get_signals(stream_name, dataset_id)
+    signal = random.choice(signals)
+    with TemporaryDirectory() as tmp_path:
+        paths = db.download_parquet(stream_name, dataset_id, signal["id"], destination_folder=tmp_path)
+        assert len(paths) > 0
+        for path in paths:
+            table = pq.read_table(path)
+            assert table is not None
+            assert "time" in table.column_names
+            assert "value" in table.column_names
+            assert "value_text" in table.column_names

@@ -1,59 +1,48 @@
-import os
 import shutil
 import time
-from math import sin, tau
-from pathlib import Path
 
-import pytest
-
+import numpy as np
+import pandas as pd
 from marple import Marple
 
-pytestmark = pytest.mark.integration
+if __name__ == "__main__":
+    ACCESS_TOKEN = "eyJhbGciOiJSUzI1NiIsInR5cCI6IkpXVCIsImtpZCI6IkRrXzRWOWxwYUtRQmZVZ2ZpbzZIciJ9.eyJodHRwczovL21hcnBsZWRhdGEuY29tL2VtYWlsX3ZlcmlmaWVkIjp0cnVlLCJpc3MiOiJodHRwczovL21hcnBsZS5ldS5hdXRoMC5jb20vIiwic3ViIjoiZ29vZ2xlLW9hdXRoMnwxMDQzMTQ1Njg1NTIxMjIwNDMyMzMiLCJhdWQiOlsiaHR0cHM6Ly9hcHAuZ2V0bWFycGxlLmlvL2FwaSIsImh0dHBzOi8vbWFycGxlLmV1LmF1dGgwLmNvbS91c2VyaW5mbyJdLCJpYXQiOjE2Njk3MzExMzksImV4cCI6MTY3MjMyMzEzOSwiYXpwIjoiVm81alNlclZoUUxxeWJRT1dkME03aDg2MUU2RE1WVkciLCJzY29wZSI6Im9wZW5pZCBwcm9maWxlIGVtYWlsIn0.NTEoLNV0N3dx-wtGONhWIfcdLS2LT5v8BQI7MW6oh2kzP2PqGxo2_2AiUuRU5q7KBfyUaKkGpihOWA6G2iQtiJM5XynFo1vkGpzqBYMX9-0A2Uz0gK8Hnzf_txHHlGWLO6S7tRBrj-sixigW0lcjaHOGP9KLhPaTgrguIcG3S-OzNX7MfTfG4gEtPPwjFYBOsi9Xg1Uz7ExPNaf_fEK2LuVFWQPDYNY0E7m2Bl2qHjsi2lTaBD3d1aARY4i0HInzaLnzq0ArhjSeO2wfhkTt0h1cppauEcelD7N7RnYbHO7icc8Vko8FuHbCu2wQqwhKg8vp-n1Wnhcz5LnUaVVTIg"
+    EXAMPLE_FILE_PATH = "tests\\examples_race.csv"
+    PROJECT_NAME = "api-project"
 
+    # create a copy of the file
+    new_file_path = f"example_{int(time.time())}.csv"
+    shutil.copy(EXAMPLE_FILE_PATH, new_file_path)
 
-def _required_env(name: str) -> str:
-    value = os.getenv(name)
-    if not value:
-        pytest.skip(f"Missing env var {name}; skipping integration test.")
-    return value
+    m = Marple(ACCESS_TOKEN)
 
+    # Check connection
+    m.check_connection()
+    print("Connection OK")
 
-def test_files_upload_and_send_data(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
-    """
-    Integration test for the legacy Marple Files API client (`Marple`).
+    # Upload a file
+    metadata = {"Source": "SDK test", "Type": "Data file"}
+    source_id = m.upload_data_file(new_file_path, "API_test", metadata=metadata)
+    print(f"Source id: {source_id} uploaded")
 
-    Requires:
-    - MARPLE_ACCESS_TOKEN
-    Optional:
-    - MARPLE_FOLDER (defaults to "/")
-    - MARPLE_PROJECT (defaults to "api-project")
-    """
-    access_token = _required_env("MARPLE_ACCESS_TOKEN")
-    marple_folder = os.getenv("MARPLE_FOLDER", "/")
-    project_name = os.getenv("MARPLE_PROJECT", "api-project")
+    # get a link to the data and project
+    share_link = m.get_link(source_id, PROJECT_NAME)
 
-    m = Marple(access_token)
-    assert m.check_connection() is True
+    # Generate some data and write it to Marple
+    data = {
+        "time": range(0, 100),
+        "signal 1": range(0, 100),
+        "signal 2": [np.sin(i / (2 * np.pi)) for i in range(0, 100)],
+    }
+    df = pd.DataFrame.from_dict(data)
+    target_name = f"example_fromdata_{int(time.time())}"
+    source_id = m.upload_dataframe(df, target_name, "API_test")
+    print(f"Source id: {source_id} uploaded")
 
-    example_csv = Path(__file__).parent / "examples_race.csv"
-    assert example_csv.exists()
-
-    file_copy = tmp_path / f"example_{int(time.time())}.csv"
-    shutil.copy(example_csv, file_copy)
-
-    source_id = m.upload_data_file(
-        str(file_copy),
-        marple_folder=marple_folder,
-        metadata={"source": "pytest:test_files.py", "type": "data file"},
-    )
-    assert source_id
-
-    link = m.get_link(source_id, project_name, open_link=False)
-    assert isinstance(link, str) and link
-
-    # `send_data` writes a temporary CSV in the current working directory.
-    monkeypatch.chdir(tmp_path)
-    for i in range(0, 5):
-        m.add_data({"time": i, "signal 1": i, "signal 2": sin(i / tau)})
-    source_id_2 = m.send_data(f"pytest_add_data_{int(time.time())}", marple_folder=marple_folder)
-    assert source_id_2
+    # Add data iteratively
+    for i in range(0, 100):
+        data_dict = {"time": i, "signal 1": i, "signal 2": np.sin(i / (2 * np.pi))}
+        m.add_data(data_dict)
+    target_name = f"example_add_data_{int(time.time())}"
+    source_id = m.send_data(target_name, "API_test")
+    print(f"Source id: {source_id} uploaded")
