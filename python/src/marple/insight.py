@@ -1,5 +1,6 @@
 from pathlib import Path
 from typing import Optional, Tuple
+from urllib import request
 
 import requests
 from requests import Response
@@ -58,10 +59,14 @@ class Insight:
         format: str = "mat",
         timestamp_start: Optional[int] = None,
         timestamp_stop: Optional[int] = None,
+        signals: Optional[list[str]] = None,
         destination: str = ".",
     ):
         t_range = self._get_time_range(stream_id, dataset_id)
         file_name = f"export.{format}"
+        signal_list = self._get_signals(stream_id, dataset_id)
+        if signal_list is not None:
+            signal_list = [signal for signal in signal_list if signal["name"] in signals]
 
         response = self.post(
             "/export",
@@ -69,7 +74,7 @@ class Insight:
                 "dataset_filter": {"dataset": dataset_id, "stream": stream_id},
                 "export_format": format,
                 "file_name": file_name,
-                "signals": self._get_signals(stream_id, dataset_id),
+                "signals": signal_list,
                 "timestamp_start": (timestamp_start if timestamp_start is not None else t_range[0]),
                 "timestamp_stop": (timestamp_stop if timestamp_stop is not None else t_range[1]),
             },
@@ -79,12 +84,8 @@ class Insight:
         download_url = f"{self.api_url}/download/{temporary_link}"
         target_path = Path(destination) / file_name
 
-        with requests.get(download_url, stream=True) as r:
-            r.raise_for_status()
-            with open(target_path, "wb") as f:
-                for chunk in r.iter_content(chunk_size=65536):  # 64kB
-                    if chunk:  # filter out keep-alive chunks
-                        f.write(chunk)
+        request.urlretrieve(download_url, target_path)
+        return target_path
 
     # Internal functions #
 

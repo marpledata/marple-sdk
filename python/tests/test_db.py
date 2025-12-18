@@ -8,7 +8,10 @@ from tempfile import TemporaryDirectory
 import marple
 import pyarrow.parquet as pq
 import pytest
-from marple import DB
+from h5py import File
+from marple import DB, Insight
+
+EXAMPLE_CSV = Path(__file__).parent / "examples_race.csv"
 
 
 def _required_env(name: str) -> str:
@@ -18,17 +21,51 @@ def _required_env(name: str) -> str:
     return value
 
 
-@pytest.fixture(scope="session", autouse=True)
+@pytest.fixture(scope="session")
 def db() -> DB:
     return DB(_required_env("MDB_TOKEN"))
 
 
-@pytest.fixture(scope="session", autouse=True)
+@pytest.fixture(scope="session")
+def insight() -> Insight:
+    return Insight(_required_env("INSIGHT_TOKEN"))
+
+
+@pytest.fixture(scope="session")
 def stream_name(db: DB) -> str:
     name = "Salty Compulsory Pytest " + datetime.now().isoformat()
     stream_id = db.create_stream(name)
     yield name
     db.delete_stream(stream_id)
+
+
+@pytest.fixture(scope="session")
+def dataset_id(db: DB, stream_name: str) -> int:
+    file_name = f"pytest-sdk-{datetime.now().strftime('%Y-%m-%d-%H-%M-%S')}.csv"
+    dataset_id = db.push_file(
+        stream_name,
+        str(EXAMPLE_CSV),
+        metadata={
+            "source": "pytest:test_db.py",
+            "sdk_version": marple.__version__,
+        },
+        file_name=file_name,
+    )
+    assert isinstance(dataset_id, int)
+
+    deadline = time.monotonic() + 10
+
+    last_status: dict | None = None
+    while time.monotonic() < deadline:
+        last_status = db.get_status(stream_name, dataset_id)
+        import_status = last_status.get("import_status")
+        if import_status in {"FINISHED", "FAILED"}:
+            break
+        time.sleep(0.5)
+
+    assert last_status is not None, "No status returned while polling ingest status."
+    assert last_status.get("import_status") == "FINISHED", f"Ingest did not finish: {last_status}"
+    yield dataset_id
 
 
 def test_db_check_connection(db: DB) -> None:
@@ -50,41 +87,15 @@ def test_db_query_endpoint(db: DB) -> None:
     assert response.json() is not None
 
 
-def test_db_upload_status_and_download(db: DB, stream_name: str) -> None:
-    example_csv = Path(__file__).parent / "examples_race.csv"
-    assert example_csv.exists()
-
-    file_name = f"pytest-sdk-{datetime.now().strftime('%Y-%m-%d-%H-%M-%S')}.csv"
-    dataset_id = db.push_file(
-        stream_name,
-        str(example_csv),
-        metadata={
-            "source": "pytest:test_db.py",
-            "sdk_version": marple.__version__,
-        },
-        file_name=file_name,
-    )
-    assert isinstance(dataset_id, int)
-
-    deadline = time.monotonic() + 10
-
-    last_status: dict | None = None
-    while time.monotonic() < deadline:
-        last_status = db.get_status(stream_name, dataset_id)
-        import_status = last_status.get("import_status")
-        if import_status in {"FINISHED", "FAILED"}:
-            break
-        time.sleep(0.5)
-
-    assert last_status is not None, "No status returned while polling ingest status."
-    assert last_status.get("import_status") == "FINISHED", f"Ingest did not finish: {last_status}"
-
+def test_db_get_original(db: DB, stream_name: str, dataset_id: int) -> None:
     with TemporaryDirectory() as tmp_path:
         file_path = db.download_original(stream_name, dataset_id, destination_folder=tmp_path)
         p = Path(file_path)
         assert p.exists()
-        assert p.stat().st_size == example_csv.stat().st_size
+        assert p.stat().st_size == EXAMPLE_CSV.stat().st_size
 
+
+def test_db_get_parquet(db: DB, stream_name: str, dataset_id: int) -> None:
     signals = db.get_signals(stream_name, dataset_id)
     signal = random.choice(signals)
     with TemporaryDirectory() as tmp_path:
@@ -96,3 +107,20 @@ def test_db_upload_status_and_download(db: DB, stream_name: str) -> None:
             assert "time" in table.column_names
             assert "value" in table.column_names
             assert "value_text" in table.column_names
+
+
+def test_insight_export(insight: Insight, stream_name: str, dataset_id: int) -> None:
+    with TemporaryDirectory() as tmp_path:
+        file_path = insight.export_mdb(
+            stream_name,
+            dataset_id,
+            format="h5",
+            signals=["car.speed"],
+            timestamp_stop=1e9,
+            destination=tmp_path,
+        )
+        assert Path(file_path).exists()
+        with File(file_path, "r") as f:
+            assert "car.speed" in f
+            assert "car.accel" not in f
+            assert len(f["car.speed"]["time"][:]) == 10
