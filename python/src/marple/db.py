@@ -104,10 +104,7 @@ class DB:
             }
 
             r = self.post(f"/stream/{stream_id}/ingest", files=files, data=data)
-            r_json = self._validate_response(
-                r,
-                "File upload failed",
-            )
+            r_json = self._validate_response(r, "File upload failed")
 
             return r_json["dataset_id"]
 
