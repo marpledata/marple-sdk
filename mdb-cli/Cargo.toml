@@ -1,0 +1,19 @@
+[package]
+name = "mdb"
+edition = "2024"
+
+[dependencies]
+anyhow = "*"
+clap = { version = "*", features = ["derive", "env"] }
+colored = "*"
+futures-util = "*"
+indicatif = { version = "*", features = ["tokio"] }
+reqwest = { version = "*", features = ["json", "multipart", "stream"] }
+serde = { version = "*", features = ["derive"] }
+serde_json = "*"
+tokio = { version = "1", features = ["rt-multi-thread", "macros"] }
+walkdir = "*"
+tokio-util = { version = "*", features = ["io"] }
+async-stream = "*"
+inquire = "0.7.5"
+dotenvy = "0.15.7"
