@@ -1,11 +1,15 @@
 ## Development (Python)
 
-### Local testing
+### Testing
 
-There are two small tests scripts, you do need to add your own API token in the scripts:
+The testing suite runs against a real linked DB & Insight deployment on our SaaS (e.g. Castro Comrades).
+Among other things it will create a stream, ingest a dataset, and export that dataset from Insight
 
-- `PYTHONPATH=src uv run python tests/test_db.py`
-- `PYTHONPATH=src uv run python tests/test_insight.py`
+```bash
+export MDB_TOKEN=...
+export INSIGHT_TOKEN=...
+uv run pytest -vs
+```
 
 ### Local build
 
