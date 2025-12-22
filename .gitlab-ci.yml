@@ -18,8 +18,8 @@ pytest:
   stage: test
   before_script:
     - python -V
-    - wget -qO- https://astral.sh/uv/install.sh | sh
-    - uv --version
+    - curl -LsSf https://astral.sh/uv/install.sh | sh
+    - /root/.local/bin/uv --version
   script:
     - cd python
     - /root/.local/bin/uv run pytest -vs --junitxml=pytest.xml
