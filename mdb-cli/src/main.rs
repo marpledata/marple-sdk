@@ -31,6 +31,9 @@ struct Cli {
     #[arg(long, default_value = "", env = "MDB_TOKEN")]
     mdb_token: String,
 
+    #[arg(long)]
+    version: bool,
+
     #[command(subcommand)]
     command: Option<Commands>,
 }
@@ -481,6 +484,10 @@ async fn handle_ping(marpledb: &MarpleDB) -> Result<()> {
     }
 }
 
+fn handle_version() {
+    println!("mdb {}", env!("CARGO_PKG_VERSION"));
+}
+
 async fn handle_stream_commands(marpledb: &MarpleDB, command: &StreamCommands) -> Result<()> {
     match command {
         StreamCommands::List => {
@@ -635,8 +642,12 @@ async fn main() -> Result<()> {
     let marpledb = MarpleDB::new(&cli.mdb_url, &cli.mdb_token)?;
 
     let Some(command) = cli.command else {
-        Cli::command().print_help()?;
-        std::process::exit(0);
+        if cli.version {
+            handle_version();
+        } else {
+            Cli::command().print_help()?;
+        }
+        return Ok(());
     };
 
     // Check health

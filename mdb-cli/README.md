@@ -1,67 +1,54 @@
 # `mdb`
 
-`mdb` is a command line client for the Marple DB API.
+`mdb` is a command-line client for the MarpleDB API, providing direct access to manage streams, ingest files, query datasets, and interact with the MarpleDB service from your terminal.
 
-## Usage
+## Examples
 
-The `mdb-cli` CLI tool (`mdb`) provides command-line access to the MarpleDB API: managing streams, uploading files, etc..
-
-## 1. Installing Rust
-
-The CLI is written in Rust. To get started, install Rust using [rustup](https://rustup.rs/):
+### Complete Workflow
 
 ```sh
-curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh
-```
+mdb --help
 
-Follow the on-screen instructions to complete the installation. Afterward, ensure `cargo` is available:
+# Set up credentials
+export MDB_TOKEN="mdb_your_token_here"
 
-```sh
-cargo --version
-```
+# Check connection
+mdb ping
 
-## 2. Compiling the Binary
-
-Navigate to the `cli` directory and build the binary with Cargo:
-
-```sh
-cd cli
-cargo build --release
-```
-
-This will produce the binary in `target/release/mdb`.
-
-## 3. Installing the Binary
-
-To make `mdb` available system-wide, you can copy it to a directory in your `PATH`, for example:
-
-```sh
-cp target/release/mdb ~/.cargo/bin/
-```
-
-Or, install directly using Cargo:
-
-```sh
-cargo install --path .
-```
-
-## 4. Using `mdb help`
-
-To see available commands and usage information, run:
-
-```sh
-mdb help
-```
-
-This will display a list of all supported commands and options for the CLI tool. The tool uses the `MDB_HOST` & `MDB_TOKEN` environment variables to connect to a MarpleDB instance.
-
-As an example:
-
-```sh
-EXPORT MDB_HOST=db.app.marpledata.com
-EXPORT MDB_TOKEN=mdb_abcdef...ghijk
+# List existing streams
 mdb stream list
-mdb stream new "MDF Stream" plugin=mdf plugin-args="--chunksize 2e8"
-mdb ingest "MDF Stream" --recursive --extension .mf4 mdf_files/
-mdb ingest "MDF Stream" -re .mf4 mdf_files/
+
+# Create a new stream
+mdb stream new "Test Stream" plugin=csv
+
+# Ingest a CSV file
+mdb ingest "Test Stream" data.csv
+
+# List datasets in the stream
+mdb dataset "Test Stream" list
+
+# Get dataset details (use the ID from the list)
+mdb dataset "Test Stream" get 12345
+
+# Query the data
+mdb post "/query" query="select path, stream_id, metadata from mdb_default_dataset limit 1;"
+
+# Download the original file
+mdb dataset "Test Stream" download --output-dir ./backups 12345
 ```
+
+### Batch Ingestion
+
+```sh
+# Ingest all CSV files in a directory
+mdb ingest "Data Stream" --recursive --extension csv ./data_directory/
+
+# Ingest MDF files, skipping already uploaded ones
+mdb ingest "MDF Stream" --recursive --extension mf4 --skip-existing ./mdf_files/
+```
+
+## Getting Help
+
+- **Bug reports and feature requests**: Please open an issue on [GitHub](https://github.com/marpledata/marple-sdk/issues)
+- **Documentation**: See the [MarpleDB documentation](https://docs.marpledata.com/docs)
+- **General questions**: Contact us through our [website](https://www.marpledata.com/)
