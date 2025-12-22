@@ -17,7 +17,7 @@ EXAMPLE_CSV = Path(__file__).parent / "examples_race.csv"
 def _required_env(name: str) -> str:
     value = os.getenv(name)
     if not value:
-        pytest.skip(f"Missing env var {name}; skipping integration test.")
+        pytest.fail(f"Missing env var {name}; skipping integration test.")
     return value
 
 
