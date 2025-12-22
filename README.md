@@ -16,3 +16,9 @@ You can use [MATLAB online](https://matlab.mathworks.com/) for testing.
 It has a free tier for 20h of MATLAB / month.
 
 For MATLAB-specific usage and examples in this repo, see [`matlab/README.md`](matlab/README.md).
+
+## Rust CLI
+
+The `mdb` command-line tool provides direct access to the MarpleDB API from your terminal.
+
+For installation, usage, and examples, see [`mdb-cli/README.md`](mdb-cli/README.md).
