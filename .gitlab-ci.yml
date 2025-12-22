@@ -36,3 +36,25 @@ pytest:
   coverage: '/TOTAL\s+\d+\s+\d+\s+(\d+%)/'
   rules:
     - if: $CI_COMMIT_BRANCH
+
+rust:mdb-cli:
+  image: rust:1.85
+  stage: test
+  cache:
+    key:
+      files:
+        - mdb-cli/Cargo.lock
+        - mdb-cli/Cargo.toml
+    paths:
+      - mdb-cli/target/
+      - .cargo/registry/
+      - .cargo/git/
+  before_script:
+    - rustc --version
+    - cargo --version
+    - apt-get update && apt-get install -y --no-install-recommends pkg-config libssl-dev ca-certificates
+  script:
+    - cd mdb-cli
+    - cargo test --locked
+  rules:
+    - if: $CI_COMMIT_BRANCH
