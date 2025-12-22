@@ -109,11 +109,22 @@ def test_db_get_parquet(db: DB, stream_name: str, dataset_id: int) -> None:
             assert "value_text" in table.column_names
 
 
-def test_insight_export(insight: Insight, stream_name: str, dataset_id: int) -> None:
+@pytest.fixture(scope="session")
+def insight_dataset(insight: Insight, dataset_id: int):
+    yield insight.get_dataset_mdb(dataset_id)
+
+
+def test_insight_mdb_signals(insight: Insight, dataset_id: int) -> None:
+    signals = insight.get_signals_mdb(dataset_id)
+    assert len(signals) > 0
+    assert "car.speed" in [signal["name"] for signal in signals]
+    assert "car.accel" in [signal["name"] for signal in signals]
+
+
+def test_insight_export(insight: Insight, insight_dataset: dict) -> None:
     with TemporaryDirectory() as tmp_path:
-        file_path = insight.export_mdb(
-            stream_name,
-            dataset_id,
+        file_path = insight.export_data(
+            insight_dataset["dataset_filter"],
             format="h5",
             signals=["car.speed"],
             timestamp_stop=1e9,

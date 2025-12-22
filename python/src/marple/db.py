@@ -29,11 +29,10 @@ SCHEMA = pa.schema(
 
 
 class DB:
-    _known_streams = {}
-
     def __init__(self, api_token: str, api_url: str = SAAS_URL):
         self.api_url = api_url
         self.api_token = api_token
+        self._known_streams = {}
 
         bearer_token = f"Bearer {api_token}"
         self.session = requests.Session()
@@ -64,7 +63,7 @@ class DB:
             self._validate_response(r, msg_fail_connect, check_status=False)
 
             # authenticated endpoint
-            r = self.get("/user/info")
+            r = self.get("/streams")
             self._validate_response(r, msg_fail_auth, check_status=False)
 
         except ConnectionError:
@@ -76,12 +75,12 @@ class DB:
         r = self.get("/streams")
         return r.json()
 
-    def get_datasets(self, stream_key: str | int) -> dict:
+    def get_datasets(self, stream_key: str | int) -> list[dict]:
         stream_id = self._get_stream_id(stream_key)
         r = self.get(f"/stream/{stream_id}/datasets")
         return r.json()
 
-    def get_signals(self, stream_key: str | int, dataset_id: int) -> dict:
+    def get_signals(self, stream_key: str | int, dataset_id: int) -> list[dict]:
         stream_id = self._get_stream_id(stream_key)
         r = self.get(f"/stream/{stream_id}/dataset/{dataset_id}/signals")
         self._validate_response(r, "Get signals failed", check_status=False)
@@ -91,7 +90,7 @@ class DB:
         self,
         stream_key: str | int,
         file_path: str,
-        metadata: dict = {},
+        metadata: dict = None,
         file_name: Optional[str] = None,
     ) -> int:
         stream_id = self._get_stream_id(stream_key)
@@ -100,7 +99,7 @@ class DB:
             files = {"file": file}
             data = {
                 "dataset_name": file_name or Path(file_path).name,
-                "metadata": json.dumps(metadata),
+                "metadata": json.dumps(metadata or {}),
             }
 
             r = self.post(f"/stream/{stream_id}/ingest", files=files, data=data)
@@ -121,7 +120,7 @@ class DB:
 
         raise Exception(f"No status found for dataset {dataset_id} in stream {stream_key}")
 
-    def download_original(self, stream_key: str | int, dataset_id: int, destination_folder: str = ".") -> None:
+    def download_original(self, stream_key: str | int, dataset_id: int, destination_folder: str = ".") -> Path:
         """
         Download the original file from the dataset to the destination folder.
         """
@@ -136,9 +135,12 @@ class DB:
         request.urlretrieve(download_url, target_path)
         return target_path
 
-    def download_parquet(
+    def download_signal(
         self, stream_key: str | int, dataset_id: int, signal_id: int, destination_folder: str = "."
-    ) -> None:
+    ) -> list[Path]:
+        """
+        Download the parquet file for a signal from the dataset to the destination folder.
+        """
         stream_id = self._get_stream_id(stream_key)
         r = self.get(f"/stream/{stream_id}/dataset/{dataset_id}/signal/{signal_id}/path")
         self._validate_response(r, "Get parquet path failed", check_status=False)
@@ -244,6 +246,9 @@ class DB:
         insight_workspace: Optional[str] = None,
         insight_project: Optional[str] = None,
     ) -> int:
+        """
+        Create a new datastream.
+        """
         r = self.post(
             "/stream",
             json={

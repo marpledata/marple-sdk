@@ -32,6 +32,8 @@ dependencies = [
 [project.urls]
 Homepage = "https://www.marpledata.com/"
 Documentation = "https://docs.marpledata.com/docs"
+Repository = "https://gitlab.com/marpledata/marple-sdk/-/tree/main/python"
+Issues = "https://github.com/marpledata/marple-sdk/issues"
 
 [build-system]
 requires = ["hatchling >= 1.26"]
