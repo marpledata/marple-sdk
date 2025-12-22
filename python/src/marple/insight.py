@@ -118,7 +118,7 @@ class Insight:
         Export a dataset to a file. (Only works for Marple DB datasets)
         """
         dataset = self.get_dataset_mdb(dataset_id)
-        return self.export_data(dataset, format, timestamp_start, timestamp_stop, signals, destination)
+        return self._export_data(dataset, format, timestamp_start, timestamp_stop, signals, destination)
 
     def _export_data(
         self,
@@ -132,7 +132,7 @@ class Insight:
         t_range = (dataset["timestamp_start"], dataset["timestamp_stop"])
         file_name = f"export.{format}"
         signal_list = self.get_signals(dataset["dataset_filter"])
-        if signal_list is not None:
+        if signals is not None:
             signal_list = [signal for signal in signal_list if signal["name"] in signals]
 
         response = self.post(

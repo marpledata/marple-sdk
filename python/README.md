@@ -59,7 +59,7 @@ while True:
 - **Upload a file to a file-stream**: `db.push_file(stream_key, file_path, metadata={...})`
 - **Poll ingest status**: `db.get_status(stream_key, dataset_id)`
 - **Download original uploaded file**: `db.download_original(stream_key, dataset_id, destination_folder=".")`
-- **Download parquet for a signal**: `db.download_parquet(stream_key, dataset_id, signal_id, destination_folder=".")`
+- **Download parquet for a signal**: `db.download_signal(stream_key, dataset_id, signal_id, destination_folder=".")`
 
 For live/realtime streams (creating and appending data):
 
@@ -78,6 +78,12 @@ db.post("/query", json={"query": "select 1"})
 
 ## Marple Insight
 
+### Common operations
+
+- **List datasets in the workspace**: `insight.get_datasets()`
+- **Get a Marple DB dataset (by dataset id)**: `insight.get_dataset_mdb(dataset_id)`
+- **List signals in a dataset**: `insight.get_signals(dataset_filter)` / `insight.get_signals_mdb(dataset_id)`
+
 ### Example: export a dataset (H5/MAT)
 
 ```python
@@ -92,12 +98,13 @@ STREAM = "Car data"
 insight = Insight(INSIGHT_TOKEN, INSIGHT_URL)
 db = DB(DB_TOKEN, DB_URL)
 
-dataset = db.get_datasets(STREAM)[0]
+dataset_id = db.get_datasets(STREAM)[0]["id"]
+insight_dataset = insight.get_dataset_mdb(dataset_id)
 
-file_path = insight.export_mdb(
-    STREAM,
-    dataset["id"],
+file_path = insight.export_data_mdb(
+    dataset_id,
     format="h5",
+    signals=["car.speed"],
     destination=".",
 )
 print("Wrote", file_path)

@@ -99,7 +99,7 @@ def test_db_get_parquet(db: DB, stream_name: str, dataset_id: int) -> None:
     signals = db.get_signals(stream_name, dataset_id)
     signal = random.choice(signals)
     with TemporaryDirectory() as tmp_path:
-        paths = db.download_parquet(stream_name, dataset_id, signal["id"], destination_folder=tmp_path)
+        paths = db.download_signal(stream_name, dataset_id, signal["id"], destination_folder=tmp_path)
         assert len(paths) > 0
         for path in paths:
             table = pq.read_table(path)
@@ -109,7 +109,7 @@ def test_db_get_parquet(db: DB, stream_name: str, dataset_id: int) -> None:
             assert "value_text" in table.column_names
 
 
-@pytest.fixture(scope="session")
+@pytest.fixture()
 def insight_dataset(insight: Insight, dataset_id: int):
     yield insight.get_dataset_mdb(dataset_id)
 
