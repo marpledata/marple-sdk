@@ -1,6 +1,6 @@
 # Marple SDK
 
-An SDK to interact with [Marple](https://www.marpledata.com) products.
+An SDK to interact with [Marple](https://www.marpledata.com) DB & Insight
 
 ## Installation and importing
 
