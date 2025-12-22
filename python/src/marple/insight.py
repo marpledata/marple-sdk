@@ -56,7 +56,7 @@ class Insight:
         """
         Get all datasets in the workspace.
         """
-        r = self.get("/sources/search")
+        r = self.post("/sources/search")
         return r.json()["message"]
 
     def get_dataset(self, dataset_filter: dict) -> dict:
