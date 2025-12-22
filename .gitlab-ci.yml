@@ -14,7 +14,7 @@ cache:
     - python/.venv/
 
 pytest:
-  image: python:3.12
+  image: python:3.11
   stage: test
   before_script:
     - python -V
@@ -22,7 +22,7 @@ pytest:
     - uv --version
   script:
     - cd python
-    - uv run pytest -vs --junitxml=pytest.xml
+    - /root/.local/bin/uv run pytest -vs --junitxml=pytest.xml
   artifacts:
     when: always
     reports:
