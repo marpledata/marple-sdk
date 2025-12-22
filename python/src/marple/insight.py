@@ -1,5 +1,6 @@
 from pathlib import Path
 from typing import Optional, Tuple
+from urllib import request
 
 import requests
 from requests import Response
@@ -51,27 +52,97 @@ class Insight:
 
         return True
 
-    def export_mdb(
+    def get_datasets(self) -> list[dict]:
+        """
+        Get all datasets in the workspace.
+        """
+        r = self.post("/sources/search", json={"library_filter": {}})
+        return r.json()["message"]
+
+    def get_dataset(self, dataset_filter: dict) -> dict:
+        datasets = self.get_datasets()
+        dataset = next((d for d in datasets if d["dataset_filter"] == dataset_filter), None)
+        if dataset is None:
+            raise ValueError(f"Dataset {dataset_filter} not found")
+        return dataset
+
+    def get_dataset_mdb(self, dataset_id: int) -> dict:
+        """
+        Get a Marple DB dataset. (Marple DB Default)
+        """
+        datasets = self.get_datasets()
+        dataset = next((d for d in datasets if d["dataset_filter"]["dataset"] == dataset_id), None)
+        if dataset is None:
+            raise ValueError(f"Dataset {dataset_id} not found")
+        return dataset
+
+    def get_signals(self, dataset_filter: dict) -> list[dict]:
+        """
+        Get all signals in a dataset. (Marple DB Default)
+        """
+        r = self.post("/sources/signals", json={"dataset_filter": dataset_filter})
+        return r.json()["message"]["signal_list"]
+
+    def get_signals_mdb(self, dataset_id: int) -> list[dict]:
+        """
+        Get all signals in a dataset. (Marple DB Default)
+        """
+        dataset = self.get_dataset_mdb(dataset_id)
+        return self.get_signals(dataset["dataset_filter"])
+
+    def export_data(
         self,
-        stream_id: int,
+        dataset_filter: dict,
+        format: str = "mat",
+        timestamp_start: Optional[int] = None,
+        timestamp_stop: Optional[int] = None,
+        signals: Optional[list[str]] = None,
+        destination: str = ".",
+    ):
+        """
+        Export a dataset to a file.
+        """
+        dataset = self.get_dataset(dataset_filter)
+        return self._export_data(dataset, format, timestamp_start, timestamp_stop, signals, destination)
+
+    def export_data_mdb(
+        self,
         dataset_id: int,
         format: str = "mat",
         timestamp_start: Optional[int] = None,
         timestamp_stop: Optional[int] = None,
+        signals: Optional[list[str]] = None,
         destination: str = ".",
-    ):
-        t_range = self._get_time_range(stream_id, dataset_id)
+    ) -> Path:
+        """
+        Export a dataset to a file. (Only works for Marple DB datasets)
+        """
+        dataset = self.get_dataset_mdb(dataset_id)
+        return self._export_data(dataset, format, timestamp_start, timestamp_stop, signals, destination)
+
+    def _export_data(
+        self,
+        dataset: dict,
+        format: str = "mat",
+        timestamp_start: Optional[int] = None,
+        timestamp_stop: Optional[int] = None,
+        signals: Optional[list[str]] = None,
+        destination: str = ".",
+    ) -> Path:
         file_name = f"export.{format}"
+        signal_list = self.get_signals(dataset["dataset_filter"])
+        if signals is not None:
+            signal_list = [signal for signal in signal_list if signal["name"] in signals]
 
         response = self.post(
             "/export",
             json={
-                "dataset_filter": {"dataset": dataset_id, "stream": stream_id},
+                "dataset_filter": dataset["dataset_filter"],
                 "export_format": format,
                 "file_name": file_name,
-                "signals": self._get_signals(stream_id, dataset_id),
-                "timestamp_start": (timestamp_start if timestamp_start is not None else t_range[0]),
-                "timestamp_stop": (timestamp_stop if timestamp_stop is not None else t_range[1]),
+                "signals": signal_list,
+                "timestamp_start": (dataset["timestamp_start"] if timestamp_start is None else timestamp_start),
+                "timestamp_stop": (dataset["timestamp_stop"] if timestamp_stop is None else timestamp_stop),
             },
         )
         temporary_link = response.json()["message"]["download_path"]
@@ -79,24 +150,5 @@ class Insight:
         download_url = f"{self.api_url}/download/{temporary_link}"
         target_path = Path(destination) / file_name
 
-        with requests.get(download_url, stream=True) as r:
-            r.raise_for_status()
-            with open(target_path, "wb") as f:
-                for chunk in r.iter_content(chunk_size=65536):  # 64kB
-                    if chunk:  # filter out keep-alive chunks
-                        f.write(chunk)
-
-    # Internal functions #
-
-    def _get_signals(self, stream_id: int, dataset_id: int) -> list:
-        dataset_filter = {"dataset": dataset_id, "stream": stream_id}
-        response = self.post(f"/sources/signals", json={"dataset_filter": dataset_filter})
-        return response.json()["message"]["signal_list"]
-
-    def _get_time_range(self, stream_id: int, dataset_id: int) -> Tuple[int, int]:
-        response = self.post("/sources/search", json={"library_filter": {"stream": stream_id}})
-        datasets = response.json()["message"]
-        for dataset in datasets:
-            if dataset["dataset_filter"]["dataset"] == dataset_id:
-                return (dataset["timestamp_start"], dataset["timestamp_stop"])
-        raise Exception(f"No time range found for dataset {dataset_id} in stream {stream_id}")
+        request.urlretrieve(download_url, target_path)
+        return target_path

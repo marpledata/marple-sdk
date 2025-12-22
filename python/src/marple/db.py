@@ -2,6 +2,7 @@ import json
 from io import BytesIO
 from pathlib import Path
 from typing import Literal, Optional
+from urllib import parse, request
 
 import numpy as np
 import pandas as pd
@@ -28,11 +29,10 @@ SCHEMA = pa.schema(
 
 
 class DB:
-    _known_streams = {}
-
     def __init__(self, api_token: str, api_url: str = SAAS_URL):
         self.api_url = api_url
         self.api_token = api_token
+        self._known_streams = {}
 
         bearer_token = f"Bearer {api_token}"
         self.session = requests.Session()
@@ -63,7 +63,7 @@ class DB:
             self._validate_response(r, msg_fail_connect, check_status=False)
 
             # authenticated endpoint
-            r = self.get("/user/info")
+            r = self.get("/streams")
             self._validate_response(r, msg_fail_auth, check_status=False)
 
         except ConnectionError:
@@ -75,16 +75,22 @@ class DB:
         r = self.get("/streams")
         return r.json()
 
-    def get_datasets(self, stream_key: str | int) -> dict:
+    def get_datasets(self, stream_key: str | int) -> list[dict]:
         stream_id = self._get_stream_id(stream_key)
         r = self.get(f"/stream/{stream_id}/datasets")
+        return r.json()
+
+    def get_signals(self, stream_key: str | int, dataset_id: int) -> list[dict]:
+        stream_id = self._get_stream_id(stream_key)
+        r = self.get(f"/stream/{stream_id}/dataset/{dataset_id}/signals")
+        self._validate_response(r, "Get signals failed", check_status=False)
         return r.json()
 
     def push_file(
         self,
         stream_key: str | int,
         file_path: str,
-        metadata: dict = {},
+        metadata: dict = None,
         file_name: Optional[str] = None,
     ) -> int:
         stream_id = self._get_stream_id(stream_key)
@@ -93,7 +99,7 @@ class DB:
             files = {"file": file}
             data = {
                 "dataset_name": file_name or Path(file_path).name,
-                "metadata": json.dumps(metadata),
+                "metadata": json.dumps(metadata or {}),
             }
 
             r = self.post(f"/stream/{stream_id}/ingest", files=files, data=data)
@@ -114,20 +120,37 @@ class DB:
 
         raise Exception(f"No status found for dataset {dataset_id} in stream {stream_key}")
 
-    def download_original(self, stream_key: str | int, dataset_id: str, destination: str = ".") -> None:
+    def download_original(self, stream_key: str | int, dataset_id: int, destination_folder: str = ".") -> Path:
+        """
+        Download the original file from the dataset to the destination folder.
+        """
         stream_id = self._get_stream_id(stream_key)
         response = self.get(f"/stream/{stream_id}/dataset/{dataset_id}/backup")
-        temporary_link = Path(response.json()["path"])
+        self._validate_response(response, "Download original file failed", check_status=False)
+        download_url = response.json()["path"]
+        if not download_url.startswith("http"):
+            download_url = f"{self.api_url}/download/{download_url}"
 
-        download_url = f"{self.api_url}/download/{temporary_link}"
-        target_path = Path(destination) / temporary_link.name
+        target_path = Path(destination_folder) / parse.urlparse(download_url).path.rsplit("/")[1]
+        request.urlretrieve(download_url, target_path)
+        return target_path
 
-        with requests.get(download_url, stream=True) as r:
-            r.raise_for_status()
-            with open(target_path, "wb") as f:
-                for chunk in r.iter_content(chunk_size=65536):  # 64kB
-                    if chunk:  # filter out keep-alive chunks
-                        f.write(chunk)
+    def download_signal(
+        self, stream_key: str | int, dataset_id: int, signal_id: int, destination_folder: str = "."
+    ) -> list[Path]:
+        """
+        Download the parquet file for a signal from the dataset to the destination folder.
+        """
+        stream_id = self._get_stream_id(stream_key)
+        r = self.get(f"/stream/{stream_id}/dataset/{dataset_id}/signal/{signal_id}/path")
+        self._validate_response(r, "Get parquet path failed", check_status=False)
+        dest = Path(destination_folder)
+        parquet_paths = []
+        for path in r.json()["paths"]:
+            dest_path = dest / parse.urlparse(path).path.rsplit("/")[1]
+            request.urlretrieve(path, dest_path)
+            parquet_paths.append(dest_path)
+        return parquet_paths
 
     def add_dataset(self, stream_key: str | int, dataset_name: str, metadata: dict | None = None) -> int:
         """
@@ -223,6 +246,9 @@ class DB:
         insight_workspace: Optional[str] = None,
         insight_project: Optional[str] = None,
     ) -> int:
+        """
+        Create a new datastream.
+        """
         r = self.post(
             "/stream",
             json={

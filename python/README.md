@@ -1,6 +1,6 @@
 # Marple SDK
 
-An SDK to interact with [Marple](https://www.marpledata.com) products.
+An SDK to interact with [Marple](https://www.marpledata.com) DB & Insight
 
 ## Installation and importing
 
@@ -10,147 +10,102 @@ Install the Marple SDK using your package manager:
 - `uv add marpledata`
 - `pip install marpledata`
 
-The SDK can interact with three Marple products:
+The SDK currently exposes:
 
 ```python
-from marple import Marple  # deprecated old SDK
-from marple import DB  # Marple DB
-from marple import Insight  # Marple Insight
+from marple import DB      # Marple DB
+from marple import Insight # Marple Insight
 ```
 
 ## Marple DB
 
-To get started, make sure you set up Marple DB in the user interface. Create
+To get started:
 
-1. A **datastream**, to configure what kind of files you want to import
-2. An **API token** (in user settings)
+- Create a **stream** in the Marple DB UI
+- Create an **API token** (in user settings)
 
-⚠ If you are using a VPC or self-hosted version, you should also submit a custom `api_url` to the `DB` object.
+If you are using a VPC or self-hosted version, pass a custom `api_url` to `DB(...)` (it should end in `/api/v1`).
 
-### Example: importing a file
+### Example: import a file and poll ingest status
 
-This example shows the primary flow of importing a new file into Marple DB:
+This is the typical flow for importing a new file into Marple DB:
 
 ```python
 import time
 from marple import DB
 
-# create a datastream and API token in the Marple DB web application
-DATASTREAM = 'Car data'
-API_TOKEN = '<your api token>'
-API_URL = '<optional, if you are not on db.marpledata.com. e.g. db.customer.marpledata.com/api/v1 - link to db, ending in /api/v1>'
+# Create a stream + API token in the Marple DB web application
+STREAM = "Car data"
+API_TOKEN = "<your api token>"
+API_URL = "https://db.marpledata.com/api/v1"  # optional if using the default SaaS
 
 db = DB(API_TOKEN, API_URL)
 
-if not db.check_connection()
-  raise Exception("Could not connect")
+db.check_connection()
 
-id = db.push_file(DATASTREAM, "tests/example_race.csv", metadata={"driver": "Mbaerto"})
+dataset_id = db.push_file(STREAM, "tests/examples_race.csv", metadata={"driver": "Mbaerto"})
 
-is_importing = True
-while is_importing:
-    status = db.get_status(STREAM_CSV, dataset_id)
-    if status["import_status"] in ["FINISHED", "FAILED"]:
-        is_importing = False
+while True:
+    status = db.get_status(STREAM, dataset_id)
+    if status.get("import_status") in {"FINISHED", "FAILED"}:
+        break
     time.sleep(1)
-
 ```
 
-### Available functions
+### Common operations
 
-Functions are available for common actions.
+- **List streams**: `db.get_streams()`
+- **List datasets in a stream**: `db.get_datasets(stream_key)`
+- **Upload a file to a file-stream**: `db.push_file(stream_key, file_path, metadata={...})`
+- **Poll ingest status**: `db.get_status(stream_key, dataset_id)`
+- **Download original uploaded file**: `db.download_original(stream_key, dataset_id, destination_folder=".")`
+- **Download parquet for a signal**: `db.download_signal(stream_key, dataset_id, signal_id, destination_folder=".")`
 
-**`db.get_streams()`**
+For live/realtime streams (creating and appending data):
 
-Returns
+- **Create an empty dataset**: `db.add_dataset(stream_key, dataset_name, metadata=None)`
+- **Upsert signal definitions**: `db.upsert_signals(stream_key, dataset_id, signals=[...])`
+- **Append timeseries data**: `db.dataset_append(stream_key, dataset_id, data=df, shape="long"|"wide"|None)`
 
-- List of all datastreams, their configuration, and statistics about their data sizes.
+### Calling endpoints directly
 
-**`db.get_datasets(stream_name)`**
-
-Requires
-
-- `stream_name`: Name of an existing datastream
-
-Returns
-
-- List of all datasets, their import status, and detailed statistics.
-
-**`db.push_file(stream_name, file_path, metadata)`**
-
-Requires
-
-- `stream_name`: Name of an existing datastream
-- `file_path`: Path to a local file on disk, e.g. `~/Downloads/test_data.mat`
-- `metadata`: Dictionary with key-value pairs, e.g. `{'location': 'Munich', 'machine': 'C-3PO'}`
-
-Returns
-
-- Id of the new dataset
-
-**`db.get_status(stream_name, dataset_id)`**
-
-- `stream_name`: Name of an existing datastream
-- `dataset_id`: Id of a dataset, obtained using e.g. `db.push_file(...)`
-
-**`db.download_original(stream_name, dataset_id, destination)`**
-
-Requires
-
-- `stream_name`
-- `dataset_id`
-- `destination` (_optional_): the target directory on your local machine (default '.')
-
-Returns
-
-- Nothing, but downloads the file to destination folder
-
-### Calling endpoints
-
-For more advanced use cases, you can directly call endpoints by their METHOD:
+For advanced use cases, you can call API endpoints directly:
 
 ```python
-db.get('/health')
-db.post('/stream/4/dataset/67/metadata', json={'Driver': 'Don Luigi'})
+db.get("/health")
+db.post("/query", json={"query": "select 1"})
 ```
-
-The full list of endpoints can be found in the Swagger Documentation: [https://db.marpledata.com/api/docs](https://db.marpledata.com/api/docs).
 
 ## Marple Insight
 
-### Example: generating a MAT file export from a Marple DB file
+### Common operations
+
+- **List datasets in the workspace**: `insight.get_datasets()`
+- **Get a Marple DB dataset (by dataset id)**: `insight.get_dataset_mdb(dataset_id)`
+- **List signals in a dataset**: `insight.get_signals(dataset_filter)` / `insight.get_signals_mdb(dataset_id)`
+
+### Example: export a dataset (H5/MAT)
 
 ```python
 from marple import DB, Insight
 
 INSIGHT_TOKEN = "<your api token>"
-INSIGHT_URL = "<optional, if you are not on insight.marpledata.com. e.g. insight.customer.marpledata.com/api/v1 - link to insight, ending in /api/v1>"
+INSIGHT_URL = "https://insight.marpledata.com/api/v1"  # optional if using the default SaaS
 DB_TOKEN = "<your api token>"
-DB_URL = "<optional, if you are not on db.marpledata.com. e.g. db.customer.marpledata.com/api/v1 - link to db, ending in /api/v1>"
-DATASTREAM = "Car data"
+DB_URL = "https://db.marpledata.com/api/v1"  # optional if using the default SaaS
+STREAM = "Car data"
 
 insight = Insight(INSIGHT_TOKEN, INSIGHT_URL)
 db = DB(DB_TOKEN, DB_URL)
 
-stream_id = db._stream_name_to_id(DATASTREAM)
-dataset = db.get_datasets(DATASTREAM)[0]
+dataset_id = db.get_datasets(STREAM)[0]["id"]
+insight_dataset = insight.get_dataset_mdb(dataset_id)
 
-insight.export_mdb(stream_id, dataset["id"], format="h5", destination="/home/nero/Downloads")
+file_path = insight.export_data_mdb(
+    dataset_id,
+    format="h5",
+    signals=["car.speed"],
+    destination=".",
+)
+print("Wrote", file_path)
 ```
-
-### Available functions
-
-**`db.export_db(stream_name, file_path, metadata)`**
-
-Requires
-
-- `stream_id`
-- `dataset_id`
-- `format`: File format, one of [mat, h5]
-- `timestamp_start` (_optional_): Left time cutoff for export
-- `timestamp_stop` (_optional_): Right time cutoff for export
-- `destination` (_optional_): the target directory on your local machine (default '.')
-
-Returns
-
-- Nothing, but downloads a file "export.ext" to destination folder, with ".ext" depending on your export format (e.g. export.mat, export.h5, export.csv)

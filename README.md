@@ -3,3 +3,16 @@
 Powerful SDKs for [Marple](https://www.marpledata.com) products.
 
 All documentation is available on [docs.marpledata.com/sdk](https://docs.marpledata.com/docs/marple-db/api-and-sdk).
+
+## Python SDK
+
+The Python SDK is published on PyPI as **`marpledata`**: [`https://pypi.org/project/marpledata/`](https://pypi.org/project/marpledata/).
+
+For Python-specific usage, development, and examples in this repo, see [`python/README.md`](python/README.md).
+
+## MATLAB SDK
+
+You can use [MATLAB online](https://matlab.mathworks.com/) for testing.
+It has a free tier for 20h of MATLAB / month.
+
+For MATLAB-specific usage and examples in this repo, see [`matlab/README.md`](matlab/README.md).

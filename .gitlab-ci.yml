@@ -1,0 +1,38 @@
+stages:
+  - test
+
+variables:
+  UV_CACHE_DIR: "$CI_PROJECT_DIR/.cache/uv"
+
+cache:
+  key:
+    files:
+      - python/uv.lock
+      - python/pyproject.toml
+  paths:
+    - .cache/uv
+    - python/.venv/
+
+pytest:
+  image: python:3.11
+  stage: test
+  before_script:
+    - python --version
+    - curl -LsSf https://astral.sh/uv/install.sh | sh
+    - /root/.local/bin/uv --version
+  script:
+    - cd python
+    - /root/.local/bin/uv run pytest -vs --junitxml=pytest.xml --cov=marple --cov-report=term-missing --cov-report=xml:coverage.xml
+  artifacts:
+    when: always
+    reports:
+      junit: python/pytest.xml
+      coverage_report:
+        coverage_format: cobertura
+        path: python/coverage.xml
+    paths:
+      - python/pytest.xml
+      - python/coverage.xml
+  coverage: '/TOTAL\s+\d+\s+\d+\s+(\d+%)/'
+  rules:
+    - if: $CI_COMMIT_BRANCH
