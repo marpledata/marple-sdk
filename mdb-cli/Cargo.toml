@@ -55,7 +55,6 @@ categories = [
     "aerospace",
 ]
 license = "Apache-2.0"
-license-file = "LICENSE"
 name = "mdb-cli"
 readme = "README.md"
 repository = "https://github.com/marpledata/marple-sdk/tree/main/mdb-cli"
