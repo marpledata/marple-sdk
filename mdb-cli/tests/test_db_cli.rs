@@ -1,8 +1,10 @@
 use assert_cmd::Command;
 use assert_cmd::cargo::cargo_bin_cmd;
+use parquet::file::reader::{FileReader, SerializedFileReader};
 use serde_json::Value;
 use std::env;
 use std::fs;
+use std::fs::File;
 use std::io::Write;
 use std::path::{Path, PathBuf};
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
@@ -89,6 +91,78 @@ fn is_parquet_file(path: &Path) -> bool {
         Err(_) => return false,
     };
     bytes.starts_with(b"PAR1") && bytes.ends_with(b"PAR1")
+}
+
+fn verify_parquet_columns(path: &Path) {
+    let file = File::open(path).expect("open parquet file");
+    let reader = SerializedFileReader::new(file).expect("create parquet reader");
+    let metadata = reader.metadata();
+    let schema = metadata.file_metadata().schema_descr();
+
+    let column_names: Vec<String> = schema
+        .columns()
+        .iter()
+        .map(|col| col.name().to_string())
+        .collect();
+
+    assert!(
+        column_names.contains(&"time".to_string()),
+        "parquet file missing 'time' column. Found columns: {:?}",
+        column_names
+    );
+    assert!(
+        column_names.contains(&"signal".to_string()),
+        "parquet file missing 'signal' column. Found columns: {:?}",
+        column_names
+    );
+    assert!(
+        column_names.contains(&"value".to_string()),
+        "parquet file missing 'value' column. Found columns: {:?}",
+        column_names
+    );
+}
+
+#[test]
+fn test_version() {
+    let mut cmd = cargo_bin_cmd!("mdb");
+    cmd.env("NO_COLOR", "1");
+    cmd.arg("--version");
+    let output = cmd.assert().success();
+    let stdout = String::from_utf8_lossy(&output.get_output().stdout);
+    let stdout = stdout.trim();
+
+    // Version output should be in format "mdb X.Y.Z" (possibly with pre-release suffix)
+    assert!(
+        stdout.starts_with("mdb "),
+        "version output should start with 'mdb ', got: {}",
+        stdout
+    );
+
+    // Extract version part
+    let version_part = stdout.strip_prefix("mdb ").unwrap();
+
+    // Split by '-' to separate version from pre-release identifier (e.g., "0.1.0-alpha.1")
+    let (base_version, _) = version_part.split_once('-').unwrap_or((version_part, ""));
+
+    // Verify base version has at least major.minor format
+    let parts: Vec<&str> = base_version.split('.').collect();
+    assert!(
+        parts.len() >= 2,
+        "version should have at least major.minor format, got: {}",
+        base_version
+    );
+
+    // Verify major and minor parts are numeric
+    assert!(
+        parts[0].chars().all(|c| c.is_ascii_digit()),
+        "major version should be numeric, got: {}",
+        parts[0]
+    );
+    assert!(
+        parts[1].chars().all(|c| c.is_ascii_digit()),
+        "minor version should be numeric, got: {}",
+        parts[1]
+    );
 }
 
 #[tokio::test]
@@ -265,6 +339,7 @@ async fn test_db_flow_via_cli() {
             is_parquet_file(&p),
             "downloaded signal is not a parquet file"
         );
+        verify_parquet_columns(&p);
     }
 
     // Cleanup: delete stream (and datasets)
