@@ -56,7 +56,7 @@ class Insight:
         """
         Get all datasets in the workspace.
         """
-        r = self.post("/sources/search")
+        r = self.post("/sources/search", json={"library_filter": {}})
         return r.json()["message"]
 
     def get_dataset(self, dataset_filter: dict) -> dict:
@@ -129,7 +129,6 @@ class Insight:
         signals: Optional[list[str]] = None,
         destination: str = ".",
     ) -> Path:
-        t_range = (dataset["timestamp_start"], dataset["timestamp_stop"])
         file_name = f"export.{format}"
         signal_list = self.get_signals(dataset["dataset_filter"])
         if signals is not None:
@@ -142,8 +141,8 @@ class Insight:
                 "export_format": format,
                 "file_name": file_name,
                 "signals": signal_list,
-                "timestamp_start": (timestamp_start if timestamp_start is not None else t_range[0]),
-                "timestamp_stop": (timestamp_stop if timestamp_stop is not None else t_range[1]),
+                "timestamp_start": (dataset["timestamp_start"] if timestamp_start is None else timestamp_start),
+                "timestamp_stop": (dataset["timestamp_stop"] if timestamp_stop is None else timestamp_stop),
             },
         )
         temporary_link = response.json()["message"]["download_path"]
