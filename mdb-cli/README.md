@@ -1,6 +1,10 @@
-# marpledb CLI Tool
+# `mdb`
 
-The `marpledb` CLI tool (`mdb`) provides command-line access to the MarpleDB API: managing streams, uploading files, etc..
+`mdb` is a command line client for the Marple DB API.
+
+## Usage
+
+The `mdb-cli` CLI tool (`mdb`) provides command-line access to the MarpleDB API: managing streams, uploading files, etc..
 
 ## 1. Installing Rust
 
@@ -52,6 +56,7 @@ mdb help
 This will display a list of all supported commands and options for the CLI tool. The tool uses the `MDB_HOST` & `MDB_TOKEN` environment variables to connect to a MarpleDB instance.
 
 As an example:
+
 ```sh
 EXPORT MDB_HOST=db.app.marpledata.com
 EXPORT MDB_TOKEN=mdb_abcdef...ghijk
@@ -60,4 +65,3 @@ mdb stream new "MDF Stream" plugin=mdf plugin-args="--chunksize 2e8"
 mdb ingest "MDF Stream" --recursive --extension .mf4 mdf_files/
 mdb ingest "MDF Stream" -re .mf4 mdf_files/
 ```
-
