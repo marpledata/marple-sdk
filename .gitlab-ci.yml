@@ -1,0 +1,33 @@
+stages:
+  - test
+
+variables:
+  UV_CACHE_DIR: "$CI_PROJECT_DIR/.cache/uv"
+
+cache:
+  key:
+    files:
+      - python/uv.lock
+      - python/pyproject.toml
+  paths:
+    - .cache/uv
+    - python/.venv/
+
+pytest:
+  image: python:3.12
+  stage: test
+  before_script:
+    - python -V
+    - wget -qO- https://astral.sh/uv/install.sh | sh
+    - uv --version
+  script:
+    - cd python
+    - uv run pytest -vs --junitxml=pytest.xml
+  artifacts:
+    when: always
+    reports:
+      junit: python/pytest.xml
+    paths:
+      - python/pytest.xml
+  rules:
+    - if: $CI_COMMIT_BRANCH
