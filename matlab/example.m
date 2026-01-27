@@ -9,22 +9,18 @@ disp(max_turbidity)
 
 %% Example 2: Boxplot of every pH per year
 
-datasets = mdb.get_datasets('charles river');
+datasets = mdb.get_datasets('Charles river measurements');
 T = table();
 
 for i = 1:length(datasets)
   dataset = datasets(i);
-  if ~mdb.is_compatible(dataset.path)
-        fprintf('Skipping %s [Incompatible]\n', dataset.path)
-        continue
-    end
-
   fprintf('Fetching %s\n', dataset.path)
   current_T = mdb.get_data(dataset.path, 'pH');
   current_T.year = repmat(dataset.metadata.Year, height(current_T), 1);
   T = [T; current_T];
 end
 
+figure;
 boxplot(T.pH, T.year);
 xlabel('Year')
 ylabel('pH');
@@ -46,6 +42,7 @@ TT_ph   = toTT(mdb.get_data(file_name, 'pH'), 'pH');
 
 % align timestamps (nearest where timestamps differ)
 TT_all = synchronize(TT_turb, TT_temp, TT_chl, TT_ph, 'union', 'nearest');
+figure;
 scatter3( ...
     TT_all.turbidity, ...     % X
     TT_all.chlorophyll, ...   % Y
