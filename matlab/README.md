@@ -7,7 +7,9 @@ This folder contains a small MATLAB client for Marple DB.
 1. Open `matlab/config.json` and fill in:
 
    - `api_key`
-   - `workspace`, `datapool` (and optionally `api_url`)
+   - `workspace`
+   - (optional) `api_url`
+   - (optional) `datapool`
 
 2. In MATLAB, add this folder to your path:
 

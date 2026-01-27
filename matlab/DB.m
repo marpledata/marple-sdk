@@ -69,7 +69,7 @@ classdef DB
 
     function data = query(obj, query_string)
       endpoint = '/query';
-      body = struct('query', query_string);
+      body = struct('query', query_string, 'hot', true);
       data = obj.make_request('POST', endpoint, body);
     end
 
