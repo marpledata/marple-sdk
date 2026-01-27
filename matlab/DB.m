@@ -30,7 +30,11 @@ classdef DB
 
       % Set additional properties from config
       obj.workspace = cfg.workspace;
-      obj.datapool = cfg.datapool;
+      if isfield(cfg,'datapool')
+            obj.datapool = cfg.datapool;
+      else
+            obj.datapool = "default";
+      end
 
       obj.streams = obj.get_streams();
     end
