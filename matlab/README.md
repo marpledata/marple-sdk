@@ -30,6 +30,6 @@ This folder contains a small MATLAB client for Marple DB.
 ## Notes
 
 - `DB.from_config()` reads `config.json` next to `DB.m`. `api_key` is sent as a Bearer token to the Marple DB API.
-- `get_data(dataset_path, signal_name)` fetches a list of parquet URLs from the API, downloads them into `_marplecache/<workspace>/<datapool>/dataset=<id>/signal=<id>/`, and reads them via `parquetDatastore(...)`.
+- `get_data(dataset_path, signal_name)` fetches a list of parquet URLs from the API, downloads them into `_marplecache/<workspace>/<datapool>/dataset=<id>/signal=<id>/` (via `websave`), and reads them via `parquetDatastore(...)`.
 - If you want a clean re-download, call `mdb.clear_cache()`.
 - If you use MATLAB Online, make sure this `matlab/` folder is on your path and that your `config.json` is set appropriately.

@@ -156,7 +156,7 @@ classdef DB
           [~, name, ext] = fileparts(extractBefore(url, '?'));
           parquet_name = [name ext];
           cache_path = sprintf('%s/%s', cache, parquet_name);
-          copyfile(url, cache_path);
+          websave(cache_path, url);
         end
       end
 
