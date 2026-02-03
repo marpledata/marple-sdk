@@ -1,5 +1,5 @@
 from pathlib import Path
-from typing import Optional, Tuple
+from typing import Optional
 from urllib import request
 
 import requests
