@@ -32,7 +32,7 @@ class DB:
     def __init__(self, api_token: str, api_url: str = SAAS_URL):
         self.api_url = api_url
         self.api_token = api_token
-        self._known_streams = {}
+        self._known_streams: dict[str, int] = {}
 
         bearer_token = f"Bearer {api_token}"
         self.session = requests.Session()

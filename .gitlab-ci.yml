@@ -1,4 +1,5 @@
 stages:
+  - quality
   - test
 
 variables:
@@ -39,6 +40,8 @@ pytest:
       changes:
         - python/**/*
 
+
+
 rust:mdb-cli:
   image: rust:1.85
   stage: test
@@ -62,3 +65,26 @@ rust:mdb-cli:
     - if: $CI_COMMIT_BRANCH
       changes:
         - mdb-cli/**/*
+
+
+.base_ruff:
+  stage: quality
+  interruptible: true
+  image:
+    name: ghcr.io/astral-sh/ruff:0.14.14-alpine
+  before_script:
+    - cd $CI_PROJECT_DIR
+    - ruff --version
+
+Ruff Check:
+  extends: .base_ruff
+  script:
+    - ruff check --output-format=gitlab --output-file=code-quality-report.json
+  artifacts:
+    reports:
+      codequality: $CI_PROJECT_DIR/code-quality-report.json
+
+Ruff Format:
+  extends: .base_ruff
+  script:
+    - ruff format --diff
