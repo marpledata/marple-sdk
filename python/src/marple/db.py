@@ -9,6 +9,7 @@ import pandas as pd
 import pyarrow as pa
 import pyarrow.parquet as pq
 import requests
+from pydantic import BaseModel
 from requests import Response
 
 SAAS_URL = "https://db.marpledata.com/api/v1"
@@ -26,6 +27,72 @@ SCHEMA = pa.schema(
         pa.field(COL_VAL_TEXT, pa.string()),
     ]
 )
+
+
+class DataStream(BaseModel):
+    type: Literal["files", "realtime"]
+    id: int
+    name: str
+    description: str | None
+    datapool: str
+    layer_shifts: list[int]
+    version_id: int
+    insight_workspace: Optional[str]
+    insight_project: Optional[str]
+
+    # Stats
+    created_at: float
+    last_updated: float
+    last_ingested: Optional[float]
+    n_datasets: Optional[int]
+    n_datapoints: Optional[int]
+    cold_bytes: Optional[int]
+    hot_bytes: Optional[int]
+
+
+class Dataset(BaseModel):
+    id: int
+    datastream_id: int
+    datastream_version: int
+    created_at: float
+    created_by: str | None
+    import_status: str
+    import_progress: float | None
+    import_message: str | None
+    import_time: float | None
+    path: str
+    metadata: dict
+    cold_path: str
+    cold_bytes: int
+    hot_bytes: int
+    backup_path: str | None
+    backup_size: int | None
+    plugin: str
+    plugin_args: str
+    n_datapoints: int
+    n_signals: int
+    timestamp_start: int | None
+    timestamp_stop: int | None
+    import_speed: float
+    parquet_version: int
+
+
+class Signal(BaseModel):
+    id: int
+    name: str
+    unit: str | None
+    description: str | None
+    metadata: dict
+    storage_status: str
+    cold_bytes: int
+    hot_bytes: int | None
+    count: int
+    stats: dict
+    count_value: int
+    count_text: int
+    time_min: int | None
+    time_max: int | None
+    parquet_version: int
 
 
 class DB:
@@ -71,27 +138,27 @@ class DB:
 
         return True
 
-    def get_streams(self) -> dict:
+    def get_streams(self) -> list[DataStream]:
         r = self.get("/streams")
-        return r.json()
+        return [DataStream(**stream) for stream in r.json()["streams"]]
 
-    def get_datasets(self, stream_key: str | int) -> list[dict]:
+    def get_datasets(self, stream_key: str | int) -> list[Dataset]:
         stream_id = self._get_stream_id(stream_key)
         r = self.get(f"/stream/{stream_id}/datasets")
-        return r.json()
+        return [Dataset(**dataset) for dataset in r.json()]
 
-    def get_signals(self, stream_key: str | int, dataset_id: int) -> list[dict]:
+    def get_signals(self, stream_key: str | int, dataset_id: int) -> list[Signal]:
         stream_id = self._get_stream_id(stream_key)
         r = self.get(f"/stream/{stream_id}/dataset/{dataset_id}/signals")
         self._validate_response(r, "Get signals failed", check_status=False)
-        return r.json()
+        return [Signal(**signal) for signal in r.json()]
 
     def push_file(
         self,
         stream_key: str | int,
         file_path: str,
-        metadata: dict = None,
-        file_name: Optional[str] = None,
+        metadata: dict | None = None,
+        file_name: str | None = None,
     ) -> int:
         stream_id = self._get_stream_id(stream_key)
 
@@ -286,13 +353,13 @@ class DB:
         if stream_key in self._known_streams:
             return self._known_streams[stream_key]
 
-        streams = self.get_streams()["streams"]
+        streams = self.get_streams()
         for stream in streams:
-            if stream["name"].lower() == stream_key.lower():
-                self._known_streams[stream_key] = stream["id"]
-                return stream["id"]
+            if stream.name.lower() == stream_key.lower():
+                self._known_streams[stream_key] = stream.id
+                return stream.id
 
-        available_streams = ", ".join([s["name"] for s in streams])
+        available_streams = ", ".join([s.name for s in streams])
         raise Exception(f'Stream "{stream_key}" not found \nAvailable streams: {available_streams}')
 
     @staticmethod

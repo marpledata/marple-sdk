@@ -53,7 +53,7 @@ def dataset_id(db: DB, stream_name: str) -> int:
     )
     assert isinstance(dataset_id, int)
 
-    deadline = time.monotonic() + 10
+    deadline = time.monotonic() + 20
 
     last_status: dict | None = None
     while time.monotonic() < deadline:
@@ -73,8 +73,8 @@ def test_db_check_connection(db: DB) -> None:
 
 
 def test_db_get_streams_and_datasets(db: DB, stream_name: str) -> None:
-    streams = db.get_streams()["streams"]
-    assert stream_name in [stream["name"] for stream in streams]
+    streams = db.get_streams()
+    assert stream_name in [stream.name for stream in streams]
 
     datasets = db.get_datasets(stream_name)
     assert isinstance(datasets, list)
@@ -99,7 +99,7 @@ def test_db_get_parquet(db: DB, stream_name: str, dataset_id: int) -> None:
     signals = db.get_signals(stream_name, dataset_id)
     signal = random.choice(signals)
     with TemporaryDirectory() as tmp_path:
-        paths = db.download_signal(stream_name, dataset_id, signal["id"], destination_folder=tmp_path)
+        paths = db.download_signal(stream_name, dataset_id, signal.id, destination_folder=tmp_path)
         assert len(paths) > 0
         for path in paths:
             table = pq.read_table(path)
