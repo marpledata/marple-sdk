@@ -1,7 +1,8 @@
 import json
+from collections import UserList
 from io import BytesIO
 from pathlib import Path
-from typing import Literal, Optional
+from typing import Iterable, Literal, Optional
 from urllib import parse, request
 
 import numpy as np
@@ -49,6 +50,31 @@ class DataStream(BaseModel):
     cold_bytes: Optional[int]
     hot_bytes: Optional[int]
 
+    def __init__(self, args, db: "DB"):
+        super().__init__(args)
+        self.db = db
+        self._known_datasets: dict[str, int] = {}
+        self._datasets = dict[int, Dataset]
+        self.has_all_datasets = False
+
+    def get_dataset(self, dataset_id: int) -> "Dataset":
+        if dataset_id not in self._datasets:
+            r = self.db.get(f"/stream/{self.id}/dataset/{dataset_id}")
+            dataset = Dataset(**r.json())
+            self._datasets[dataset_id] = dataset
+            self._known_datasets[dataset.path] = dataset_id
+        return self._datasets[dataset_id]
+
+    def get_datasets(self) -> "DatasetList":
+        if not self.has_all_datasets:
+            r = self.db.get(f"/stream/{self.id}/datasets")
+            for dataset in r.json():
+                dataset_obj = Dataset(**dataset, datastream=self)
+                self._datasets[dataset_obj.id] = dataset_obj
+                self._known_datasets[dataset_obj.path] = dataset_obj.id
+            self.has_all_datasets = True
+        return DatasetList(list(self._datasets.values()), self.db)
+
 
 class Dataset(BaseModel):
     id: int
@@ -76,6 +102,32 @@ class Dataset(BaseModel):
     import_speed: float
     parquet_version: int
 
+    def __init__(self, args, datastream: DataStream):
+        super().__init__(args)
+        self.datastream = datastream
+        self._known_signals: dict[str, int] = {}
+        self._signals: dict[int, Signal] = {}
+        self.has_all_signals = False
+
+    def get_signal(self, signal_name: str) -> "Signal":
+        if signal_name not in self._known_signals:
+            r = self.datastream.db.get(f"/stream/{self.datastream.id}/dataset/{self.id}/signal/{signal_name}")
+            signal_obj = Signal(**r.json(), dataset=self)
+            self._signals[signal_obj.id] = signal_obj
+            self._known_signals[signal_obj.name] = signal_obj.id
+        signal_id = self._known_signals[signal_name]
+        return self._signals[signal_id]
+
+    def get_signals(self) -> list["Signal"]:
+        if not self.has_all_signals:
+            r = self.datastream.db.get(f"/stream/{self.datastream.id}/dataset/{self.id}/signals")
+            for signal in r.json():
+                signal_obj = Signal(**signal, dataset=self)
+                self._signals[signal_obj.id] = signal_obj
+                self._known_signals[signal_obj.name] = signal_obj.id
+            self.has_all_signals = True
+        return list(self._signals.values())
+
 
 class Signal(BaseModel):
     id: int
@@ -94,12 +146,85 @@ class Signal(BaseModel):
     time_max: int | None
     parquet_version: int
 
+    def __init__(self, args, dataset: Dataset):
+        super().__init__(args)
+        self.dataset = dataset
+
+    def get_data(self) -> pd.DataFrame:
+        # TODO
+        return pd.DataFrame()
+
+
+class DatasetList(UserList):
+    def __init__(self, datasets: list[Dataset], db: "DB"):
+        super().__init__(datasets)
+        self.db = db
+
+    def where(
+        self, stream_id: int | None = None, metadata: dict[str, int | str | Iterable[int | str]] | None = None
+    ) -> "DatasetList":
+        results = DatasetList([], self.db)
+        cleaned_metadata = {k: [v] if not isinstance(v, list) else v for k, v in (metadata or {}).items()}
+        for dataset in self.data:
+            if stream_id is not None:
+                if dataset.datastream_id != stream_id:
+                    continue
+
+            if any(dataset.metadata.get(field) not in values for field, values in cleaned_metadata.items()):
+                continue
+
+            results.append(dataset)
+
+        return results
+
+    def where_signal(
+        self,
+        signal_name: str,
+        stat: Literal[
+            "cold_bytes",
+            "hot_bytes",
+            "count",
+            "count_value",
+            "count_text",
+            "time_min",
+            "time_max",
+            "max",
+            "min",
+            "sum",
+            "mean",
+        ],
+        greater_than: float | None = None,
+        less_than: float | None = None,
+        equals: float | str | None = None,
+    ) -> "DatasetList":
+        results = DatasetList([], self.db)
+        for dataset in self.data:
+            signal: Signal = dataset.get_signal(signal_name)  # Not sure yet how to do this
+            if stat in ["max", "min", "sum", "mean"]:
+                value = signal.stats.get(stat)
+            else:
+                value = getattr(signal, stat)
+            if value is None:
+                raise ValueError(f"Stat {stat} not found in {dataset}. ")
+            if greater_than is not None:
+                if not value > greater_than:
+                    continue
+            if less_than is not None:
+                if not value < less_than:
+                    continue
+            if equals is not None:
+                if not value == equals:
+                    continue
+            results.append(dataset)
+        return results
+
 
 class DB:
     def __init__(self, api_token: str, api_url: str = SAAS_URL):
         self.api_url = api_url
         self.api_token = api_token
         self._known_streams: dict[str, int] = {}
+        self._streams: dict[int, DataStream] = {}
 
         bearer_token = f"Bearer {api_token}"
         self.session = requests.Session()
@@ -139,19 +264,29 @@ class DB:
         return True
 
     def get_streams(self) -> list[DataStream]:
-        r = self.get("/streams")
-        return [DataStream(**stream) for stream in r.json()["streams"]]
+        if len(self._streams) == 0:
+            r = self.get("/streams")
+            self._streams = {stream["id"]: DataStream(**stream, db=self) for stream in r.json()["streams"]}
+        return list(self._streams.values())
 
-    def get_datasets(self, stream_key: str | int) -> list[Dataset]:
+    def get_stream(self, stream_key: str | int) -> DataStream:
         stream_id = self._get_stream_id(stream_key)
-        r = self.get(f"/stream/{stream_id}/datasets")
-        return [Dataset(**dataset) for dataset in r.json()]
+        return self._streams[stream_id]
+
+    def get_datasets(self, stream_key: str | int | None) -> DatasetList:
+        if stream_key is not None:
+            return self.get_stream(stream_key).get_datasets()
+        return DatasetList([dataset for stream in self.get_streams() for dataset in stream.get_datasets()], self)
+
+    def get_dataset(self, stream_key: str | int, dataset_id: int) -> Dataset:
+        stream = self.get_stream(stream_key)
+        return stream.get_dataset(dataset_id)
 
     def get_signals(self, stream_key: str | int, dataset_id: int) -> list[Signal]:
-        stream_id = self._get_stream_id(stream_key)
-        r = self.get(f"/stream/{stream_id}/dataset/{dataset_id}/signals")
-        self._validate_response(r, "Get signals failed", check_status=False)
-        return [Signal(**signal) for signal in r.json()]
+        return self.get_dataset(stream_key, dataset_id).get_signals()
+
+    def get_signal(self, stream_key: str | int, dataset_id: int, signal_name: str) -> Signal:
+        return self.get_dataset(stream_key, dataset_id).get_signal(signal_name)
 
     def push_file(
         self,
