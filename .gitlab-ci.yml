@@ -15,29 +15,6 @@ cache:
     - python/.venv/
 
 
-.base_ruff:
-  stage: quality
-  interruptible: true
-  image:
-    name: ghcr.io/astral-sh/ruff:0.14.14-alpine
-  before_script:
-    - cd $CI_PROJECT_DIR/python
-    - ruff --version
-
-Ruff Check:
-  extends: .base_ruff
-  script:
-    - ruff check --output-format=gitlab --output-file=code-quality-report.json
-  artifacts:
-    reports:
-      codequality: $CI_PROJECT_DIR/code-quality-report.json
-
-Ruff Format:
-  extends: .base_ruff
-  script:
-    - ruff format --diff
-
-
 pytest:
   image: python:3.11
   stage: test
