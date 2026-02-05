@@ -60,7 +60,7 @@ class DataStream(BaseModel):
     _db: "DB" = PrivateAttr()
 
     def __init__(self, db: "DB", **kwargs):
-        super().__init__(_db=db, **kwargs)
+        super().__init__(**kwargs)
         self._db = db
 
     def get_dataset(self, id: int | None = None, path: str | None = None) -> "Dataset":
@@ -71,9 +71,7 @@ class DataStream(BaseModel):
         if id is not None and path is not None:
             raise ValueError("Only one of id or path can be provided.")
 
-        if path is not None:
-            self.get_datasets()
-            id = self._known_datasets.get(path)
+        id = id if path is None else self.get_dataset_id(path)
 
         if id is None:
             raise ValueError(f"Dataset with path {path} not found in datastream {self.name}.")
@@ -84,6 +82,11 @@ class DataStream(BaseModel):
             self._datasets[id] = dataset
             self._known_datasets[dataset.path] = dataset.id
         return self._datasets[id]
+
+    def get_dataset_id(self, dataset_path: str) -> int | None:
+        if dataset_path not in self._known_datasets:
+            self.get_datasets()
+        return self._known_datasets.get(dataset_path)
 
     def get_datasets(self) -> "DatasetList":
         """Get all datasets in this datastream."""
