@@ -30,12 +30,16 @@ def _required_env(name: str) -> str:
 
 @pytest.fixture(scope="session")
 def db() -> DB:
-    return DB(_required_env("MDB_TOKEN"), api_url="http://localhost:8000/api/v1")
+    url = os.getenv("MDB_API_URL", marple.db.SAAS_URL)
+    assert url is not None
+    return DB(_required_env("MDB_TOKEN"), url)
 
 
 @pytest.fixture(scope="session")
 def insight() -> Insight:
-    return Insight(_required_env("INSIGHT_TOKEN"), api_url="http://localhost:46064/api/v1")
+    url = os.getenv("INSIGHT_API_URL", marple.insight.SAAS_URL)
+    assert url is not None
+    return Insight(_required_env("INSIGHT_TOKEN"), api_url=url)
 
 
 @pytest.fixture(scope="session")
