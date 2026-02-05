@@ -32,7 +32,9 @@ def _required_env(name: str) -> str:
 def db() -> DB:
     url = os.getenv("MDB_API_URL", marple.db.SAAS_URL)
     assert url is not None
-    return DB(_required_env("MDB_TOKEN"), url)
+    new_db = DB(_required_env("MDB_TOKEN"), url)
+    print(f"DB ID: {id(new_db)}")
+    return new_db
 
 
 @pytest.fixture(scope="session")
@@ -120,7 +122,9 @@ def test_db_filter_datasets(db: DB, stream_name: str) -> None:
     ids = [id1, id2, id3]
     wait_for_ingestion(db, stream_name, dataset_ids=ids, timeout=30, allow_iceberg=True)
 
-    all_datasets = db.get_datasets(stream_name)
+    # all_datasets = db.get_datasets(stream_name)
+    stream = db.get_stream(stream_name)
+    all_datasets = stream.get_datasets()
     assert len(all_datasets) == len(ids)
 
     datasets_a1 = all_datasets.where_metadata({"A": 1})
