@@ -121,10 +121,35 @@ def test_db_filter_datasets(db: DB, stream_name: str) -> None:
     assert len(datasets_b23) == 2
 
     random_dataset = random.choice(all_datasets)
-    random_signal = random.choice(random_dataset.get_signals())
+    possible_names = [
+        "driver.steering",
+        "car.speed",
+        "car.accel",
+        "car.dist",
+        "car.lap.num",
+        "car.engine.NGear",
+        "car.engine.trq",
+        "car.engine.speed",
+        "car.engine.temp",
+        "car.wheel.left.trq",
+        "car.wheel.right.trq",
+        "car.wheel.left.speed",
+        "car.wheel.right.speed",
+    ]  # Some signals fail due to rounding with the avg stat
+
+    random_signal = random_dataset.get_signal(random.choice(possible_names))
+
+    assert len(all_datasets.where_dataset("cold_bytes", greater_than=1000)) == len(ids)
+    assert len(all_datasets.where_dataset("cold_bytes", less_than=1000)) == 0
+    assert len(all_datasets.where_dataset("hot_bytes", equals=0)) == 3
+    assert len(all_datasets.where_dataset("created_at", greater_than=time.time() - 1000)) == len(ids)
+    assert len(all_datasets.where_dataset("n_datapoints", equals=15 * 12500)) == len(ids)
+    assert len(all_datasets.where_dataset("timestamp_start", equals=int(0.1 * 1e9))) == len(ids)
 
     def test_signal_filter(signal_name: str, stat, value: float) -> None:
-        assert len(all_datasets.where_signal(signal_name, stat, equals=value)) == len(ids)
+        assert len(all_datasets.where_signal(signal_name, stat, equals=value)) == len(
+            ids
+        ), f"Failed on {signal_name} {stat} == {value}, stat in datasets: {[d.get_signal(signal_name).stats.get(stat) for d in all_datasets]}"
         assert len(all_datasets.where_signal(signal_name, stat, greater_than=value)) == 0
         assert len(all_datasets.where_signal(signal_name, stat, greater_than=value - 1)) == len(ids)
         assert len(all_datasets.where_signal(signal_name, stat, less_than=value)) == 0
@@ -143,6 +168,15 @@ def test_db_filter_datasets(db: DB, stream_name: str) -> None:
     test_signal_filter(random_signal.name, "count", actual_signal.count())
     test_signal_filter(random_signal.name, "count_value", actual_signal.count())
     test_signal_filter(random_signal.name, "count_text", 0)
+
+    def custom_filter(dataset: marple.db.Dataset) -> bool:
+        return (
+            dataset.metadata.get("A") == 1
+            and dataset.metadata.get("B") in [2, 3]
+            or dataset.get_signal("car.engine.NGear").stats.get("max", 0) ** 2 > 16
+        )
+
+    assert len(all_datasets.where_predicate(custom_filter)) == 3
 
 
 def test_db_query_endpoint(db: DB) -> None:
@@ -192,7 +226,7 @@ def test_insight_export(insight: Insight, insight_dataset: dict) -> None:
             insight_dataset["dataset_filter"],
             format="h5",
             signals=["car.speed"],
-            timestamp_stop=1e9,
+            timestamp_stop=int(1e9),
             destination=tmp_path,
         )
         assert Path(file_path).exists()

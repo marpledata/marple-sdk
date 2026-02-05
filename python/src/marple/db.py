@@ -2,7 +2,7 @@ import json
 from collections import UserList
 from io import BytesIO
 from pathlib import Path
-from typing import Iterable, Literal, Optional
+from typing import Callable, Iterable, Literal, Optional
 from urllib import parse, request
 
 import numpy as np
@@ -98,7 +98,7 @@ class DataStream(BaseModel):
                 self._known_datasets[dataset_obj.path] = dataset_obj.id
             self._has_all_datasets = True
 
-        return DatasetList(list(self._datasets.values()))
+        return DatasetList(self._datasets.values())
 
 
 class Dataset(BaseModel):
@@ -201,11 +201,11 @@ class Signal(BaseModel):
 
 class DatasetList(UserList[Dataset]):
 
-    def __init__(self, datasets: list[Dataset]):
+    def __init__(self, datasets: Iterable[Dataset]):
         super().__init__(datasets)
 
     def where_stream(
-        self, stream_name: str | None, stream_id: int | None, plugin: str | None = None
+        self, stream_name: str | None = None, stream_id: int | None = None, plugin: str | None = None
     ) -> "DatasetList":
         results = DatasetList([])
         for dataset in self.data:
@@ -215,6 +215,7 @@ class DatasetList(UserList[Dataset]):
                 continue
             if plugin is not None and dataset.datastream.plugin != plugin:
                 continue
+            results.append(dataset)
         return results
 
     def where_metadata(
@@ -224,6 +225,37 @@ class DatasetList(UserList[Dataset]):
         cleaned_metadata = {k: [v] if not isinstance(v, list) else v for k, v in (metadata or {}).items()}
         for dataset in self.data:
             if any(dataset.metadata.get(field) not in values for field, values in cleaned_metadata.items()):
+                continue
+            results.append(dataset)
+        return results
+
+    def where_dataset(
+        self,
+        stat: Literal[
+            "created_at",
+            "created_by",
+            "import_status",
+            "import_progress",
+            "import_time",
+            "cold_bytes",
+            "hot_bytes",
+            "n_datapoints",
+            "n_signals",
+            "timestamp_start",
+            "timestamp_stop",
+        ],
+        greater_than: float | None = None,
+        less_than: float | None = None,
+        equals: float | str | None = None,
+    ) -> "DatasetList":
+        results = DatasetList([])
+        for dataset in self.data:
+            value = getattr(dataset, stat)
+            if greater_than is not None and value <= greater_than:
+                continue
+            if less_than is not None and value >= less_than:
+                continue
+            if equals is not None and value != equals:
                 continue
             results.append(dataset)
         return results
@@ -258,17 +290,17 @@ class DatasetList(UserList[Dataset]):
                 value = getattr(signal, stat)
             if value is None:
                 raise ValueError(f"Stat {stat} not found in {dataset}. ")
-            if greater_than is not None:
-                if not value > greater_than:
-                    continue
-            if less_than is not None:
-                if not value < less_than:
-                    continue
-            if equals is not None:
-                if not value == equals:
-                    continue
+            if greater_than is not None and not value > greater_than:
+                continue
+            if less_than is not None and not value < less_than:
+                continue
+            if equals is not None and not value == equals:
+                continue
             results.append(dataset)
         return results
+
+    def where_predicate(self, predicate: Callable[[Dataset], bool]) -> "DatasetList":
+        return DatasetList([d for d in self.data if predicate(d)])
 
 
 class DB:
