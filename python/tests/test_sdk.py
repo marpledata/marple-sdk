@@ -121,6 +121,22 @@ def test_db_filter_datasets(db: DB, stream_name: str) -> None:
     datasets_b23 = all_datasets.where_metadata({"B": [2, 3]})
     assert len(datasets_b23) == 2
 
+    assert len(all_datasets.where_dataset("cold_bytes", greater_than=1000)) == len(ids)
+    assert len(all_datasets.where_dataset("cold_bytes", less_than=1000)) == 0
+    assert len(all_datasets.where_dataset("hot_bytes", equals=0)) == 3
+    assert len(all_datasets.where_dataset("created_at", greater_than=time.time() - 1000)) == len(ids)
+    assert len(all_datasets.where_dataset("n_datapoints", equals=15 * 12500)) == len(ids)
+    assert len(all_datasets.where_dataset("timestamp_start", equals=int(0.1 * 1e9))) == len(ids)
+
+    def test_signal_filter(signal_name: str, stat, value: float) -> None:
+        assert len(all_datasets.where_signal(signal_name, stat, equals=value)) == len(
+            ids
+        ), f"Failed on {signal_name} {stat} == {value}, stat in datasets: {[d.get_signal(signal_name).stats.get(stat) for d in all_datasets]}"
+        assert len(all_datasets.where_signal(signal_name, stat, greater_than=value)) == 0
+        assert len(all_datasets.where_signal(signal_name, stat, greater_than=value - 1)) == len(ids)
+        assert len(all_datasets.where_signal(signal_name, stat, less_than=value)) == 0
+        assert len(all_datasets.where_signal(signal_name, stat, less_than=value + 1)) == len(ids)
+
     random_dataset = random.choice(all_datasets)
     possible_names = [
         "driver.steering",
@@ -139,22 +155,6 @@ def test_db_filter_datasets(db: DB, stream_name: str) -> None:
     ]  # Some signals fail due to rounding with the avg stat
 
     random_signal = random_dataset.get_signal(random.choice(possible_names))
-
-    assert len(all_datasets.where_dataset("cold_bytes", greater_than=1000)) == len(ids)
-    assert len(all_datasets.where_dataset("cold_bytes", less_than=1000)) == 0
-    assert len(all_datasets.where_dataset("hot_bytes", equals=0)) == 3
-    assert len(all_datasets.where_dataset("created_at", greater_than=time.time() - 1000)) == len(ids)
-    assert len(all_datasets.where_dataset("n_datapoints", equals=15 * 12500)) == len(ids)
-    assert len(all_datasets.where_dataset("timestamp_start", equals=int(0.1 * 1e9))) == len(ids)
-
-    def test_signal_filter(signal_name: str, stat, value: float) -> None:
-        assert len(all_datasets.where_signal(signal_name, stat, equals=value)) == len(
-            ids
-        ), f"Failed on {signal_name} {stat} == {value}, stat in datasets: {[d.get_signal(signal_name).stats.get(stat) for d in all_datasets]}"
-        assert len(all_datasets.where_signal(signal_name, stat, greater_than=value)) == 0
-        assert len(all_datasets.where_signal(signal_name, stat, greater_than=value - 1)) == len(ids)
-        assert len(all_datasets.where_signal(signal_name, stat, less_than=value)) == 0
-        assert len(all_datasets.where_signal(signal_name, stat, less_than=value + 1)) == len(ids)
 
     df = pd.read_csv(EXAMPLE_CSV)
     actual_signal = df[random_signal.name]
