@@ -10,7 +10,7 @@ import pandas as pd
 import pyarrow as pa
 import pyarrow.parquet as pq
 import requests
-from pydantic import BaseModel
+from pydantic import BaseModel, PrivateAttr
 from requests import Response
 
 SAAS_URL = "https://db.marpledata.com/api/v1"
@@ -38,42 +38,64 @@ class DataStream(BaseModel):
     datapool: str
     layer_shifts: list[int]
     version_id: int
-    insight_workspace: Optional[str]
-    insight_project: Optional[str]
+    insight_workspace: Optional[str] = None
+    insight_project: Optional[str] = None
 
     # Stats
     created_at: float
     last_updated: float
-    last_ingested: Optional[float]
-    n_datasets: Optional[int]
-    n_datapoints: Optional[int]
-    cold_bytes: Optional[int]
-    hot_bytes: Optional[int]
+    last_ingested: Optional[float] = None
+    n_datasets: Optional[int] = None
+    n_datapoints: Optional[int] = None
+    cold_bytes: Optional[int] = None
+    hot_bytes: Optional[int] = None
 
-    def __init__(self, args, db: "DB"):
-        super().__init__(args)
-        self.db = db
-        self._known_datasets: dict[str, int] = {}
-        self._datasets = dict[int, Dataset]
-        self.has_all_datasets = False
+    plugin: Optional[str] = None
+    plugin_args: Optional[str] = None
+    signal_reduction: Optional[dict[str, float]] = None
 
-    def get_dataset(self, dataset_id: int) -> "Dataset":
-        if dataset_id not in self._datasets:
-            r = self.db.get(f"/stream/{self.id}/dataset/{dataset_id}")
-            dataset = Dataset(**r.json())
-            self._datasets[dataset_id] = dataset
-            self._known_datasets[dataset.path] = dataset_id
-        return self._datasets[dataset_id]
+    _has_all_datasets: bool = PrivateAttr(default=False)
+    _known_datasets: dict[str, int] = PrivateAttr(default_factory=dict)
+    _datasets: dict[int, "Dataset"] = PrivateAttr(default_factory=dict)
+    _db: "DB" = PrivateAttr()
+
+    def __init__(self, db: "DB", **kwargs):
+        super().__init__(_db=db, **kwargs)
+        self._db = db
+
+    def get_dataset(self, id: int | None = None, path: str | None = None) -> "Dataset":
+        """Get a specific dataset in this datastream by its ID or path."""
+
+        if id is None and path is None:
+            raise ValueError("Either id or path must be provided.")
+        if id is not None and path is not None:
+            raise ValueError("Only one of id or path can be provided.")
+
+        if path is not None:
+            self.get_datasets()
+            id = self._known_datasets.get(path)
+
+        if id is None:
+            raise ValueError(f"Dataset with path {path} not found in datastream {self.name}.")
+
+        if id not in self._datasets:
+            r = self._db.get(f"/stream/{self.id}/dataset/{id}")
+            dataset = Dataset(datastream=self, **r.json())
+            self._datasets[id] = dataset
+            self._known_datasets[dataset.path] = dataset.id
+        return self._datasets[id]
 
     def get_datasets(self) -> "DatasetList":
-        if not self.has_all_datasets:
-            r = self.db.get(f"/stream/{self.id}/datasets")
+        """Get all datasets in this datastream."""
+        if not self._has_all_datasets:
+            r = self._db.get(f"/stream/{self.id}/datasets")
             for dataset in r.json():
-                dataset_obj = Dataset(**dataset, datastream=self)
+                dataset_obj = Dataset(datastream=self, **dataset)
                 self._datasets[dataset_obj.id] = dataset_obj
                 self._known_datasets[dataset_obj.path] = dataset_obj.id
-            self.has_all_datasets = True
-        return DatasetList(list(self._datasets.values()), self.db)
+            self._has_all_datasets = True
+
+        return DatasetList(list(self._datasets.values()))
 
 
 class Dataset(BaseModel):
@@ -99,33 +121,51 @@ class Dataset(BaseModel):
     n_signals: int
     timestamp_start: int | None
     timestamp_stop: int | None
-    import_speed: float
+    import_speed: float | None
     parquet_version: int
 
-    def __init__(self, args, datastream: DataStream):
-        super().__init__(args)
-        self.datastream = datastream
-        self._known_signals: dict[str, int] = {}
-        self._signals: dict[int, Signal] = {}
-        self.has_all_signals = False
+    _db: "DB" = PrivateAttr()
+    _known_signals: dict[str, int] = PrivateAttr(default_factory=dict)
+    _signals: dict[int, "Signal"] = PrivateAttr(default_factory=dict)
+    _has_all_signals: bool = PrivateAttr(default=False)
 
-    def get_signal(self, signal_name: str) -> "Signal":
-        if signal_name not in self._known_signals:
-            r = self.datastream.db.get(f"/stream/{self.datastream.id}/dataset/{self.id}/signal/{signal_name}")
-            signal_obj = Signal(**r.json(), dataset=self)
-            self._signals[signal_obj.id] = signal_obj
-            self._known_signals[signal_obj.name] = signal_obj.id
-        signal_id = self._known_signals[signal_name]
-        return self._signals[signal_id]
+    datastream: DataStream
+
+    def __init__(self, datastream: DataStream, **kwargs):
+        super().__init__(datastream=datastream, **kwargs)
+        self._db = datastream._db
+
+    def get_signal(self, name: str | None = None, id: int | None = None) -> "Signal":
+        """Get a specific signal in this dataset by its name or ID."""
+        if name is None and id is None:
+            raise ValueError("Either name or id must be provided.")
+        if name is not None and id is not None:
+            raise ValueError("Only one of name or id can be provided.")
+
+        if name is not None:
+            if name not in self._known_signals:
+                self.get_signals()
+            id = self._known_signals.get(name)
+
+        if id is None:
+            raise ValueError(f"Signal with name {name} not found in dataset with id {self.id}.")
+
+        if id not in self._signals:
+            r = self._db.get(f"/stream/{self.datastream.id}/dataset/{self.id}/signal/{id}")
+            signal = Signal(dataset=self, **r.json())
+            self._signals[signal.id] = signal
+            self._known_signals[signal.name] = signal.id
+
+        return self._signals[id]
 
     def get_signals(self) -> list["Signal"]:
-        if not self.has_all_signals:
-            r = self.datastream.db.get(f"/stream/{self.datastream.id}/dataset/{self.id}/signals")
+        if not self._has_all_signals:
+            r = self._db.get(f"/stream/{self.datastream.id}/dataset/{self.id}/signals")
             for signal in r.json():
-                signal_obj = Signal(**signal, dataset=self)
+                signal_obj = Signal(dataset=self, **signal)
                 self._signals[signal_obj.id] = signal_obj
                 self._known_signals[signal_obj.name] = signal_obj.id
-            self.has_all_signals = True
+            self._has_all_signals = True
         return list(self._signals.values())
 
 
@@ -146,35 +186,43 @@ class Signal(BaseModel):
     time_max: int | None
     parquet_version: int
 
-    def __init__(self, args, dataset: Dataset):
-        super().__init__(args)
-        self.dataset = dataset
+    dataset: Dataset
+
+    def __init__(self, dataset: Dataset, **kwargs):
+        super().__init__(dataset=dataset, **kwargs)
 
     def get_data(self) -> pd.DataFrame:
         # TODO
         return pd.DataFrame()
 
 
-class DatasetList(UserList):
-    def __init__(self, datasets: list[Dataset], db: "DB"):
-        super().__init__(datasets)
-        self.db = db
+class DatasetList(UserList[Dataset]):
 
-    def where(
-        self, stream_id: int | None = None, metadata: dict[str, int | str | Iterable[int | str]] | None = None
+    def __init__(self, datasets: list[Dataset]):
+        super().__init__(datasets)
+
+    def where_stream(
+        self, stream_name: str | None, stream_id: int | None, plugin: str | None = None
     ) -> "DatasetList":
-        results = DatasetList([], self.db)
+        results = DatasetList([])
+        for dataset in self.data:
+            if stream_name is not None and dataset.datastream.name != stream_name:
+                continue
+            if stream_id is not None and dataset.datastream_id != stream_id:
+                continue
+            if plugin is not None and dataset.datastream.plugin != plugin:
+                continue
+        return results
+
+    def where_metadata(
+        self, metadata: dict[str, int | str | Iterable[int | str]] | None = None
+    ) -> "DatasetList":
+        results = DatasetList([])
         cleaned_metadata = {k: [v] if not isinstance(v, list) else v for k, v in (metadata or {}).items()}
         for dataset in self.data:
-            if stream_id is not None:
-                if dataset.datastream_id != stream_id:
-                    continue
-
             if any(dataset.metadata.get(field) not in values for field, values in cleaned_metadata.items()):
                 continue
-
             results.append(dataset)
-
         return results
 
     def where_signal(
@@ -192,15 +240,16 @@ class DatasetList(UserList):
             "min",
             "sum",
             "mean",
+            "frequency",
         ],
         greater_than: float | None = None,
         less_than: float | None = None,
         equals: float | str | None = None,
     ) -> "DatasetList":
-        results = DatasetList([], self.db)
+        results = DatasetList([])
         for dataset in self.data:
-            signal: Signal = dataset.get_signal(signal_name)  # Not sure yet how to do this
-            if stat in ["max", "min", "sum", "mean"]:
+            signal: Signal = dataset.get_signal(signal_name)
+            if stat in ["max", "min", "sum", "mean", "frequency"]:
                 value = signal.stats.get(stat)
             else:
                 value = getattr(signal, stat)
@@ -266,7 +315,7 @@ class DB:
     def get_streams(self) -> list[DataStream]:
         if len(self._streams) == 0:
             r = self.get("/streams")
-            self._streams = {stream["id"]: DataStream(**stream, db=self) for stream in r.json()["streams"]}
+            self._streams = {stream["id"]: DataStream(db=self, **stream) for stream in r.json()["streams"]}
         return list(self._streams.values())
 
     def get_stream(self, stream_key: str | int) -> DataStream:
@@ -276,7 +325,7 @@ class DB:
     def get_datasets(self, stream_key: str | int | None) -> DatasetList:
         if stream_key is not None:
             return self.get_stream(stream_key).get_datasets()
-        return DatasetList([dataset for stream in self.get_streams() for dataset in stream.get_datasets()], self)
+        return DatasetList([dataset for stream in self.get_streams() for dataset in stream.get_datasets()])
 
     def get_dataset(self, stream_key: str | int, dataset_id: int) -> Dataset:
         stream = self.get_stream(stream_key)
@@ -309,7 +358,7 @@ class DB:
 
             return r_json["dataset_id"]
 
-    def get_status(self, stream_key: str | int, dataset_id: str) -> dict:
+    def get_status(self, stream_key: str | int, dataset_id: int) -> dict:
         stream_id = self._get_stream_id(stream_key)
         r = self.post(f"/stream/{stream_id}/datasets/status", json=[dataset_id])
         if r.status_code != 200:
