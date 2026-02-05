@@ -1,5 +1,4 @@
 stages:
-  - quality
   - test
 
 variables:
@@ -13,7 +12,6 @@ cache:
   paths:
     - .cache/uv
     - python/.venv/
-
 
 pytest:
   image: python:3.11
@@ -41,8 +39,6 @@ pytest:
       changes:
         - python/**/*
 
-
-
 rust:mdb-cli:
   image: rust:1.85
   stage: test
@@ -66,5 +62,3 @@ rust:mdb-cli:
     - if: $CI_COMMIT_BRANCH
       changes:
         - mdb-cli/**/*
-
-
