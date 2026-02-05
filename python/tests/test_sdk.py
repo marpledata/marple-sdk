@@ -80,6 +80,7 @@ def wait_for_ingestion(
     finished_statuses = ["FINISHED", "FAILED"]
     if allow_iceberg:
         finished_statuses.append("UPDATING_ICEBERG")
+    start = time.monotonic()
     deadline = time.monotonic() + timeout
 
     last_statuses: dict[int, dict] = {id: {} for id in dataset_ids}
@@ -91,14 +92,13 @@ def wait_for_ingestion(
         ):
             break
         time.sleep(0.5)
-
-    for dataset_id in dataset_ids:
-        status = last_statuses[dataset_id]
-        assert len(status) > 0, "No status returned while polling ingest status."
-        assert status.get("import_status") in [
-            "FINISHED",
-            "UPDATING_ICEBERG",
-        ], f"Ingest did not finish: {status}"
+    print(f"Waited for {time.monotonic() - start:.1f}s for ingestion to finish. Last statuses: {last_statuses}")
+    sucess_statuses = ["FINISHED"]
+    if allow_iceberg:
+        sucess_statuses.append("UPDATING_ICEBERG")
+    for dataset_id, status in last_statuses.items():
+        assert status != {}, "No status returned while polling ingest status."
+        assert status.get("import_status") in sucess_statuses, f"Ingest did not finish: {status}"
 
 
 def test_db_check_connection(db: DB) -> None:
