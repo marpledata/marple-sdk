@@ -1,4 +1,5 @@
 import json
+import re
 from collections import UserList
 from io import BytesIO
 from pathlib import Path
@@ -161,7 +162,17 @@ class Dataset(BaseModel):
 
         return self._signals[id]
 
-    def get_signals(self) -> list["Signal"]:
+    def get_signals(self, signal_names: list[str | re.Pattern] | None = None) -> list["Signal"]:
+
+        compiled_filters = [
+            re.compile(f"^{re.escape(f)}$") if isinstance(f, str) else f for f in signal_names or []
+        ]
+
+        def include(signal_name: str) -> bool:
+            if signal_names is None:
+                return True
+            return any(pattern.match(signal_name) for pattern in compiled_filters)
+
         if not self._has_all_signals:
             r = self._db.get(f"/stream/{self.datastream.id}/dataset/{self.id}/signals")
             for signal in r.json():
@@ -169,7 +180,8 @@ class Dataset(BaseModel):
                 self._signals[signal_obj.id] = signal_obj
                 self._known_signals[signal_obj.name] = signal_obj.id
             self._has_all_signals = True
-        return list(self._signals.values())
+
+        return [signal for signal in self._signals.values() if include(signal.name)]
 
 
 class Signal(BaseModel):
@@ -213,7 +225,8 @@ class DatasetList(UserList[Dataset]):
                 continue
             if stream_id is not None and dataset.datastream_id != stream_id:
                 continue
-            if plugin is not None and dataset.datastream.plugin != plugin:
+            dataset_plugin = dataset.datastream.plugin
+            if plugin is not None and dataset_plugin is not None and dataset_plugin.lower() != plugin.lower():
                 continue
             results.append(dataset)
         return results
@@ -302,6 +315,13 @@ class DatasetList(UserList[Dataset]):
     def where_predicate(self, predicate: Callable[[Dataset], bool]) -> "DatasetList":
         return DatasetList([d for d in self.data if predicate(d)])
 
+    def get_data(
+        self,
+        signals: list[str | re.Pattern],
+        resampling: dict | None = None,
+    ) -> Iterable[tuple[Dataset, pd.DataFrame]]:
+        yield pd.DataFrame()  # TODO
+
 
 class DB:
     def __init__(self, api_token: str, api_url: str = SAAS_URL):
@@ -357,7 +377,7 @@ class DB:
         stream_id = self._get_stream_id(stream_key)
         return self._streams[stream_id]
 
-    def get_datasets(self, stream_key: str | int | None) -> DatasetList:
+    def get_datasets(self, stream_key: str | int | None = None) -> DatasetList:
         if stream_key is not None:
             return self.get_stream(stream_key).get_datasets()
         return DatasetList([dataset for stream in self.get_streams() for dataset in stream.get_datasets()])

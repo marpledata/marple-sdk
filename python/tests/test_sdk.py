@@ -1,5 +1,6 @@
 import os
 import random
+import re
 import time
 from datetime import datetime
 from pathlib import Path
@@ -177,6 +178,16 @@ def test_db_filter_datasets(db: DB, stream_name: str) -> None:
         )
 
     assert len(all_datasets.where_predicate(custom_filter)) == 3
+
+
+def test_get_signals(db: DB, stream_name: str, dataset_id: int) -> None:
+    dataset = db.get_dataset(stream_name, dataset_id)
+
+    assert len(dataset.get_signals()) == 15
+    assert len(dataset.get_signals(signal_names=["car.speed", "car.accel", "some_random_signal"])) == 2
+    assert len(dataset.get_signals(signal_names=[re.compile(r"car\.wheel\..*")])) == 4
+    assert len(dataset.get_signals(signal_names=["car.speed", re.compile(r"car\.wheel.*")])) == 5
+    assert len(dataset.get_signals(signal_names=["car\.wheel.*"])) == 0
 
 
 def test_db_query_endpoint(db: DB) -> None:
