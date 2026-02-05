@@ -11,6 +11,7 @@ import pandas as pd
 import pyarrow as pa
 import pyarrow.parquet as pq
 import requests
+from marple.utils import validate_response
 from pydantic import BaseModel, PrivateAttr
 from requests import Response
 
@@ -53,7 +54,7 @@ class DataStream(BaseModel):
 
     plugin: Optional[str] = None
     plugin_args: Optional[str] = None
-    signal_reduction: Optional[dict[str, float]] = None
+    signal_reduction: Optional[list] = None
 
     _has_all_datasets: bool = PrivateAttr(default=False)
     _known_datasets: dict[str, int] = PrivateAttr(default_factory=dict)
@@ -358,11 +359,11 @@ class DB:
         try:
             # unauthenticated endpoints
             r = self.get("/health")
-            self._validate_response(r, msg_fail_connect, check_status=False)
+            validate_response(r, msg_fail_connect, check_status=False)
 
             # authenticated endpoint
             r = self.get("/streams")
-            self._validate_response(r, msg_fail_auth, check_status=False)
+            validate_response(r, msg_fail_auth, check_status=False)
 
         except ConnectionError:
             raise Exception(msg_fail_connect)
@@ -411,7 +412,7 @@ class DB:
             }
 
             r = self.post(f"/stream/{stream_id}/ingest", files=files, data=data)
-            r_json = self._validate_response(r, "File upload failed")
+            r_json = validate_response(r, "File upload failed")
 
             return r_json["dataset_id"]
 
@@ -434,7 +435,7 @@ class DB:
         """
         stream_id = self._get_stream_id(stream_key)
         response = self.get(f"/stream/{stream_id}/dataset/{dataset_id}/backup")
-        self._validate_response(response, "Download original file failed", check_status=False)
+        validate_response(response, "Download original file failed", check_status=False)
         download_url = response.json()["path"]
         if not download_url.startswith("http"):
             download_url = f"{self.api_url}/download/{download_url}"
@@ -453,7 +454,7 @@ class DB:
         r = self.get(f"/stream/{stream_id}/dataset/{dataset_id}/signal/{signal_id}/path")
         print(stream_id, dataset_id, signal_id)
         print("Download signal response", r, r.json())
-        self._validate_response(r, "Get parquet path failed", check_status=False)
+        validate_response(r, "Get parquet path failed", check_status=False)
         dest = Path(destination_folder)
         parquet_paths = []
         for path in r.json()["paths"]:
@@ -476,7 +477,7 @@ class DB:
             f"/stream/{stream_id}/dataset/add",
             json={"dataset_name": dataset_name, "metadata": metadata or {}},
         )
-        r_json = self._validate_response(r, "Add dataset failed")
+        r_json = validate_response(r, "Add dataset failed")
 
         return r_json["dataset_id"]
 
@@ -493,7 +494,7 @@ class DB:
         stream_id = self._get_stream_id(stream_key)
 
         r = self.post(f"/stream/{stream_id}/dataset/{dataset_id}/signals", json=signals)
-        self._validate_response(r, "Upsert signals failed")
+        validate_response(r, "Upsert signals failed")
 
     def dataset_append(
         self,
@@ -541,7 +542,7 @@ class DB:
         files = {"file": ("data.parquet", parquet_buffer, "application/octet-stream")}
 
         r = self.post(f"/stream/{stream_id}/dataset/{dataset_id}/append", files=files)
-        self._validate_response(r, "Append data failed")
+        validate_response(r, "Append data failed")
 
     def create_stream(
         self,
@@ -552,7 +553,7 @@ class DB:
         datapool: Optional[str] = None,
         plugin: Optional[str] = None,
         plugin_args: Optional[str] = None,
-        signal_reduction: Optional[dict] = None,
+        signal_reduction: Optional[list] = None,
         insight_workspace: Optional[str] = None,
         insight_project: Optional[str] = None,
     ) -> int:
@@ -574,7 +575,7 @@ class DB:
                 "insight_project": insight_project,
             },
         )
-        r_json = self._validate_response(r, "Create stream failed")
+        r_json = validate_response(r, "Create stream failed")
         return r_json["id"]
 
     def delete_stream(self, stream_key: str | int) -> None:
@@ -585,7 +586,7 @@ class DB:
         """
         stream_id = self._get_stream_id(stream_key)
         r = self.post(f"/stream/{stream_id}/delete")
-        self._validate_response(r, "Delete stream failed")
+        validate_response(r, "Delete stream failed")
 
     # Internal functions #
 
@@ -604,17 +605,6 @@ class DB:
 
         available_streams = ", ".join([s.name for s in streams])
         raise Exception(f'Stream "{stream_key}" not found \nAvailable streams: {available_streams}')
-
-    @staticmethod
-    def _validate_response(response: Response, failure_message: str, check_status: bool = True) -> dict:
-        if response.status_code == 400 or response.status_code == 500:
-            raise Exception(f"{failure_message}: {response.json().get('error', 'Unknown error')}")
-        if response.status_code != 200:
-            response.raise_for_status()
-        r_json = response.json()
-        if check_status and r_json["status"] != "success":
-            raise Exception(failure_message)
-        return r_json
 
     @staticmethod
     def _detect_shape(shape: Optional[Literal["long", "wide"]], df: pd.DataFrame) -> Literal["long", "wide"]:

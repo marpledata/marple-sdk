@@ -30,12 +30,12 @@ def _required_env(name: str) -> str:
 
 @pytest.fixture(scope="session")
 def db() -> DB:
-    return DB(_required_env("MDB_TOKEN"))
+    return DB(_required_env("MDB_TOKEN"), api_url="http://localhost:8000/api/v1")
 
 
 @pytest.fixture(scope="session")
 def insight() -> Insight:
-    return Insight(_required_env("INSIGHT_TOKEN"))
+    return Insight(_required_env("INSIGHT_TOKEN"), api_url="http://localhost:46064/api/v1")
 
 
 @pytest.fixture(scope="session")
@@ -70,8 +70,12 @@ def ingest_dataset(db: DB, stream_name: str, metadata: dict | None = None) -> in
     )
 
 
-def wait_for_ingestion(db: DB, stream_name, dataset_ids: list[int], timeout: float = 20) -> None:
-    finished_statuses = ["FINISHED", "FAILED", "UPDATING_ICEBERG"]
+def wait_for_ingestion(
+    db: DB, stream_name, dataset_ids: list[int], timeout: float = 20, allow_iceberg=False
+) -> None:
+    finished_statuses = ["FINISHED", "FAILED"]
+    if allow_iceberg:
+        finished_statuses.append("UPDATING_ICEBERG")
     deadline = time.monotonic() + timeout
 
     last_statuses: dict[int, dict] = {id: {} for id in dataset_ids}
@@ -110,7 +114,7 @@ def test_db_filter_datasets(db: DB, stream_name: str) -> None:
     id2 = ingest_dataset(db, stream_name, metadata={"A": 1, "B": 2})
     id3 = ingest_dataset(db, stream_name, metadata={"A": 4, "B": 3})
     ids = [id1, id2, id3]
-    wait_for_ingestion(db, stream_name, dataset_ids=ids, timeout=30)
+    wait_for_ingestion(db, stream_name, dataset_ids=ids, timeout=30, allow_iceberg=True)
 
     all_datasets = db.get_datasets(stream_name)
     assert len(all_datasets) == len(ids)
@@ -121,9 +125,9 @@ def test_db_filter_datasets(db: DB, stream_name: str) -> None:
     datasets_b23 = all_datasets.where_metadata({"B": [2, 3]})
     assert len(datasets_b23) == 2
 
-    assert len(all_datasets.where_dataset("cold_bytes", greater_than=1000)) == len(ids)
-    assert len(all_datasets.where_dataset("cold_bytes", less_than=1000)) == 0
     assert len(all_datasets.where_dataset("hot_bytes", equals=0)) == 3
+    assert len(all_datasets.where_dataset("cold_bytes", less_than=1000)) == 0
+    assert len(all_datasets.where_dataset("cold_bytes", greater_than=1000)) == len(ids)
     assert len(all_datasets.where_dataset("created_at", greater_than=time.time() - 1000)) == len(ids)
     assert len(all_datasets.where_dataset("n_datapoints", equals=15 * 12500)) == len(ids)
     assert len(all_datasets.where_dataset("timestamp_start", equals=int(0.1 * 1e9))) == len(ids)
@@ -141,7 +145,6 @@ def test_db_filter_datasets(db: DB, stream_name: str) -> None:
     possible_names = [
         "driver.steering",
         "car.speed",
-        "car.accel",
         "car.dist",
         "car.lap.num",
         "car.engine.NGear",
