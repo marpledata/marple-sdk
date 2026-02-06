@@ -187,11 +187,20 @@ class Dataset(BaseModel):
 
     def get_data(
         self,
-        signals: list[str | re.Pattern],
+        signals: Sequence[str | re.Pattern],
         resample_rule: Optional[Frequency] = None,
         resample_aggregate: AggFuncType = "mean",
         **kwargs,
     ) -> pd.DataFrame:
+        """
+        Get the data for this dataset for the specified signals as a pandas DataFrame.
+
+        Each dataframe contains a time column and one column for each signal.
+        The dataframe is resampled according to the `resample_rule` parameter, which is passed to pandas `resample` function.
+        If `resample_rule` is None, the original data is returned.
+        The `resample_aggregate` parameter determines how to aggregate if there are multiple values for the same time period during resampling.
+        Extra keyword arguments are passed to the pandas `resample` function.
+        """
         signal_objs = self.get_signals(signal_names=signals)
         df = pd.DataFrame(columns=[COL_TIME])
         for signal_obj in signal_objs:
@@ -242,11 +251,18 @@ class Signal(BaseModel):
         return self._cold_paths, os.listdir(self._data_folder)
 
     def get_local_parquet_paths(self) -> list[Path]:
+        """
+        Get the local paths of the parquet files for this signal in the cache folder.
+        Returns an empty list if the files have not been downloaded yet.
+        """
         if self._data_folder is None:
             return []
         return [self._data_folder / p for p in os.listdir(self._data_folder)]
 
-    def load_data(self) -> Path:
+    def download_data(self) -> Path:
+        """
+        Download the parquet files for this signal to a local cache folder and return the folder path.
+        """
         cold_files, loaded_data = self._get_paths()
         assert self._data_folder is not None
         for cold_file in cold_files:
@@ -256,6 +272,12 @@ class Signal(BaseModel):
         return self._data_folder
 
     def get_data(self, prefer_numeric: bool = True) -> pd.DataFrame:
+        """
+        Get this signal's raw data as a pandas DataFrame.
+
+        The DataFrame contains two columns: `'time'` and `'value'`.
+        If the signal contains both numeric and text data, the `prefer_numeric` flag determines which data to use in the `value` column.
+        """
         has_numeric = self.count_value > 0
         has_text = self.count_text > 0
         if has_numeric != has_text:
@@ -269,7 +291,7 @@ class Signal(BaseModel):
                 pa.field(COL_VAL, pa.float64()) if use_numeric else pa.field(COL_VAL_TEXT, pa.string()),
             ]
         )
-        df = pd.read_parquet(self.load_data(), engine="pyarrow", schema=schema)
+        df = pd.read_parquet(self.download_data(), engine="pyarrow", schema=schema)
         df = df.rename(columns={COL_VAL_TEXT: COL_VAL})
         if self.time_min is not None and self.time_min > 1e17:
             df[COL_TIME] = pd.to_datetime(df[COL_TIME], unit="ns")
@@ -286,6 +308,9 @@ class DatasetList(UserList[Dataset]):
     def where_stream(
         self, stream_name: str | None = None, stream_id: int | None = None, plugin: str | None = None
     ) -> "DatasetList":
+        """
+        Filter datasets by their datastream's name, ID, or plugin type.
+        """
         results = DatasetList([])
         for dataset in self.data:
             if stream_name is not None and dataset.datastream.name != stream_name:
@@ -301,6 +326,13 @@ class DatasetList(UserList[Dataset]):
     def where_metadata(
         self, metadata: dict[str, int | str | Iterable[int | str]] | None = None
     ) -> "DatasetList":
+        """
+        Filter datasets by their metadata fields.
+
+        Each key in the `metadata` dictionary corresponds to a metadata field name,
+        and the associated value is either a single value or an iterable of values.
+        A dataset is included in the results if its metadata field matches any of the specified values for all fields.
+        """
         results = DatasetList([])
         cleaned_metadata = {k: [v] if not isinstance(v, list) else v for k, v in (metadata or {}).items()}
         for dataset in self.data:
@@ -328,6 +360,11 @@ class DatasetList(UserList[Dataset]):
         less_than: float | None = None,
         equals: float | str | None = None,
     ) -> "DatasetList":
+        """
+        Filter datasets by their statistics.
+
+        If multiple conditions are provided, a dataset must satisfy all of them to be included in the results.
+        """
         results = DatasetList([])
         for dataset in self.data:
             value = getattr(dataset, stat)
@@ -361,6 +398,9 @@ class DatasetList(UserList[Dataset]):
         less_than: float | None = None,
         equals: float | str | None = None,
     ) -> "DatasetList":
+        """
+        Filter datasets by the statistics of a specific signal.
+        """
         results = DatasetList([])
         for dataset in self.data:
             signal: Signal = dataset.get_signal(signal_name)
@@ -525,9 +565,7 @@ class DB:
         """
         Download the original file from the dataset to the destination folder.
         """
-        # stream_id = self._get_stream_id(stream_key)
         stream = self.get_stream(stream_key)
-
         response = self.get(f"/stream/{stream.id}/dataset/{dataset_id}/backup")
         validate_response(response, "Download original file failed", check_status=False)
         download_url = response.json()["path"]
@@ -550,7 +588,7 @@ class DB:
         Download the parquet file for a signal from the dataset to the destination folder.
         """
         signal = self.get_signal(stream_key, dataset_id, signal_id=signal_id, signal_name=signal_name)
-        signal.load_data()
+        signal.download_data()
         return signal.get_local_parquet_paths()
 
     def add_dataset(self, stream_key: str | int, dataset_name: str, metadata: dict | None = None) -> int:
