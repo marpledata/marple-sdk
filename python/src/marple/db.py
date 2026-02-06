@@ -1,9 +1,10 @@
 import json
+import os
 import re
 from collections import UserList
 from io import BytesIO
 from pathlib import Path
-from typing import Callable, Iterable, Literal, Optional
+from typing import Callable, Iterable, Literal, Optional, Sequence
 from urllib import parse, request
 
 import numpy as np
@@ -12,6 +13,7 @@ import pyarrow as pa
 import pyarrow.parquet as pq
 import requests
 from marple.utils import validate_response
+from pandas._typing import AggFuncType, Frequency
 from pydantic import BaseModel, PrivateAttr
 from requests import Response
 
@@ -22,7 +24,7 @@ COL_SIG = "signal"
 COL_VAL = "value"
 COL_VAL_TEXT = "value_text"
 
-SCHEMA = pa.schema(
+WRITE_SCHEMA = pa.schema(
     [
         pa.field(COL_TIME, pa.int64()),
         pa.field(COL_SIG, pa.string()),
@@ -92,23 +94,20 @@ class DataStream(BaseModel):
 
     def get_datasets(self) -> "DatasetList":
         """Get all datasets in this datastream."""
-        print("Has all datasets", self._has_all_datasets, "ID:", self.id)
         if not self._has_all_datasets:
             r = self._db.get(f"/stream/{self.id}/datasets")
-            print("r", r, r.json())
             for dataset in r.json():
                 dataset_obj = Dataset(datastream=self, **dataset)
                 self._datasets[dataset_obj.id] = dataset_obj
                 self._known_datasets[dataset_obj.path] = dataset_obj.id
             self._has_all_datasets = True
-        print("Datasets", self._datasets)
         return DatasetList(self._datasets.values())
 
 
 class Dataset(BaseModel):
     id: int
     datastream_id: int
-    datastream_version: int
+    datastream_version: int | None
     created_at: float
     created_by: str | None
     import_status: str
@@ -122,10 +121,10 @@ class Dataset(BaseModel):
     hot_bytes: int
     backup_path: str | None
     backup_size: int | None
-    plugin: str
-    plugin_args: str
-    n_datapoints: int
-    n_signals: int
+    plugin: str | None
+    plugin_args: str | None
+    n_datapoints: int | None
+    n_signals: int | None
     timestamp_start: int | None
     timestamp_stop: int | None
     import_speed: float | None
@@ -165,7 +164,7 @@ class Dataset(BaseModel):
 
         return self._signals[id]
 
-    def get_signals(self, signal_names: list[str | re.Pattern] | None = None) -> list["Signal"]:
+    def get_signals(self, signal_names: Sequence[str | re.Pattern] | None = None) -> list["Signal"]:
 
         compiled_filters = [
             re.compile(f"^{re.escape(f)}$") if isinstance(f, str) else f for f in signal_names or []
@@ -186,6 +185,23 @@ class Dataset(BaseModel):
 
         return [signal for signal in self._signals.values() if include(signal.name)]
 
+    def get_data(
+        self,
+        signals: list[str | re.Pattern],
+        resample_rule: Optional[Frequency] = None,
+        resample_aggregate: AggFuncType = "mean",
+        **kwargs,
+    ) -> pd.DataFrame:
+        signal_objs = self.get_signals(signal_names=signals)
+        df = pd.DataFrame(columns=[COL_TIME])
+        for signal_obj in signal_objs:
+            signal_df = signal_obj.get_data().rename(columns={COL_VAL: signal_obj.name})
+            df = df.merge(signal_df, on=COL_TIME, how="outer")
+        df = df.set_index(COL_TIME)
+        if resample_rule is not None:
+            df = df.resample(resample_rule, **kwargs).agg(resample_aggregate)  # type: ignore
+        return df
+
 
 class Signal(BaseModel):
     id: int
@@ -205,13 +221,61 @@ class Signal(BaseModel):
     parquet_version: int
 
     dataset: Dataset
+    _cold_paths: list[parse.ParseResult] | None = PrivateAttr(default=None)
+    _data_folder: Path | None = PrivateAttr(default=None)
+    _db: "DB" = PrivateAttr()
 
     def __init__(self, dataset: Dataset, **kwargs):
         super().__init__(dataset=dataset, **kwargs)
+        self._db = dataset._db
 
-    def get_data(self) -> pd.DataFrame:
-        # TODO
-        return pd.DataFrame()
+    def _get_paths(self) -> tuple[list[parse.ParseResult], list[str]]:
+        if self._cold_paths is None or self._data_folder is None:
+            r = self._db.get(
+                f"/stream/{self.dataset.datastream_id}/dataset/{self.dataset.id}/signal/{self.id}/path"
+            )
+            validate_response(r, "Get parquet path failed", check_status=False)
+            self._cold_paths = [parse.urlparse(p) for p in r.json()["paths"]]
+            self._data_folder = (self._db._cache_folder / self._cold_paths[0].path.lstrip("/")).parent
+            os.makedirs(self._data_folder, exist_ok=True)
+            return self._cold_paths, os.listdir(self._data_folder)
+        return self._cold_paths, os.listdir(self._data_folder)
+
+    def get_local_parquet_paths(self) -> list[Path]:
+        if self._data_folder is None:
+            return []
+        return [self._data_folder / p for p in os.listdir(self._data_folder)]
+
+    def load_data(self) -> Path:
+        cold_files, loaded_data = self._get_paths()
+        assert self._data_folder is not None
+        for cold_file in cold_files:
+            if cold_file.path.split("/")[-1] not in loaded_data:
+                dest_path = self._data_folder / cold_file.path.split("/")[-1]
+                request.urlretrieve(cold_file.geturl(), dest_path)
+        return self._data_folder
+
+    def get_data(self, prefer_numeric: bool = True) -> pd.DataFrame:
+        has_numeric = self.count_value > 0
+        has_text = self.count_text > 0
+        if has_numeric != has_text:
+            use_numeric = has_numeric
+        else:
+            use_numeric = prefer_numeric
+
+        schema = pa.schema(
+            [
+                pa.field(COL_TIME, pa.int64()),
+                pa.field(COL_VAL, pa.float64()) if use_numeric else pa.field(COL_VAL_TEXT, pa.string()),
+            ]
+        )
+        df = pd.read_parquet(self.load_data(), engine="pyarrow", schema=schema)
+        df = df.rename(columns={COL_VAL_TEXT: COL_VAL})
+        if self.time_min is not None and self.time_min > 1e17:
+            df[COL_TIME] = pd.to_datetime(df[COL_TIME], unit="ns")
+        else:
+            df[COL_TIME] = pd.to_timedelta(df[COL_TIME], unit="ns")
+        return df
 
 
 class DatasetList(UserList[Dataset]):
@@ -320,18 +384,34 @@ class DatasetList(UserList[Dataset]):
 
     def get_data(
         self,
-        signals: list[str | re.Pattern],
-        resampling: dict | None = None,
+        signals: Sequence[str | re.Pattern],
+        resample_rule: None | Frequency = None,
+        resample_aggregate: AggFuncType = "mean",
+        **kwargs,
     ) -> Iterable[tuple[Dataset, pd.DataFrame]]:
-        yield pd.DataFrame()  # TODO
+        """
+        Get the data for all datasets in this list for the specified signals. Returns an iterable of (dataset, dataframe) tuples.
+
+        Each dataframe contains the data for one dataset with a time column and one column for each signal.
+        The dataframe is resampled according to the `resampling` parameter, which is passed to pandas `resample` function.
+        If `resampling` is None, the original data is returned.
+        """
+        for dataset in self.data:
+            yield dataset, dataset.get_data(
+                signals=signals,
+                resample_rule=resample_rule,
+                resample_aggregate=resample_aggregate,
+                **kwargs,
+            )
 
 
 class DB:
-    def __init__(self, api_token: str, api_url: str = SAAS_URL):
+    def __init__(self, api_token: str, api_url: str = SAAS_URL, cache_folder: str = "."):
         self.api_url = api_url
         self.api_token = api_token
         self._known_streams: dict[str, int] = {}
         self._streams: dict[int, DataStream] = {}
+        self._cache_folder = Path(cache_folder)
 
         bearer_token = f"Bearer {api_token}"
         self.session = requests.Session()
@@ -373,6 +453,7 @@ class DB:
     def get_streams(self) -> list[DataStream]:
         if len(self._streams) == 0:
             r = self.get("/streams")
+            validate_response(r, "Get streams failed", check_status=False)
             self._streams = {stream["id"]: DataStream(db=self, **stream) for stream in r.json()["streams"]}
         return list(self._streams.values())
 
@@ -385,15 +466,26 @@ class DB:
             return self.get_stream(stream_key).get_datasets()
         return DatasetList([dataset for stream in self.get_streams() for dataset in stream.get_datasets()])
 
-    def get_dataset(self, stream_key: str | int, dataset_id: int) -> Dataset:
+    def get_dataset(
+        self, stream_key: str | int, dataset_id: int | None = None, dataset_path: str | None = None
+    ) -> Dataset:
         stream = self.get_stream(stream_key)
-        return stream.get_dataset(dataset_id)
+        return stream.get_dataset(dataset_id, dataset_path)
 
-    def get_signals(self, stream_key: str | int, dataset_id: int) -> list[Signal]:
-        return self.get_dataset(stream_key, dataset_id).get_signals()
+    def get_signals(
+        self, stream_key: str | int, dataset_id: int | None = None, dataset_path: str | None = None
+    ) -> list[Signal]:
+        return self.get_dataset(stream_key, dataset_id, dataset_path).get_signals()
 
-    def get_signal(self, stream_key: str | int, dataset_id: int, signal_name: str) -> Signal:
-        return self.get_dataset(stream_key, dataset_id).get_signal(signal_name)
+    def get_signal(
+        self,
+        stream_key: str | int,
+        dataset_id: int | None = None,
+        dataset_path: str | None = None,
+        signal_name: str | None = None,
+        signal_id: int | None = None,
+    ) -> Signal:
+        return self.get_dataset(stream_key, dataset_id, dataset_path).get_signal(signal_name, signal_id)
 
     def push_file(
         self,
@@ -433,8 +525,10 @@ class DB:
         """
         Download the original file from the dataset to the destination folder.
         """
-        stream_id = self._get_stream_id(stream_key)
-        response = self.get(f"/stream/{stream_id}/dataset/{dataset_id}/backup")
+        # stream_id = self._get_stream_id(stream_key)
+        stream = self.get_stream(stream_key)
+
+        response = self.get(f"/stream/{stream.id}/dataset/{dataset_id}/backup")
         validate_response(response, "Download original file failed", check_status=False)
         download_url = response.json()["path"]
         if not download_url.startswith("http"):
@@ -445,23 +539,19 @@ class DB:
         return target_path
 
     def download_signal(
-        self, stream_key: str | int, dataset_id: int, signal_id: int, destination_folder: str = "."
+        self,
+        stream_key: str | int,
+        dataset_id: int,
+        signal_id: int | None = None,
+        signal_name: str | None = None,
+        destination_folder: str = ".",
     ) -> list[Path]:
         """
         Download the parquet file for a signal from the dataset to the destination folder.
         """
-        stream_id = self._get_stream_id(stream_key)
-        r = self.get(f"/stream/{stream_id}/dataset/{dataset_id}/signal/{signal_id}/path")
-        print(stream_id, dataset_id, signal_id)
-        print("Download signal response", r, r.json())
-        validate_response(r, "Get parquet path failed", check_status=False)
-        dest = Path(destination_folder)
-        parquet_paths = []
-        for path in r.json()["paths"]:
-            dest_path = dest / parse.urlparse(path).path.rsplit("/")[1]
-            request.urlretrieve(path, dest_path)
-            parquet_paths.append(dest_path)
-        return parquet_paths
+        signal = self.get_signal(stream_key, dataset_id, signal_id=signal_id, signal_name=signal_name)
+        signal.load_data()
+        return signal.get_local_parquet_paths()
 
     def add_dataset(self, stream_key: str | int, dataset_name: str, metadata: dict | None = None) -> int:
         """
@@ -525,14 +615,14 @@ class DB:
             table = _wide_to_long(data)
         else:
             if COL_TIME not in data.columns or COL_SIG not in data.columns:
-                raise Exception('DataFrame must contain "time" and "signal" columns')
+                raise Exception(f"DataFrame must contain {COL_TIME} and {COL_SIG} columns")
             if not (COL_VAL in data.columns or COL_VAL_TEXT in data.columns):
-                raise Exception('DataFrame must contain at least one of "value" or "value_text" columns')
+                raise Exception(f"DataFrame must contain at least one of {COL_VAL} or {COL_VAL_TEXT} columns")
             value = (
                 pd.to_numeric(data[COL_VAL], errors="coerce") if COL_VAL in data.columns else pa.nulls(len(data))
             )
             value_text = data[COL_VAL_TEXT] if COL_VAL_TEXT in data.columns else pa.nulls(len(data))
-            table = pa.Table.from_arrays([data[COL_TIME], data[COL_SIG], value, value_text], schema=SCHEMA)
+            table = pa.Table.from_arrays([data[COL_TIME], data[COL_SIG], value, value_text], schema=WRITE_SCHEMA)
 
         parquet_buffer = BytesIO()
         pq.write_table(table, parquet_buffer)
@@ -611,7 +701,7 @@ class DB:
         if shape is not None:
             return shape
 
-        if "signal" in df.columns and (("value" in df.columns) or ("value_text" in df.columns)):
+        if "signal" in df.columns and ((COL_VAL in df.columns) or (COL_VAL_TEXT in df.columns)):
             return "long"
         else:
             return "wide"
@@ -627,7 +717,7 @@ def _wide_to_long(df: pd.DataFrame) -> pa.Table:
             (value, value_text) = (value.to_numpy().astype(np.float64), pa.nulls(len(time)))
         else:
             (value, value_text) = (pa.nulls(len(time)), df[col].fillna("").to_numpy().astype(str))
-        signals.append(pa.Table.from_arrays([time, [col] * len(time), value, value_text], schema=SCHEMA))
+        signals.append(pa.Table.from_arrays([time, [col] * len(time), value, value_text], schema=WRITE_SCHEMA))
     return pa.concat_tables(signals)
 
 

@@ -158,7 +158,6 @@ def test_db_filter_datasets(db: DB, stream_name: str) -> None:
         "car.engine.NGear",
         "car.engine.trq",
         "car.engine.speed",
-        "car.engine.temp",
         "car.wheel.left.trq",
         "car.wheel.right.trq",
         "car.wheel.left.speed",
@@ -191,6 +190,35 @@ def test_db_filter_datasets(db: DB, stream_name: str) -> None:
     assert len(all_datasets.where_predicate(custom_filter)) == 3
 
 
+def test_get_data(db: DB, stream_name: str, dataset_id: int) -> None:
+    datastream = db.get_stream(stream_name)
+    datasets = datastream.get_datasets()
+    dataset = random.choice(datasets)
+
+    n_signals = 5
+    random_signals = random.sample(dataset.get_signals(), k=n_signals)
+    random_signal_names = [signal.name for signal in random_signals]
+    all_data = dataset.get_data(signals=random_signal_names)
+    assert isinstance(all_data, pd.DataFrame)
+    assert set(all_data.columns) == set(random_signal_names)
+    assert all_data.shape == (12500, n_signals)
+    assert all_data.index.name == "time"
+    assert isinstance(all_data.index, pd.TimedeltaIndex)
+    assert all_data.index[1] - all_data.index[0] == pd.Timedelta(0.1, unit="s")
+
+    datasets = datasets[:5]
+    fewer_random_signal_names = random_signal_names[:2]
+    for dataset, df in datasets.get_data(
+        signals=fewer_random_signal_names, resample_rule="3.579s", resample_aggregate="max"
+    ):
+        assert isinstance(df, pd.DataFrame)
+        assert set(df.columns) == set(fewer_random_signal_names)
+        assert df.shape[1] == 2
+        assert df.index.name == "time"
+        assert isinstance(df.index, pd.TimedeltaIndex)
+        assert df.index[1] - df.index[0] == pd.Timedelta(3.579, unit="s")
+
+
 def test_get_signals(db: DB, stream_name: str, dataset_id: int) -> None:
     dataset = db.get_dataset(stream_name, dataset_id)
 
@@ -199,6 +227,40 @@ def test_get_signals(db: DB, stream_name: str, dataset_id: int) -> None:
     assert len(dataset.get_signals(signal_names=[re.compile(r"car\.wheel\..*")])) == 4
     assert len(dataset.get_signals(signal_names=["car.speed", re.compile(r"car\.wheel.*")])) == 5
     assert len(dataset.get_signals(signal_names=["car\.wheel.*"])) == 0
+
+
+def test_test_dataset(db: DB, stream_name: str, dataset_id: int) -> None:
+    dataset = db.get_dataset(stream_name, dataset_id)
+
+    assert isinstance(dataset, marple.db.Dataset)
+    assert dataset.n_signals == 15
+    assert dataset.n_datapoints == 12500 * 15
+
+    with pytest.raises(ValueError):
+        db.get_dataset(stream_name)
+
+    with pytest.raises(ValueError):
+        db.get_dataset(stream_name, dataset.id, dataset.path)
+
+    with pytest.raises(ValueError):
+        db.get_dataset(stream_name, dataset.id + 9999999)
+
+
+def test_get_signal(db: DB, stream_name: str, dataset_id: int) -> None:
+    dataset = db.get_dataset(stream_name, dataset_id)
+
+    signal = dataset.get_signal("car.speed")
+    assert signal.name == "car.speed"
+    assert signal.count == 12500
+
+    with pytest.raises(ValueError):
+        dataset.get_signal("non.existent.signal")
+
+    with pytest.raises(ValueError):
+        dataset.get_signal(name="car.speed", id=signal.id)
+
+    with pytest.raises(ValueError):
+        dataset.get_signal()
 
 
 def test_db_query_endpoint(db: DB) -> None:
