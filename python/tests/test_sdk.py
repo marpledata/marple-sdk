@@ -145,7 +145,6 @@ def test_db_filter_datasets(db: DB, stream_name: str) -> None:
 
     random_dataset = random.choice(all_datasets)
     possible_names = [
-        "driver.steering",
         "car.speed",
         "car.dist",
         "car.lap.num",
