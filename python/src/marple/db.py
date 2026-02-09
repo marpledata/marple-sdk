@@ -111,7 +111,7 @@ class DataStream(BaseModel):
 class Dataset(BaseModel):
     id: int
     datastream_id: int
-    datastream_version: int
+    datastream_version: int | None
     created_at: float
     created_by: str | None
     import_status: str
@@ -307,7 +307,7 @@ class DatasetList(UserList[Dataset]):
     ) -> "DatasetList":
         results = DatasetList([])
         for dataset in self.data:
-            signal: Signal = dataset.get_signal(signal_name)
+            signal = dataset.get_signal(signal_name)
             if stat in ["max", "min", "sum", "mean", "frequency"]:
                 value = signal.stats.get(stat)
             else:
