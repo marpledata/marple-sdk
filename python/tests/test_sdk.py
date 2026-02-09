@@ -80,10 +80,6 @@ def ingest_dataset(db: DB, stream_name: str, metadata: dict | None = None) -> in
 
 
 def wait_for_ingestion(db: DB, stream_name, dataset_ids: list[int], timeout: float = 20) -> None:
-<<<<<<< HEAD
-    finished_statuses = ["FINISHED", "FAILED"]
-=======
->>>>>>> origin/filter-datasets
     start = time.monotonic()
     deadline = time.monotonic() + timeout
 
@@ -98,10 +94,7 @@ def wait_for_ingestion(db: DB, stream_name, dataset_ids: list[int], timeout: flo
             break
         time.sleep(0.5)
     print(f"Waited for {time.monotonic() - start:.1f}s for ingestion to finish. Last statuses: {last_statuses}")
-<<<<<<< HEAD
-    sucess_statuses = ["FINISHED"]
-=======
->>>>>>> origin/filter-datasets
+
     for dataset_id, status in last_statuses.items():
         assert status != {}, "No status returned while polling ingest status."
         assert status.get("import_status") == "FINISHED", f"Ingest did not finish: {status}"
@@ -124,11 +117,7 @@ def test_db_filter_datasets(db: DB, stream_name: str) -> None:
     id2 = ingest_dataset(db, stream_name, metadata={"A": 1, "B": 2})
     id3 = ingest_dataset(db, stream_name, metadata={"A": 4, "B": 3})
     ids = [id1, id2, id3]
-<<<<<<< HEAD
-    wait_for_ingestion(db, stream_name, dataset_ids=ids, timeout=30)
-=======
     wait_for_ingestion(db, stream_name, dataset_ids=ids, timeout=60)
->>>>>>> origin/filter-datasets
 
     # all_datasets = db.get_datasets(stream_name)
     stream = db.get_stream(stream_name)
