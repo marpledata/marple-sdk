@@ -49,12 +49,13 @@ def stream_name() -> Generator[str, None, None]:
     session_db = DB(_required_env("MDB_TOKEN"), url)
 
     name = "Salty Compulsory Pytest " + datetime.now().isoformat()
-    session_db.create_stream(name)
+    stream_id = session_db.create_stream(name)
     yield name
+    print("Cleaning up stream...")
     session_db.delete_stream(name)  # optional cleanup
 
 
-@pytest.fixture()
+@pytest.fixture(scope="session")
 def dataset_id(db: DB, stream_name: str, metadata: dict | None = None) -> Generator[int, None, None]:
     dataset_id = ingest_dataset(db, stream_name, metadata=metadata)
     assert isinstance(dataset_id, int)
