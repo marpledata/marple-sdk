@@ -120,7 +120,6 @@ def test_db_filter_datasets(db: DB, stream_name: str) -> None:
     ids = [id1, id2, id3]
     wait_for_ingestion(db, stream_name, dataset_ids=ids, timeout=60)
 
-    # all_datasets = db.get_datasets(stream_name)
     stream = db.get_stream(stream_name)
     all_datasets = stream.get_datasets()
     assert len(all_datasets) == len(ids)

@@ -57,7 +57,6 @@ class DataStream(BaseModel):
     plugin_args: Optional[str] = None
     signal_reduction: Optional[list] = None
 
-    _has_all_datasets: bool = PrivateAttr(default=False)
     _known_datasets: dict[str, int] = PrivateAttr(default_factory=dict)
     _datasets: dict[int, "Dataset"] = PrivateAttr(default_factory=dict)
     _db: "DB" = PrivateAttr()
@@ -93,7 +92,7 @@ class DataStream(BaseModel):
 
     def get_datasets(self) -> "DatasetList":
         """Get all datasets in this datastream."""
-        if not self._has_all_datasets:
+        if self.n_datasets is None or len(self._datasets) < self.n_datasets:
             r = self._db.get(f"/stream/{self.id}/datasets")
             for dataset in r.json():
                 try:
@@ -104,7 +103,6 @@ class DataStream(BaseModel):
                     )
                 self._datasets[dataset_obj.id] = dataset_obj
                 self._known_datasets[dataset_obj.path] = dataset_obj.id
-            self._has_all_datasets = True
         return DatasetList(self._datasets.values())
 
 
@@ -137,7 +135,6 @@ class Dataset(BaseModel):
     _db: "DB" = PrivateAttr()
     _known_signals: dict[str, int] = PrivateAttr(default_factory=dict)
     _signals: dict[int, "Signal"] = PrivateAttr(default_factory=dict)
-    _has_all_signals: bool = PrivateAttr(default=False)
 
     datastream: DataStream
 
@@ -179,7 +176,7 @@ class Dataset(BaseModel):
                 return True
             return any(pattern.match(signal_name) for pattern in compiled_filters)
 
-        if not self._has_all_signals:
+        if len(self._signals) < self.n_signals:
             r = self._db.get(f"/stream/{self.datastream.id}/dataset/{self.id}/signals")
             for signal in r.json():
                 try:
@@ -190,7 +187,6 @@ class Dataset(BaseModel):
                     )
                 self._signals[signal_obj.id] = signal_obj
                 self._known_signals[signal_obj.name] = signal_obj.id
-            self._has_all_signals = True
 
         return [signal for signal in self._signals.values() if include(signal.name)]
 
