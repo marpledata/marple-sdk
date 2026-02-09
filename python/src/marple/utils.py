@@ -13,9 +13,11 @@ def validate_response(response: requests.Response, failure_message: str, check_s
 
 
 class DBSession:
-    def __init__(self, api_token: str, api_url: str):
+    def __init__(self, api_token: str, api_url: str, datapool: str, cache_folder: str):
         self.api_token = api_token
         self.api_url = api_url
+        self.datapool = datapool
+        self.cache_folder = cache_folder
 
         self.session = requests.Session()
         self.session.headers.update({"Authorization": f"Bearer {self.api_token}"})

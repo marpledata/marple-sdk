@@ -4,9 +4,10 @@ from urllib import parse, request
 
 import pandas as pd
 import pyarrow as pa
-from constants import COL_TIME, COL_VAL, COL_VAL_TEXT
-from marple.utils import DBSession, validate_response
 from pydantic import BaseModel, PrivateAttr
+
+from marple.db.constants import COL_TIME, COL_VAL, COL_VAL_TEXT
+from marple.utils import DBSession, validate_response
 
 
 class Signal(BaseModel):
@@ -25,23 +26,29 @@ class Signal(BaseModel):
     time_min: int | None
     time_max: int | None
     parquet_version: int
+    datastream_id: int
+    dataset_id: int
 
     _cold_paths: list[parse.ParseResult] | None = PrivateAttr(default=None)
-    _data_folder: Path | None = PrivateAttr(default=None)
+    _data_folder: Path = PrivateAttr()
     _session: DBSession = PrivateAttr()
 
-    def __init__(self, session, DBSession, **kwargs):
-        super().__init__(**kwargs)
+    def __init__(self, session: DBSession, datastream_id: int, dataset_id: int, **kwargs):
+        super().__init__(datastream_id=datastream_id, dataset_id=dataset_id, **kwargs)
         self._session = session
+        self.datastream_id = datastream_id
+        self.dataset_id = dataset_id
+        self._data_folder = Path(
+            f"{session.cache_folder}/{session.datapool}/dataset={self.dataset_id}/signal={self.id}"
+        )
 
     def _get_paths(self) -> tuple[list[parse.ParseResult], list[str]]:
-        if self._cold_paths is None or self._data_folder is None:
+        if self._cold_paths is None:
             r = self._session.get(
-                f"/stream/{self.dataset.datastream_id}/dataset/{self.dataset.id}/signal/{self.id}/path"
+                f"/stream/{self.datastream_id}/dataset/{self.dataset_id}/signal/{self.id}/path"
             )
             validate_response(r, "Get parquet path failed", check_status=False)
             self._cold_paths = [parse.urlparse(p) for p in r.json()["paths"]]
-            self._data_folder = (self._session._cache_folder / self._cold_paths[0].path.lstrip("/")).parent
             os.makedirs(self._data_folder, exist_ok=True)
             return self._cold_paths, os.listdir(self._data_folder)
         return self._cold_paths, os.listdir(self._data_folder)

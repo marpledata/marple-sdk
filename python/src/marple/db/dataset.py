@@ -1,13 +1,14 @@
 import re
 from collections import UserList
-from signal import Signal
 from typing import Callable, Iterable, Literal, Optional, Sequence
 
 import pandas as pd
-from constants import COL_TIME, COL_VAL
 from pandas._typing import AggFuncType, Frequency
 from pydantic import BaseModel, PrivateAttr, ValidationError
-from utils import DBSession
+
+from marple.db.constants import COL_TIME, COL_VAL
+from marple.db.signal import Signal
+from marple.utils import DBSession
 
 
 class Dataset(BaseModel):
@@ -39,7 +40,6 @@ class Dataset(BaseModel):
     _session: DBSession = PrivateAttr()
     _known_signals: dict[str, int] = PrivateAttr(default_factory=dict)
     _signals: dict[int, "Signal"] = PrivateAttr(default_factory=dict)
-    _has_all_signals: bool = PrivateAttr(default=False)
 
     def __init__(self, session: DBSession, **kwargs):
         super().__init__(**kwargs)
@@ -61,8 +61,10 @@ class Dataset(BaseModel):
             raise ValueError(f"Signal with name {name} not found in dataset with id {self.id}.")
 
         if id not in self._signals:
-            r = self._session.get(f"/stream/{self.datastream.id}/dataset/{self.id}/signal/{id}")
-            signal = Signal(dataset=self, **r.json())
+            r = self._session.get(f"/stream/{self.datastream_id}/dataset/{self.id}/signal/{id}")
+            signal = Signal(
+                session=self._session, datastream_id=self.datastream_id, dataset_id=self.id, **r.json()
+            )
             self._signals[signal.id] = signal
             self._known_signals[signal.name] = signal.id
 
@@ -79,18 +81,19 @@ class Dataset(BaseModel):
                 return True
             return any(pattern.match(signal_name) for pattern in compiled_filters)
 
-        if not self._has_all_signals:
-            r = self._session.get(f"/stream/{self.datastream.id}/dataset/{self.id}/signals")
+        if len(self._signals) < self.n_signals:
+            r = self._session.get(f"/stream/{self.datastream_id}/dataset/{self.id}/signals")
             for signal in r.json():
                 try:
-                    signal_obj = Signal(dataset=self, **signal)
+                    signal_obj = Signal(
+                        session=self._session, datastream_id=self.datastream_id, dataset_id=self.id, **signal
+                    )
                 except ValidationError as e:
                     raise UserWarning(
                         f"Failed to parse signal with id {signal.get('id')} and name {signal.get('name')}. Skipping. Error: {e}"
                     )
                 self._signals[signal_obj.id] = signal_obj
                 self._known_signals[signal_obj.name] = signal_obj.id
-            self._has_all_signals = True
 
         return [signal for signal in self._signals.values() if include(signal.name)]
 

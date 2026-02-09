@@ -7,7 +7,7 @@ COL_SIG = "signal"
 COL_VAL = "value"
 COL_VAL_TEXT = "value_text"
 
-WRITE_SCHEMA = pa.schema(
+SCHEMA = pa.schema(
     [
         pa.field(COL_TIME, pa.int64()),
         pa.field(COL_SIG, pa.string()),

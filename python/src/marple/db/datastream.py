@@ -1,8 +1,9 @@
 from typing import Literal, Optional
 
-from dataset import Dataset, DatasetList
 from pydantic import BaseModel, PrivateAttr, ValidationError
-from utils import DBSession
+
+from marple.db.dataset import Dataset, DatasetList
+from marple.utils import DBSession
 
 
 class DataStream(BaseModel):
@@ -29,7 +30,6 @@ class DataStream(BaseModel):
     plugin_args: Optional[str] = None
     signal_reduction: Optional[list] = None
 
-    _has_all_datasets: bool = PrivateAttr(default=False)
     _known_datasets: dict[str, int] = PrivateAttr(default_factory=dict)
     _datasets: dict[int, "Dataset"] = PrivateAttr(default_factory=dict)
     _session = PrivateAttr()
@@ -53,7 +53,7 @@ class DataStream(BaseModel):
 
         if id not in self._datasets:
             r = self._session.get(f"/stream/{self.id}/dataset/{id}")
-            dataset = Dataset(datastream=self, **r.json())
+            dataset = Dataset(session=self._session, **r.json())
             self._datasets[id] = dataset
             self._known_datasets[dataset.path] = dataset.id
         return self._datasets[id]
@@ -65,11 +65,11 @@ class DataStream(BaseModel):
 
     def get_datasets(self) -> "DatasetList":
         """Get all datasets in this datastream."""
-        if not self._has_all_datasets:
+        if self.n_datasets is None or len(self._datasets) < self.n_datasets:
             r = self._session.get(f"/stream/{self.id}/datasets")
             for dataset in r.json():
                 try:
-                    dataset_obj = Dataset(datastream=self, **dataset)
+                    dataset_obj = Dataset(session=self._session, **dataset)
                 except ValidationError as e:
                     raise UserWarning(
                         f"Failed to parse dataset with id {dataset.get('id')} and path {dataset.get('path')}. Skipping. Error: {e}"
