@@ -12,7 +12,6 @@ import pyarrow as pa
 import pyarrow.parquet as pq
 import requests
 from marple.utils import validate_response
-from pandas._typing import AggFuncType, Frequency
 from pydantic import BaseModel, PrivateAttr,ValidationError
 from requests import Response
 
@@ -107,8 +106,6 @@ class DataStream(BaseModel):
             self._has_all_datasets = True
         print("Datasets", self._datasets)
         return DatasetList(self._datasets.values())
-
-
 
 
 class Dataset(BaseModel):
@@ -596,8 +593,6 @@ class DB:
         stream_id = self._get_stream_id(stream_key)
         r = self.post(f"/stream/{stream_id}/delete")
         validate_response(r, "Delete stream failed")
-
-
 
     # Internal functions #
 
