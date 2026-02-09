@@ -23,18 +23,16 @@ dotenv.load_dotenv()
 
 def _required_env(name: str) -> str:
     value = os.getenv(name)
-    if not value:
+    if value is None:
         pytest.fail(f"Missing env var {name}; skipping integration test.")
     return value
 
 
-@pytest.fixture(scope="session")
+@pytest.fixture()
 def db() -> DB:
     url = os.getenv("MDB_API_URL", marple.db.SAAS_URL)
     assert url is not None
-    new_db = DB(_required_env("MDB_TOKEN"), url)
-    print(f"DB ID: {id(new_db)}")
-    return new_db
+    return DB(_required_env("MDB_TOKEN"), url)
 
 
 @pytest.fixture(scope="session")
@@ -45,14 +43,18 @@ def insight() -> Insight:
 
 
 @pytest.fixture(scope="session")
-def stream_name(db: DB) -> Generator[str, None, None]:
+def stream_name() -> Generator[str, None, None]:
+    url = os.getenv("MDB_API_URL", marple.db.SAAS_URL)
+    assert url is not None
+    session_db = DB(_required_env("MDB_TOKEN"), url)
+
     name = "Salty Compulsory Pytest " + datetime.now().isoformat()
-    stream_id = db.create_stream(name)
+    session_db.create_stream(name)
     yield name
-    db.delete_stream(stream_id)
+    session_db.delete_stream(name)  # optional cleanup
 
 
-@pytest.fixture(scope="session")
+@pytest.fixture()
 def dataset_id(db: DB, stream_name: str, metadata: dict | None = None) -> Generator[int, None, None]:
     dataset_id = ingest_dataset(db, stream_name, metadata=metadata)
     assert isinstance(dataset_id, int)
@@ -85,7 +87,8 @@ def wait_for_ingestion(db: DB, stream_name, dataset_ids: list[int], timeout: flo
         for dataset_id in dataset_ids:
             last_statuses[dataset_id] = db.get_status(stream_name, dataset_id)
         if all(
-            last_statuses[dataset_id].get("import_status") in ["FINISHED", "FAILED"] for dataset_id in dataset_ids
+            last_statuses[dataset_id].get("import_status") in ["FINISHED", "FAILED"]
+            for dataset_id in dataset_ids
         ):
             break
         time.sleep(0.5)

@@ -11,9 +11,10 @@ import pandas as pd
 import pyarrow as pa
 import pyarrow.parquet as pq
 import requests
-from marple.utils import validate_response
-from pydantic import BaseModel, PrivateAttr,ValidationError
+from pydantic import BaseModel, PrivateAttr, ValidationError
 from requests import Response
+
+from marple.utils import validate_response
 
 SAAS_URL = "https://db.marpledata.com/api/v1"
 
@@ -92,19 +93,18 @@ class DataStream(BaseModel):
 
     def get_datasets(self) -> "DatasetList":
         """Get all datasets in this datastream."""
-        print("Has all datasets", self._has_all_datasets, "ID:", self.id)
         if not self._has_all_datasets:
             r = self._db.get(f"/stream/{self.id}/datasets")
-            print("r", r, r.json())
             for dataset in r.json():
                 try:
                     dataset_obj = Dataset(datastream=self, **dataset)
                 except ValidationError as e:
-                    raise UserWarning(f"Failed to parse dataset with id {dataset.get('id')} and path {dataset.get('path')}. Skipping. Error: {e}")
+                    raise UserWarning(
+                        f"Failed to parse dataset with id {dataset.get('id')} and path {dataset.get('path')}. Skipping. Error: {e}"
+                    )
                 self._datasets[dataset_obj.id] = dataset_obj
                 self._known_datasets[dataset_obj.path] = dataset_obj.id
             self._has_all_datasets = True
-        print("Datasets", self._datasets)
         return DatasetList(self._datasets.values())
 
 
@@ -185,7 +185,9 @@ class Dataset(BaseModel):
                 try:
                     signal_obj = Signal(dataset=self, **signal)
                 except ValidationError as e:
-                    raise UserWarning(f"Failed to parse signal with id {signal.get('id')} and name {signal.get('name')}. Skipping. Error: {e}")
+                    raise UserWarning(
+                        f"Failed to parse signal with id {signal.get('id')} and name {signal.get('name')}. Skipping. Error: {e}"
+                    )
                 self._signals[signal_obj.id] = signal_obj
                 self._known_signals[signal_obj.name] = signal_obj.id
             self._has_all_signals = True
@@ -458,8 +460,6 @@ class DB:
         """
         stream_id = self._get_stream_id(stream_key)
         r = self.get(f"/stream/{stream_id}/dataset/{dataset_id}/signal/{signal_id}/path")
-        print(stream_id, dataset_id, signal_id)
-        print("Download signal response", r, r.json())
         validate_response(r, "Get parquet path failed", check_status=False)
         dest = Path(destination_folder)
         parquet_paths = []
