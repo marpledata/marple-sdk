@@ -55,7 +55,7 @@ def stream_name() -> Generator[str, None, None]:
     session_db.delete_stream(name)  # optional cleanup
 
 
-@pytest.fixture(scope="session")
+@pytest.fixture()
 def dataset_id(db: DB, stream_name: str, metadata: dict | None = None) -> Generator[int, None, None]:
     dataset_id = ingest_dataset(db, stream_name, metadata=metadata)
     assert isinstance(dataset_id, int)
