@@ -23,18 +23,16 @@ dotenv.load_dotenv()
 
 def _required_env(name: str) -> str:
     value = os.getenv(name)
-    if not value:
+    if value is None:
         pytest.fail(f"Missing env var {name}; skipping integration test.")
     return value
 
 
-@pytest.fixture(scope="session")
+@pytest.fixture()
 def db() -> DB:
     url = os.getenv("MDB_API_URL", marple.db.SAAS_URL)
     assert url is not None
-    new_db = DB(_required_env("MDB_TOKEN"), url)
-    print(f"DB ID: {id(new_db)}")
-    return new_db
+    return DB(_required_env("MDB_TOKEN"), url)
 
 
 @pytest.fixture(scope="session")
@@ -45,11 +43,16 @@ def insight() -> Insight:
 
 
 @pytest.fixture(scope="session")
-def stream_name(db: DB) -> Generator[str, None, None]:
+def stream_name() -> Generator[str, None, None]:
+    url = os.getenv("MDB_API_URL", marple.db.SAAS_URL)
+    assert url is not None
+    session_db = DB(_required_env("MDB_TOKEN"), url)
+
     name = "Salty Compulsory Pytest " + datetime.now().isoformat()
-    stream_id = db.create_stream(name)
+    stream_id = session_db.create_stream(name)
     yield name
-    db.delete_stream(stream_id)
+    print("Cleaning up stream...")
+    session_db.delete_stream(name)  # optional cleanup
 
 
 @pytest.fixture(scope="session")
@@ -77,7 +80,10 @@ def ingest_dataset(db: DB, stream_name: str, metadata: dict | None = None) -> in
 
 
 def wait_for_ingestion(db: DB, stream_name, dataset_ids: list[int], timeout: float = 20) -> None:
+<<<<<<< HEAD
     finished_statuses = ["FINISHED", "FAILED"]
+=======
+>>>>>>> origin/filter-datasets
     start = time.monotonic()
     deadline = time.monotonic() + timeout
 
@@ -86,15 +92,19 @@ def wait_for_ingestion(db: DB, stream_name, dataset_ids: list[int], timeout: flo
         for dataset_id in dataset_ids:
             last_statuses[dataset_id] = db.get_status(stream_name, dataset_id)
         if all(
-            last_statuses[dataset_id].get("import_status") in finished_statuses for dataset_id in dataset_ids
+            last_statuses[dataset_id].get("import_status") in ["FINISHED", "FAILED"]
+            for dataset_id in dataset_ids
         ):
             break
         time.sleep(0.5)
     print(f"Waited for {time.monotonic() - start:.1f}s for ingestion to finish. Last statuses: {last_statuses}")
+<<<<<<< HEAD
     sucess_statuses = ["FINISHED"]
+=======
+>>>>>>> origin/filter-datasets
     for dataset_id, status in last_statuses.items():
         assert status != {}, "No status returned while polling ingest status."
-        assert status.get("import_status") in sucess_statuses, f"Ingest did not finish: {status}"
+        assert status.get("import_status") == "FINISHED", f"Ingest did not finish: {status}"
 
 
 def test_db_check_connection(db: DB) -> None:
@@ -114,7 +124,11 @@ def test_db_filter_datasets(db: DB, stream_name: str) -> None:
     id2 = ingest_dataset(db, stream_name, metadata={"A": 1, "B": 2})
     id3 = ingest_dataset(db, stream_name, metadata={"A": 4, "B": 3})
     ids = [id1, id2, id3]
+<<<<<<< HEAD
     wait_for_ingestion(db, stream_name, dataset_ids=ids, timeout=30)
+=======
+    wait_for_ingestion(db, stream_name, dataset_ids=ids, timeout=60)
+>>>>>>> origin/filter-datasets
 
     # all_datasets = db.get_datasets(stream_name)
     stream = db.get_stream(stream_name)

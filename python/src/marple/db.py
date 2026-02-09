@@ -12,10 +12,11 @@ import pandas as pd
 import pyarrow as pa
 import pyarrow.parquet as pq
 import requests
-from marple.utils import validate_response
 from pandas._typing import AggFuncType, Frequency
-from pydantic import BaseModel, PrivateAttr,ValidationError
+from pydantic import BaseModel, PrivateAttr, ValidationError
 from requests import Response
+
+from marple.utils import validate_response
 
 SAAS_URL = "https://db.marpledata.com/api/v1"
 
@@ -100,7 +101,9 @@ class DataStream(BaseModel):
                 try:
                     dataset_obj = Dataset(datastream=self, **dataset)
                 except ValidationError as e:
-                    raise UserWarning(f"Failed to parse dataset with id {dataset.get('id')} and path {dataset.get('path')}. Skipping. Error: {e}")
+                    raise UserWarning(
+                        f"Failed to parse dataset with id {dataset.get('id')} and path {dataset.get('path')}. Skipping. Error: {e}"
+                    )
                 self._datasets[dataset_obj.id] = dataset_obj
                 self._known_datasets[dataset_obj.path] = dataset_obj.id
             self._has_all_datasets = True
@@ -184,7 +187,9 @@ class Dataset(BaseModel):
                 try:
                     signal_obj = Signal(dataset=self, **signal)
                 except ValidationError as e:
-                    raise UserWarning(f"Failed to parse signal with id {signal.get('id')} and name {signal.get('name')}. Skipping. Error: {e}")
+                    raise UserWarning(
+                        f"Failed to parse signal with id {signal.get('id')} and name {signal.get('name')}. Skipping. Error: {e}"
+                    )
                 self._signals[signal_obj.id] = signal_obj
                 self._known_signals[signal_obj.name] = signal_obj.id
             self._has_all_signals = True
