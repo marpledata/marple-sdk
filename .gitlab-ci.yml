@@ -22,7 +22,7 @@ pytest:
     - /root/.local/bin/uv --version
   script:
     - cd python
-      - /root/.local/bin/uv run pytest -v --junitxml=pytest.xml --cov=marple --cov-report=term-missing --cov-report=xml:coverage.xml
+    - /root/.local/bin/uv run pytest -v --junitxml=pytest.xml --cov=marple --cov-report=term-missing --cov-report=xml:coverage.xml
   artifacts:
     when: always
     reports:
