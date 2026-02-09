@@ -102,6 +102,8 @@ def wait_for_ingestion(db: DB, stream_name, dataset_ids: list[int], timeout: flo
 
 def test_db_check_connection(db: DB) -> None:
     assert db.check_connection() is True
+    with pytest.raises(ValueError, match="Invalid token"):
+        DB("invalid_token", marple.db.SAAS_URL).check_connection()
 
 
 def test_db_get_streams_and_datasets(db: DB, stream_name: str) -> None:
@@ -119,7 +121,6 @@ def test_db_filter_datasets(db: DB, stream_name: str) -> None:
     ids = [id1, id2, id3]
     wait_for_ingestion(db, stream_name, dataset_ids=ids, timeout=60)
 
-    # all_datasets = db.get_datasets(stream_name)
     stream = db.get_stream(stream_name)
     all_datasets = stream.get_datasets()
     assert len(all_datasets) == len(ids)
