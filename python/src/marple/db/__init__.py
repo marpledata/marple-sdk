@@ -95,6 +95,7 @@ class DB:
         r = self.get(
             f"/datapool/{self.session.datapool}/dataset", params={"id": dataset_id, "path": dataset_path}
         )
+
         return Dataset(self.session, **validate_response(r, "Get dataset failed"))
 
     def get_signals(self, dataset_id: int | None = None, dataset_path: str | None = None) -> list[Signal]:
@@ -163,15 +164,22 @@ class DB:
 
     def download_signal(
         self,
-        stream_key: str | int,
-        dataset_id: int,
+        dataset_id: int | None = None,
+        dataset_path: str | None = None,
         signal_id: int | None = None,
         signal_name: str | None = None,
     ) -> list[Path]:
         """
         Download the parquet file for a signal from the dataset to the destination folder.
         """
-        signal = self.get_signal(stream_key, dataset_id, signal_id=signal_id, signal_name=signal_name)
+        signal = self.get_signal(
+            dataset_id,
+            dataset_path,
+            signal_name,
+            signal_id,
+        )
+        if signal is None:
+            raise Exception("Signal not found")
         signal.download_data()
         return signal.get_local_parquet_paths()
 

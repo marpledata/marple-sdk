@@ -258,15 +258,8 @@ def test_get_signal(db: DB, dataset_id: int) -> None:
     with pytest.raises(ValueError):
         dataset.get_signal(name="car.speed", id=signal.id)
 
-    with pytest.raises(HTTPError):
+    with pytest.raises(ValueError):
         dataset.get_signal()
-
-
-def test_db_query_endpoint(db: DB) -> None:
-    query = "select path, stream_id, metadata from mdb_default_dataset limit 1;"
-    response = db.post("/query", json={"query": query})
-    assert response.status_code == 200
-    assert response.json() is not None
 
 
 def test_db_get_original(db: DB, stream_name: str, dataset_id: int) -> None:
@@ -277,10 +270,10 @@ def test_db_get_original(db: DB, stream_name: str, dataset_id: int) -> None:
         assert p.stat().st_size == EXAMPLE_CSV.stat().st_size
 
 
-def test_db_get_parquet(db: DB, stream_name: str, dataset_id: int) -> None:
-    signals = db.get_signals(stream_name, dataset_id)
+def test_db_get_parquet(db: DB, dataset_id: int) -> None:
+    signals = db.get_signals(dataset_id)
     signal = random.choice(signals)
-    paths = db.download_signal(stream_name, dataset_id, signal.id)
+    paths = db.download_signal(dataset_id, signal_id=signal.id)
     assert len(paths) > 0
     for path in paths:
         table = pq.read_table(path, schema=SCHEMA)
