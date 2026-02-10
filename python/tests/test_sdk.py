@@ -15,6 +15,7 @@ import pytest
 from h5py import File
 from marple import DB, Insight
 from marple.db.constants import SCHEMA
+from requests import HTTPError
 
 EXAMPLE_CSV = Path(__file__).parent / "examples_race.csv"
 
@@ -217,8 +218,8 @@ def test_get_data(db: DB, stream_name: str) -> None:
         assert df.index[1] - df.index[0] == pd.Timedelta(3.579, unit="s")
 
 
-def test_get_signals(db: DB, stream_name: str, dataset_id: int) -> None:
-    dataset = db.get_dataset(stream_name, dataset_id)
+def test_get_signals(db: DB, dataset_id: int) -> None:
+    dataset = db.get_dataset(dataset_id=dataset_id)
 
     assert len(dataset.get_signals()) == 15
     assert len(dataset.get_signals(signal_names=["car.speed", "car.accel", "some_random_signal"])) == 2
@@ -227,37 +228,37 @@ def test_get_signals(db: DB, stream_name: str, dataset_id: int) -> None:
     assert len(dataset.get_signals(signal_names=["car\.wheel.*"])) == 0
 
 
-def test_test_dataset(db: DB, stream_name: str, dataset_id: int) -> None:
-    dataset = db.get_dataset(stream_name, dataset_id)
+def test_test_dataset(db: DB, dataset_id: int) -> None:
+    dataset = db.get_dataset(dataset_id=dataset_id)
 
     assert isinstance(dataset, marple.db.Dataset)
     assert dataset.n_signals == 15
     assert dataset.n_datapoints == 12500 * 15
 
     with pytest.raises(ValueError):
-        db.get_dataset(stream_name)
+        db.get_dataset()
 
-    with pytest.raises(ValueError):
-        db.get_dataset(stream_name, dataset.id, dataset.path)
+    # path is ignored
+    db.get_dataset(dataset_id=dataset.id, dataset_path=dataset.path)
 
-    with pytest.raises(ValueError):
-        db.get_dataset(stream_name, dataset.id + 9999999)
+    with pytest.raises(HTTPError):
+        db.get_dataset(dataset_id=dataset.id + 9999999)
 
 
-def test_get_signal(db: DB, stream_name: str, dataset_id: int) -> None:
-    dataset = db.get_dataset(stream_name, dataset_id)
+def test_get_signal(db: DB, dataset_id: int) -> None:
+    dataset = db.get_dataset(dataset_id=dataset_id)
 
     signal = dataset.get_signal("car.speed")
     assert signal.name == "car.speed"
     assert signal.count == 12500
 
-    with pytest.raises(ValueError):
+    with pytest.raises(HTTPError):
         dataset.get_signal("non.existent.signal")
 
     with pytest.raises(ValueError):
         dataset.get_signal(name="car.speed", id=signal.id)
 
-    with pytest.raises(ValueError):
+    with pytest.raises(HTTPError):
         dataset.get_signal()
 
 

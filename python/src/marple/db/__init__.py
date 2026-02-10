@@ -91,9 +91,9 @@ class DB:
         )
         return DatasetList([Dataset(self.session, **dataset) for dataset in datasets])
 
-    def get_dataset(self, dataset_id: int | None, dataset_path: str | None = None) -> Dataset:
+    def get_dataset(self, dataset_id: int | None = None, dataset_path: str | None = None) -> Dataset:
         r = self.get(
-            "/datapool/{self.session.datapool}/dataset", params={"id": dataset_id, "path": dataset_path}
+            f"/datapool/{self.session.datapool}/dataset", params={"id": dataset_id, "path": dataset_path}
         )
         return Dataset(self.session, **validate_response(r, "Get dataset failed"))
 
