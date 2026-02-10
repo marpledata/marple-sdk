@@ -5,7 +5,7 @@ from typing import Callable, Iterable, Literal, Optional, Sequence
 
 import pandas as pd
 from pandas._typing import AggFuncType, Frequency
-from pydantic import BaseModel, PrivateAttr, ValidationError
+from pydantic import BaseModel, ConfigDict, Field, PrivateAttr, ValidationError
 
 from marple.db.constants import COL_TIME, COL_VAL
 from marple.db.signal import Signal
@@ -13,8 +13,9 @@ from marple.utils import DBSession, validate_response
 
 
 class Dataset(BaseModel):
+    model_config = ConfigDict(populate_by_name=True)
     id: int
-    datastream_id: int
+    datastream_id: int = Field(alias="stream_id")
     datastream_version: int | None
     created_at: float
     created_by: str | None
@@ -46,7 +47,7 @@ class Dataset(BaseModel):
         super().__init__(**kwargs)
         self._session = session
 
-    def get_signal(self, name: str | None = None, id: int | None = None) -> "Signal":
+    def get_signal(self, name: str | None = None, id: int | None = None) -> Optional["Signal"]:
         """Get a specific signal in this dataset by its name or ID."""
         if name is None and id is None:
             raise ValueError("Either name or id must be provided.")
@@ -56,7 +57,7 @@ class Dataset(BaseModel):
         if name is not None:
             if name not in self._known_signals:
                 r = self._session.get(f"/datapool/{self._session.datapool}/signal/{name}/id")
-                result = validate_response(r, f"Get signal ID for signal name {name} failed", check_status=False)
+                result = validate_response(r, f"Get signal ID for signal name {name} failed")
                 self._known_signals[name] = result["id"]
             id = self._known_signals.get(name)
 
@@ -66,7 +67,7 @@ class Dataset(BaseModel):
         if id not in self._signals:
             r = self._session.get(f"/stream/{self.datastream_id}/dataset/{self.id}/signal/{id}")
             try:
-                result = validate_response(r, f"Get signal data for signal ID {id} failed", check_status=False)
+                result = validate_response(r, f"Get signal data for signal ID {id} failed")
             except Exception:
                 warnings.warn(f"Failed to get signal with id {id} and name {name}.")
                 return
@@ -218,7 +219,7 @@ class DatasetList(UserList[Dataset]):
         """
         results = DatasetList([])
         for dataset in self.data:
-            signal: Signal = dataset.get_signal(signal_name)
+            signal = dataset.get_signal(signal_name)
             if signal is None:
                 continue
             if stat in ["max", "min", "sum", "mean", "frequency"]:

@@ -1,7 +1,7 @@
 import requests
 
 
-def validate_response(response: requests.Response, failure_message: str, check_status: bool = True) -> dict:
+def validate_response(response: requests.Response, failure_message: str) -> dict:
     if response.status_code == 400:
         raise ValueError(f"{failure_message}: Bad request. {response.json().get('error', 'Unknown error')}")
     if response.status_code == 403:
@@ -13,7 +13,7 @@ def validate_response(response: requests.Response, failure_message: str, check_s
     if response.status_code != 200:
         response.raise_for_status()
     r_json = response.json()
-    if check_status and r_json.get("status") != "success":
+    if isinstance(r_json, dict) and r_json.get("status", "success") not in ["success", "healthy"]:
         raise ValueError(failure_message)
     return r_json
 
