@@ -1,4 +1,5 @@
 import re
+import warnings
 from collections import UserList
 from typing import Callable, Iterable, Literal, Optional, Sequence
 
@@ -54,11 +55,9 @@ class Dataset(BaseModel):
 
         if name is not None:
             if name not in self._known_signals:
-                r = self._session.get(f"/datapool/{self._session.datapool}/{name}/id")
-                self._known_signals[name] = validate_response(r, f"Get signal ID for signal name {name} failed")[
-                    "id"
-                ]
-
+                r = self._session.get(f"/datapool/{self._session.datapool}/signal/{name}/id")
+                result = validate_response(r, f"Get signal ID for signal name {name} failed", check_status=False)
+                self._known_signals[name] = result["id"]
             id = self._known_signals.get(name)
 
         if id is None:
@@ -66,6 +65,12 @@ class Dataset(BaseModel):
 
         if id not in self._signals:
             r = self._session.get(f"/stream/{self.datastream_id}/dataset/{self.id}/signal/{id}")
+            try:
+                result = validate_response(r, f"Get signal data for signal ID {id} failed", check_status=False)
+            except Exception:
+                warnings.warn(f"Failed to get signal with id {id} and name {name}.")
+                return
+
             signal = Signal(
                 session=self._session, datastream_id=self.datastream_id, dataset_id=self.id, **r.json()
             )
@@ -132,24 +137,6 @@ class DatasetList(UserList[Dataset]):
 
     def __init__(self, datasets: Iterable[Dataset]):
         super().__init__(datasets)
-
-    def where_stream(
-        self, stream_name: str | None = None, stream_id: int | None = None, plugin: str | None = None
-    ) -> "DatasetList":
-        """
-        Filter datasets by their datastream's name, ID, or plugin type.
-        """
-        results = DatasetList([])
-        for dataset in self.data:
-            if stream_name is not None and dataset.datastream.name != stream_name:
-                continue
-            if stream_id is not None and dataset.datastream_id != stream_id:
-                continue
-            dataset_plugin = dataset.datastream.plugin
-            if plugin is not None and dataset_plugin is not None and dataset_plugin.lower() != plugin.lower():
-                continue
-            results.append(dataset)
-        return results
 
     def where_metadata(
         self, metadata: dict[str, int | str | Iterable[int | str]] | None = None
@@ -232,6 +219,8 @@ class DatasetList(UserList[Dataset]):
         results = DatasetList([])
         for dataset in self.data:
             signal: Signal = dataset.get_signal(signal_name)
+            if signal is None:
+                continue
             if stat in ["max", "min", "sum", "mean", "frequency"]:
                 value = signal.stats.get(stat)
             else:
