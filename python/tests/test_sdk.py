@@ -117,10 +117,9 @@ def test_db_get_streams_and_datasets(db: DB, stream_name: str) -> None:
 
 def test_db_filter_datasets(db: DB, stream_name: str) -> None:
     id1 = ingest_dataset(db, stream_name, metadata={"A": 1, "B": 1})
-    # id2 = ingest_dataset(db, stream_name, metadata={"A": 1, "B": 2})
-    # id3 = ingest_dataset(db, stream_name, metadata={"A": 4, "B": 3})
-    # ids = [id1, id2, id3]
-    ids = [id1]
+    id2 = ingest_dataset(db, stream_name, metadata={"A": 1, "B": 2})
+    id3 = ingest_dataset(db, stream_name, metadata={"A": 4, "B": 3})
+    ids = [id1, id2, id3]
     wait_for_ingestion(db, stream_name, dataset_ids=ids, timeout=60)
 
     stream = db.get_stream(stream_name)
@@ -128,10 +127,10 @@ def test_db_filter_datasets(db: DB, stream_name: str) -> None:
     assert len(all_datasets) == len(ids)
 
     datasets_a1 = all_datasets.where_metadata({"A": 1})
-    # assert len(datasets_a1) == 2
+    assert len(datasets_a1) == 2
 
     datasets_b23 = all_datasets.where_metadata({"B": [2, 3]})
-    # assert len(datasets_b23) == 2
+    assert len(datasets_b23) == 2
 
     assert len(all_datasets.where_dataset("hot_bytes", equals=0)) == len(ids)
     assert len(all_datasets.where_dataset("cold_bytes", less_than=1000)) == 0
