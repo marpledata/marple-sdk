@@ -8,7 +8,7 @@ from pydantic import BaseModel, PrivateAttr, ValidationError
 
 from marple.db.constants import COL_TIME, COL_VAL
 from marple.db.signal import Signal
-from marple.utils import DBSession
+from marple.utils import DBSession, validate_response
 
 
 class Dataset(BaseModel):
@@ -54,7 +54,11 @@ class Dataset(BaseModel):
 
         if name is not None:
             if name not in self._known_signals:
-                self.get_signals()
+                r = self._session.get(f"/datapool/{self._session.datapool}/{name}/id")
+                self._known_signals[name] = validate_response(r, f"Get signal ID for signal name {name} failed")[
+                    "id"
+                ]
+
             id = self._known_signals.get(name)
 
         if id is None:
