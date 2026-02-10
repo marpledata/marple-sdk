@@ -105,7 +105,7 @@ class DB:
         dataset_path: str | None = None,
         signal_name: str | None = None,
         signal_id: int | None = None,
-    ) -> Signal:
+    ) -> Signal | None:
         return self.get_dataset(stream_key, dataset_id, dataset_path).get_signal(signal_name, signal_id)
 
     def push_file(

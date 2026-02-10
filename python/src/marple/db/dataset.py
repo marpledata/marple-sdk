@@ -46,7 +46,7 @@ class Dataset(BaseModel):
         super().__init__(**kwargs)
         self._session = session
 
-    def get_signal(self, name: str | None = None, id: int | None = None) -> "Signal":
+    def get_signal(self, name: str | None = None, id: int | None = None) -> "Signal" | None:
         """Get a specific signal in this dataset by its name or ID."""
         if name is None and id is None:
             raise ValueError("Either name or id must be provided.")
@@ -218,7 +218,7 @@ class DatasetList(UserList[Dataset]):
         """
         results = DatasetList([])
         for dataset in self.data:
-            signal: Signal = dataset.get_signal(signal_name)
+            signal = dataset.get_signal(signal_name)
             if signal is None:
                 continue
             if stat in ["max", "min", "sum", "mean", "frequency"]:
