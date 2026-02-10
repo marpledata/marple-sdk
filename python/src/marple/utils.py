@@ -13,7 +13,8 @@ def validate_response(response: requests.Response, failure_message: str) -> dict
     if response.status_code != 200:
         response.raise_for_status()
     r_json = response.json()
-    if r_json.get("status", "success") != "success":
+    if isinstance(r_json, dict) and r_json.get("status", "success") in ["success", "healthy"]:
+        print(r_json)
         raise ValueError(failure_message)
     return r_json
 

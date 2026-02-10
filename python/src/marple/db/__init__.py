@@ -85,28 +85,29 @@ class DB:
     def get_datasets(self, stream_key: str | int | None = None) -> DatasetList:
         if stream_key is not None:
             return self.get_stream(stream_key).get_datasets()
-        return DatasetList([dataset for stream in self.get_streams() for dataset in stream.get_datasets()])
+        datasets = validate_response(
+            self.get(f"/datapool/{self.session.datapool}/datasets"),
+            f"Failed to get datasets for datapool {self.session.datapool}",
+        )
+        return DatasetList([Dataset(self.session, **dataset) for dataset in datasets])
 
-    def get_dataset(
-        self, stream_key: str | int, dataset_id: int | None = None, dataset_path: str | None = None
-    ) -> Dataset:
-        stream = self.get_stream(stream_key)
-        return stream.get_dataset(dataset_id, dataset_path)
+    def get_dataset(self, dataset_id: int | None, dataset_path: str | None = None) -> Dataset:
+        r = self.get(
+            "/datapool/{self.session.datapool}/dataset", params={"id": dataset_id, "path": dataset_path}
+        )
+        return Dataset(self.session, **validate_response(r, "Get dataset failed"))
 
-    def get_signals(
-        self, stream_key: str | int, dataset_id: int | None = None, dataset_path: str | None = None
-    ) -> list[Signal]:
-        return self.get_dataset(stream_key, dataset_id, dataset_path).get_signals()
+    def get_signals(self, dataset_id: int | None = None, dataset_path: str | None = None) -> list[Signal]:
+        return self.get_dataset(dataset_id, dataset_path).get_signals()
 
     def get_signal(
         self,
-        stream_key: str | int,
         dataset_id: int | None = None,
         dataset_path: str | None = None,
         signal_name: str | None = None,
         signal_id: int | None = None,
     ) -> Signal | None:
-        return self.get_dataset(stream_key, dataset_id, dataset_path).get_signal(signal_name, signal_id)
+        return self.get_dataset(dataset_id, dataset_path).get_signal(signal_name, signal_id)
 
     def push_file(
         self,
@@ -191,6 +192,27 @@ class DB:
         r_json = validate_response(r, "Add dataset failed")
 
         return r_json["dataset_id"]
+
+    def delete_dataset(self, dataset_id: int | None, dataset_path: str | None):
+        """
+        Delete a dataset by its ID. This is a destructive operation that cannot be undone.
+        """
+        dataset = self.get_dataset(dataset_id, dataset_path)
+        r = self.post(f"/stream/{dataset.datastream_id}/dataset/{dataset.id}/delete")
+        validate_response(r, "Delete dataset failed")
+
+    def update_metadata(
+        self, dataset_id: int | None, dataset_path: str | None, metadata: dict, overwrite: bool = False
+    ) -> None:
+        """
+        Update the metadata of a dataset.
+
+        By default, the new metadata is merged with the existing metadata.
+        If `overwrite` is True, the existing metadata is replaced with the new metadata.
+        """
+        dataset = self.get_dataset(dataset_id, dataset_path)
+        new_metadata = metadata if overwrite else {**dataset.metadata, **metadata}
+        self.post(f"/stream/{dataset.datastream_id}/dataset/{dataset.id}/metadata", json=new_metadata)
 
     def upsert_signals(self, stream_key: str | int, dataset_id: int, signals: list[dict]) -> None:
         """
