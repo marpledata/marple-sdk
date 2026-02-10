@@ -44,7 +44,7 @@ build-backend = "hatchling.build"
 
 
 [tool.hatch.build.targets.wheel]
-packages = ["src/marple", "src/marple/db"]
+packages = ["src/marple"]
 
 [[tool.uv.index]]
 name = "testpypi"
