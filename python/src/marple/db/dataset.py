@@ -56,7 +56,7 @@ class Dataset(BaseModel):
         if name is not None:
             if name not in self._known_signals:
                 r = self._session.get(f"/datapool/{self._session.datapool}/signal/{name}/id")
-                result = validate_response(r, f"Get signal ID for signal name {name} failed", check_status=False)
+                result = validate_response(r, f"Get signal ID for signal name {name} failed")
                 self._known_signals[name] = result["id"]
             id = self._known_signals.get(name)
 
@@ -66,7 +66,7 @@ class Dataset(BaseModel):
         if id not in self._signals:
             r = self._session.get(f"/stream/{self.datastream_id}/dataset/{self.id}/signal/{id}")
             try:
-                result = validate_response(r, f"Get signal data for signal ID {id} failed", check_status=False)
+                result = validate_response(r, f"Get signal data for signal ID {id} failed")
             except Exception:
                 warnings.warn(f"Failed to get signal with id {id} and name {name}.")
                 return

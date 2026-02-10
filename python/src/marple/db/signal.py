@@ -47,7 +47,7 @@ class Signal(BaseModel):
             r = self._session.get(
                 f"/stream/{self.datastream_id}/dataset/{self.dataset_id}/signal/{self.id}/path"
             )
-            validate_response(r, "Get parquet path failed", check_status=False)
+            validate_response(r, "Get parquet path failed")
             self._cold_paths = [parse.urlparse(p) for p in r.json()["paths"]]
             os.makedirs(self._data_folder, exist_ok=True)
             return self._cold_paths, os.listdir(self._data_folder)

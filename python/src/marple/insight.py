@@ -3,8 +3,9 @@ from typing import Optional
 from urllib import request
 
 import requests
-from marple.utils import validate_response
 from requests import Response
+
+from marple.utils import validate_response
 
 SAAS_URL = "https://insight.marpledata.com/api/v1"
 
@@ -58,7 +59,7 @@ class Insight:
         Get all datasets in the workspace.
         """
         r = self.post("/sources/search", json={"library_filter": {}})
-        return validate_response(r, "Failed to get datasets", check_status=False)["message"]
+        return validate_response(r, "Failed to get datasets")["message"]
 
     def get_dataset(self, dataset_filter: dict) -> dict:
         datasets = self.get_datasets()
@@ -82,7 +83,7 @@ class Insight:
         Get all signals in a dataset. (Marple DB Default)
         """
         r = self.post("/sources/signals", json={"dataset_filter": dataset_filter})
-        return validate_response(r, "Failed to get signals", check_status=False)["message"]["signal_list"]
+        return validate_response(r, "Failed to get signals")["message"]["signal_list"]
 
     def get_signals_mdb(self, dataset_id: int) -> list[dict]:
         """
@@ -146,9 +147,7 @@ class Insight:
                 "timestamp_stop": (dataset["timestamp_stop"] if timestamp_stop is None else timestamp_stop),
             },
         )
-        temporary_link = validate_response(response, "Failed to export data", check_status=False)["message"][
-            "download_path"
-        ]
+        temporary_link = validate_response(response, "Failed to export data")["message"]["download_path"]
 
         download_url = f"{self.api_url}/download/{temporary_link}"
         target_path = Path(destination) / file_name

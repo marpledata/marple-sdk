@@ -58,11 +58,11 @@ class DB:
         try:
             # unauthenticated endpoints
             r = self.get("/health")
-            validate_response(r, msg_fail_connect, check_status=False)
+            validate_response(r, msg_fail_connect)
 
             # authenticated endpoint
             r = self.get("/streams")
-            validate_response(r, msg_fail_auth, check_status=False)
+            validate_response(r, msg_fail_auth)
 
         except ConnectionError:
             raise Exception(msg_fail_connect)
@@ -72,7 +72,7 @@ class DB:
     def get_streams(self) -> list[DataStream]:
         if len(self._streams) == 0:
             r = self.get("/streams")
-            validate_response(r, "Get streams failed", check_status=False)
+            validate_response(r, "Get streams failed")
             self._streams = {
                 stream["id"]: DataStream(session=self.session, **stream) for stream in r.json()["streams"]
             }
@@ -151,7 +151,7 @@ class DB:
         """
         stream = self.get_stream(stream_key)
         response = self.get(f"/stream/{stream.id}/dataset/{dataset_id}/backup")
-        validate_response(response, "Download original file failed", check_status=False)
+        validate_response(response, "Download original file failed")
         download_url = response.json()["path"]
         if not download_url.startswith("http"):
             download_url = f"{self.api_url}/download/{download_url}"
