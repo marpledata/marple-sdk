@@ -1,4 +1,5 @@
 import re
+import time
 import warnings
 from collections import UserList
 from typing import Callable, Iterable, Literal, Optional, Sequence
@@ -8,6 +9,8 @@ from pandas._typing import AggFuncType, Frequency
 from pydantic import BaseModel, ConfigDict, Field, PrivateAttr, ValidationError
 
 from marple.db.constants import COL_TIME, COL_VAL
+from pathlib import Path
+from urllib import parse, request
 from marple.db.signal import Signal
 from marple.utils import DBClient, validate_response
 
@@ -47,6 +50,15 @@ class Dataset(BaseModel):
         kwargs["n_signals"] = kwargs.get("n_signals") or 0
         super().__init__(**kwargs)
         self._client = client
+
+    @classmethod
+    def fetch(cls, client: DBClient, dataset_id: int | None = None, dataset_path: str | None = None) -> "Dataset":
+        if dataset_id is None and dataset_path is None:
+            raise ValueError("Either dataset_id or dataset_path must be provided.")
+        if dataset_id is not None and dataset_path is not None:
+            raise ValueError("Only one of dataset_id or dataset_path can be provided.")
+        r = client.get(f"/datapool/{client.datapool}/dataset", params={"id": dataset_id, "path": dataset_path})
+        return cls(client=client, **validate_response(r, "Get dataset failed"))
 
     def get_signal(self, name: str | None = None, id: int | None = None) -> Optional["Signal"]:
         """Get a specific signal in this dataset by its name or ID."""
@@ -90,7 +102,7 @@ class Dataset(BaseModel):
 
         if len(self._signals) < self.n_signals:
             r = self._client.get(f"/stream/{self.datastream_id}/dataset/{self.id}/signals")
-            for signal in r.json():
+            for signal in validate_response(r, "Failed to get signals")["signals"]:
                 try:
                     signal_obj = Signal(
                         client=self._client, datastream_id=self.datastream_id, dataset_id=self.id, **signal
@@ -130,6 +142,42 @@ class Dataset(BaseModel):
             df = df.resample(resample_rule, **kwargs).agg(resample_aggregate)  # type: ignore
         return df
 
+    def download(self, destination_folder: str = ".") -> Path:
+        """
+        Download the original file from the dataset to the destination folder.
+        """
+        response = self._client.get(f"/stream/{self.datastream_id}/dataset/{self.id}/backup")
+        download_url = validate_response(response, "Download original file failed")["path"]
+        if not download_url.startswith("http"):
+            download_url = f"{self._client.api_url}/download/{download_url}"
+
+        target_path = Path(destination_folder) / parse.urlparse(download_url).path.rsplit("/")[1]
+        request.urlretrieve(download_url, target_path)
+        return target_path
+
+    def update_metadata(self, metadata: dict, overwrite: bool = False) -> "Dataset":
+        """
+        Update the metadata of a dataset.
+
+        By default, the new metadata is merged with the existing metadata.
+        If `overwrite` is True, the existing metadata is replaced with the new metadata.
+        """
+        new_metadata = metadata if overwrite else {**self.metadata, **metadata}
+        r = self._client.post(f"/stream/{self.datastream_id}/dataset/{self.id}/metadata", json=new_metadata)
+        validate_response(r, "Update metadata failed")
+        return self.fetch(self._client, self.id)
+
+    def wait_for_import(self, timeout: float = 60) -> "Dataset":
+        deadline = time.monotonic() + timeout
+        while time.monotonic() < deadline:
+            r = self._client.post(f"/stream/{self.datastream_id}/datasets/status", json=[self.id])
+            status = validate_response(r, "Get import status failed")
+            if status[0]["import_status"] not in ["WAITING", "IMPORTING", "POST_PROCESSING", "UPDATING_ICEBERG"]:
+                return self.fetch(self._client, self.id)
+            time.sleep(0.5)
+        warnings.warn(f"Import did not finish after {timeout} seconds")
+        return self.fetch(self._client, self.id)
+
 
 class DatasetList(UserList[Dataset]):
 
@@ -149,6 +197,9 @@ class DatasetList(UserList[Dataset]):
                 continue
             datasets.append(dataset)
         return cls(datasets)
+
+    def where_imported(self) -> "DatasetList":
+        return self.where(lambda d: d.import_status == "FINISHED")
 
     def where_metadata(self, metadata: dict[str, int | str | Iterable[int | str]] | None = None) -> "DatasetList":
         """

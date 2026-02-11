@@ -126,8 +126,11 @@ class DB:
     def _refresh_stream_cache(self, r: Response | None = None) -> None:
         if r is None:
             r = self.get("/streams")
-        validate_response(r, "Failed to fetch streams")
-        self._streams = {stream["id"]: DataStream(client=self.client, **stream) for stream in r.json()["streams"]}
+
+        self._streams = {
+            stream["id"]: DataStream(client=self.client, **stream)
+            for stream in validate_response(r, "Failed to fetch streams")["streams"]
+        }
 
     def get_datasets(self, stream_key: str | int | None = None) -> DatasetList:
         if stream_key is not None:
@@ -137,9 +140,7 @@ class DB:
         return DatasetList.from_dicts(self.client, r.json()["datasets"])
 
     def get_dataset(self, dataset_id: int | None = None, dataset_path: str | None = None) -> Dataset:
-        r = self.get(f"/datapool/{self.client.datapool}/dataset", params={"id": dataset_id, "path": dataset_path})
-        r = validate_response(r, "Get dataset failed")
-        return Dataset(self.client, **r)
+        return Dataset.fetch(self.client, dataset_id, dataset_path)
 
     def get_signals(self, dataset_id: int | None = None, dataset_path: str | None = None) -> list[Signal]:
         return self.get_dataset(dataset_id, dataset_path).get_signals()
@@ -153,6 +154,7 @@ class DB:
     ) -> Signal | None:
         return self.get_dataset(dataset_id, dataset_path).get_signal(signal_name, signal_id)
 
+    # Deprecated functions #
     def push_file(
         self,
         stream_key: str | int,
@@ -166,10 +168,7 @@ class DB:
     def get_status(self, stream_key: str | int, dataset_id: int) -> dict:
         stream_id = self._get_stream_id(stream_key)
         r = self.post(f"/stream/{stream_id}/datasets/status", json=[dataset_id])
-        if r.status_code != 200:
-            r.raise_for_status()
-
-        datasets = r.json()
+        datasets = validate_response(r, "Failed to get status for dataset")["datasets"]
         for dataset in datasets:
             if dataset["dataset_id"] == dataset_id:
                 return dataset
@@ -177,19 +176,7 @@ class DB:
         raise Exception(f"No status found for dataset {dataset_id} in stream {stream_key}")
 
     def download_original(self, stream_key: str | int, dataset_id: int, destination_folder: str = ".") -> Path:
-        """
-        Download the original file from the dataset to the destination folder.
-        """
-        stream = self.get_stream(stream_key)
-        response = self.get(f"/stream/{stream.id}/dataset/{dataset_id}/backup")
-        validate_response(response, "Download original file failed")
-        download_url = response.json()["path"]
-        if not download_url.startswith("http"):
-            download_url = f"{self.client.api_url}/download/{download_url}"
-
-        target_path = Path(destination_folder) / parse.urlparse(download_url).path.rsplit("/")[1]
-        request.urlretrieve(download_url, target_path)
-        return target_path
+        return self.get_dataset(dataset_id).download(destination_folder)
 
     def download_signal(
         self,
@@ -239,7 +226,11 @@ class DB:
         validate_response(r, "Delete dataset failed")
 
     def update_metadata(
-        self, dataset_id: int | None, dataset_path: str | None, metadata: dict, overwrite: bool = False
+        self,
+        dataset_id: int | None = None,
+        dataset_path: str | None = None,
+        metadata: dict | None = None,
+        overwrite: bool = False,
     ) -> None:
         """
         Update the metadata of a dataset.
@@ -247,9 +238,9 @@ class DB:
         By default, the new metadata is merged with the existing metadata.
         If `overwrite` is True, the existing metadata is replaced with the new metadata.
         """
-        dataset = self.get_dataset(dataset_id, dataset_path)
-        new_metadata = metadata if overwrite else {**dataset.metadata, **metadata}
-        self.post(f"/stream/{dataset.datastream_id}/dataset/{dataset.id}/metadata", json=new_metadata)
+        if metadata is None:
+            metadata = {}
+        self.get_dataset(dataset_id, dataset_path).update_metadata(metadata, overwrite)
 
     def upsert_signals(self, stream_key: str | int, dataset_id: int, signals: list[dict]) -> None:
         """

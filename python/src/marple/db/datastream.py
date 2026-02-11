@@ -39,22 +39,12 @@ class DataStream(BaseModel):
         self._client = client
 
     def get_dataset(self, id: int | None = None, path: str | None = None) -> "Dataset":
-        """Get a specific dataset in this datastream by its ID or path."""
-
-        if id is None and path is None:
-            raise ValueError("Either id or path must be provided.")
-        if id is not None and path is not None:
-            raise ValueError("Only one of id or path can be provided.")
-
-        r = self._client.get(f"/datapool/{self.datapool}/dataset", params={"id": id, "path": path})
-        r = validate_response(r, "Get dataset failed")
-        return Dataset(self._client, **r)
+        return Dataset.fetch(self._client, id, path)
 
     def get_datasets(self) -> "DatasetList":
         """Get all datasets in this datastream."""
         r = self._client.get(f"/stream/{self.id}/datasets")
-        r = validate_response(r, "Get datasets failed")
-        return DatasetList.from_dicts(self._client, r.json()["datasets"])
+        return DatasetList.from_dicts(self._client, validate_response(r, "Get datasets failed"))
 
     def push_file(
         self,
