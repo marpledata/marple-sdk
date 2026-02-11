@@ -1,5 +1,6 @@
-# Random ad-hoc scripts should be called lol.py
 lol.py
+.mdb_cache/
+
 
 # Default ignored files
 /shelf/

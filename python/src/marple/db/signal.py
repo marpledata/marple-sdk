@@ -43,7 +43,7 @@ class Signal(BaseModel):
 
     def _get_paths(self) -> tuple[list[parse.ParseResult], list[str]]:
         if self._cold_paths is None:
-            r = self._session.get(f"/stream/{self.datastream_id}/dataset/{self.dataset_id}/signal/{self.id}/path")
+            r = self._client.get(f"/stream/{self.datastream_id}/dataset/{self.dataset_id}/signal/{self.id}/path")
             validate_response(r, "Get parquet path failed")
             self._cold_paths = [parse.urlparse(p) for p in r.json()["paths"]]
             os.makedirs(self._data_folder, exist_ok=True)
@@ -78,8 +78,8 @@ class Signal(BaseModel):
         The DataFrame contains two columns: `'time'` and `'value'`.
         If the signal contains both numeric and text data, the `prefer_numeric` flag determines which data to use in the `value` column.
         """
-        has_numeric = self.count_value > 0
-        has_text = self.count_text > 0
+        has_numeric = (self.count_value or 0) > 0
+        has_text = (self.count_text or 0) > 0
         if has_numeric != has_text:
             use_numeric = has_numeric
         else:

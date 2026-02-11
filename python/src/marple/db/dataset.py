@@ -102,7 +102,7 @@ class Dataset(BaseModel):
 
         if len(self._signals) < self.n_signals:
             r = self._client.get(f"/stream/{self.datastream_id}/dataset/{self.id}/signals")
-            for signal in validate_response(r, "Failed to get signals")["signals"]:
+            for signal in validate_response(r, "Failed to get signals"):
                 try:
                     signal_obj = Signal(
                         client=self._client, datastream_id=self.datastream_id, dataset_id=self.id, **signal
@@ -133,12 +133,11 @@ class Dataset(BaseModel):
         Extra keyword arguments are passed to the pandas `resample` function.
         """
         signal_objs = self.get_signals(signal_names=signals)
-        df = pd.DataFrame(columns=[COL_TIME])
+        df = pd.DataFrame()
         for signal_obj in signal_objs:
-            signal_df = signal_obj.get_data().rename(columns={COL_VAL: signal_obj.name})
-            df = df.merge(signal_df, on=COL_TIME, how="outer")
-        df = df.set_index(COL_TIME)
-        if resample_rule is not None:
+            signal_df = signal_obj.get_data().rename(columns={COL_VAL: signal_obj.name}).set_index(COL_TIME)
+            df = df.join(signal_df, how="outer")
+        if resample_rule is not None and not df.empty:
             df = df.resample(resample_rule, **kwargs).agg(resample_aggregate)  # type: ignore
         return df
 
