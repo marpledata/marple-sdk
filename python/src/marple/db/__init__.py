@@ -36,12 +36,10 @@ class DB:
         datapool="default",
         cache_folder: str = "./.mdb_cache",
     ):
-        self._known_streams: dict[str, int] = {}
         self._streams: dict[int, DataStream] = {}
-
         self.client = DBClient(api_token, api_url, datapool, cache_folder)
 
-    # User functions #
+    # Utility functions #
 
     def get(self, url: str, *args, **kwargs) -> Response:
         return self.client.get(url, *args, **kwargs)
@@ -79,19 +77,44 @@ class DB:
             logging.error(error_text)
             return False
 
-        self._streams = {stream["id"]: DataStream(client=self.client, **stream) for stream in r.json()["streams"]}
+        self._refresh_stream_cache(r)
         return True
 
+    # Stream functions #
+
     def get_streams(self) -> list[DataStream]:
-        if len(self._streams) == 0:
-            r = self.get("/streams")
-            validate_response(r, "Get streams failed")
-            self._streams = {stream["id"]: DataStream(client=self.client, **stream) for stream in r.json()["streams"]}
+        self._refresh_stream_cache()
         return list(self._streams.values())
 
     def get_stream(self, stream_key: str | int) -> DataStream:
         stream_id = self._get_stream_id(stream_key)
         return self._streams[stream_id]
+
+    def _find_stream(self, stream_key: str | int) -> DataStream | None:
+        if isinstance(stream_key, int):
+            return self._streams.get(stream_key)
+        return next(
+            (s for s in self._streams.values() if s.name.lower() == stream_key.lower() or str(s.id) == stream_key),
+            None,
+        )
+
+    def _get_stream_id(self, stream_key: str | int) -> int:
+        s = self._find_stream(stream_key)
+        if s is not None:
+            return s.id
+        self._refresh_stream_cache()
+        s = self._find_stream(stream_key)
+        if s is not None:
+            return s.id
+        raise Exception(
+            f"Stream with name or id {stream_key} not found, available streams: {', '.join([s.name for s in self._streams.values()])}"
+        )
+
+    def _refresh_stream_cache(self, r: Response | None = None) -> None:
+        if r is None:
+            r = self.get("/streams")
+        validate_response(r, "Failed to fetch streams")
+        self._streams = {stream["id"]: DataStream(client=self.client, **stream) for stream in r.json()["streams"]}
 
     def get_datasets(self, stream_key: str | int | None = None) -> DatasetList:
         if stream_key is not None:
@@ -337,22 +360,6 @@ class DB:
         validate_response(r, "Delete stream failed")
 
     # Internal functions #
-
-    def _get_stream_id(self, stream_key: str | int) -> int:
-        if isinstance(stream_key, int):
-            return stream_key
-
-        if stream_key in self._known_streams:
-            return self._known_streams[stream_key]
-
-        streams = self.get_streams()
-        for stream in streams:
-            if stream.name.lower() == stream_key.lower():
-                self._known_streams[stream_key] = stream.id
-                return stream.id
-
-        available_streams = ", ".join([s.name for s in streams])
-        raise Exception(f'Stream "{stream_key}" not found \nAvailable streams: {available_streams}')
 
     @staticmethod
     def _detect_shape(shape: Optional[Literal["long", "wide"]], df: pd.DataFrame) -> Literal["long", "wide"]:
