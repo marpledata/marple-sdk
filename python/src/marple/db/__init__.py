@@ -132,11 +132,9 @@ class DB:
     def get_datasets(self, stream_key: str | int | None = None) -> DatasetList:
         if stream_key is not None:
             return self.get_stream(stream_key).get_datasets()
-        datasets = validate_response(
-            self.get(f"/datapool/{self.client.datapool}/datasets"),
-            f"Failed to get datasets for datapool {self.client.datapool}",
-        )
-        return DatasetList([Dataset(self.client, **dataset) for dataset in datasets])
+        r = self.get(f"/datapool/{self.client.datapool}/datasets")
+        r = validate_response(r, f"Failed to get datasets for datapool {self.client.datapool}")
+        return DatasetList.from_dicts(self.client, r.json()["datasets"])
 
     def get_dataset(self, dataset_id: int | None = None, dataset_path: str | None = None) -> Dataset:
         r = self.get(f"/datapool/{self.client.datapool}/dataset", params={"id": dataset_id, "path": dataset_path})
@@ -162,22 +160,8 @@ class DB:
         metadata: dict | None = None,
         file_name: str | None = None,
     ) -> int:
-        stream_id = self._get_stream_id(stream_key)
-
-        with open(file_path, "rb") as file:
-            files = {"file": file}
-            data = {
-                "dataset_name": file_name or Path(file_path).name,
-                "metadata": json.dumps(metadata or {}),
-            }
-
-            r = self.post(f"/stream/{stream_id}/ingest", files=files, data=data)
-            r_json = validate_response(r, "File upload failed")
-            if stream_id in self._streams:
-                self._streams = {}
-                self._known_streams = {}
-
-            return r_json["dataset_id"]
+        stream = self.get_stream(stream_key)
+        return stream.push_file(file_path, metadata, file_name).id
 
     def get_status(self, stream_key: str | int, dataset_id: int) -> dict:
         stream_id = self._get_stream_id(stream_key)

@@ -136,6 +136,20 @@ class DatasetList(UserList[Dataset]):
     def __init__(self, datasets: Iterable[Dataset]):
         super().__init__(datasets)
 
+    @classmethod
+    def from_dicts(cls, client: DBClient, values: Iterable[dict]) -> "DatasetList":
+        datasets = []
+        for value in values:
+            try:
+                dataset = Dataset(client=client, **value)
+            except Exception as e:
+                warnings.warn(
+                    f"Skipping dataset with id {value.get('id')} and path {value.get('path')}. {e.__class__.__name__}"
+                )
+                continue
+            datasets.append(dataset)
+        return cls(datasets)
+
     def where_metadata(self, metadata: dict[str, int | str | Iterable[int | str]] | None = None) -> "DatasetList":
         """
         Filter datasets by their metadata fields.
@@ -144,13 +158,12 @@ class DatasetList(UserList[Dataset]):
         and the associated value is either a single value or an iterable of values.
         A dataset is included in the results if its metadata field matches any of the specified values for all fields.
         """
-        results = DatasetList([])
         cleaned_metadata = {k: [v] if not isinstance(v, list) else v for k, v in (metadata or {}).items()}
-        for dataset in self.data:
-            if any(dataset.metadata.get(field) not in values for field, values in cleaned_metadata.items()):
-                continue
-            results.append(dataset)
-        return results
+
+        def predicate(dataset: Dataset) -> bool:
+            return all(dataset.metadata.get(field) in values for field, values in cleaned_metadata.items())
+
+        return self.where(predicate)
 
     def where_dataset(
         self,
@@ -176,17 +189,18 @@ class DatasetList(UserList[Dataset]):
 
         If multiple conditions are provided, a dataset must satisfy all of them to be included in the results.
         """
-        results = DatasetList([])
-        for dataset in self.data:
+
+        def predicate(dataset: Dataset) -> bool:
             value = getattr(dataset, stat)
             if greater_than is not None and value <= greater_than:
-                continue
+                return False
             if less_than is not None and value >= less_than:
-                continue
+                return False
             if equals is not None and value != equals:
-                continue
-            results.append(dataset)
-        return results
+                return False
+            return True
+
+        return self.where(predicate)
 
     def where_signal(
         self,
@@ -212,11 +226,11 @@ class DatasetList(UserList[Dataset]):
         """
         Filter datasets by the statistics of a specific signal.
         """
-        results = DatasetList([])
-        for dataset in self.data:
+
+        def predicate(dataset: Dataset) -> bool:
             signal = dataset.get_signal(signal_name)
             if signal is None:
-                continue
+                return False
             if stat in ["max", "min", "sum", "mean", "frequency"]:
                 value = signal.stats.get(stat)
             else:
@@ -224,15 +238,16 @@ class DatasetList(UserList[Dataset]):
             if value is None:
                 raise ValueError(f"Stat {stat} not found in {dataset}. ")
             if greater_than is not None and not value > greater_than:
-                continue
+                return False
             if less_than is not None and not value < less_than:
-                continue
+                return False
             if equals is not None and not value == equals:
-                continue
-            results.append(dataset)
-        return results
+                return False
+            return True
 
-    def where_predicate(self, predicate: Callable[[Dataset], bool]) -> "DatasetList":
+        return self.where(predicate)
+
+    def where(self, predicate: Callable[[Dataset], bool]) -> "DatasetList":
         return DatasetList([d for d in self.data if predicate(d)])
 
     def get_data(
