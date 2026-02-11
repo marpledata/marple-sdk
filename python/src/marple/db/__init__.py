@@ -29,6 +29,19 @@ __all__ = ["DB", "DataStream", "Dataset", "DatasetList", "Signal", "SCHEMA"]
 
 
 class DB:
+    """
+    The DB class is the main entry point for the Marple DB API.
+    It provides a high-level interface for interacting with the Marple DB API.
+    Parameters:
+        api_token: The API token for the Marple DB API.
+        api_url: The URL of the Marple DB API.
+        datapool: The datapool to use (default: "default").
+        cache_folder: The folder to cache the data in (default: "./.mdb_cache").
+    """
+
+    _streams: dict[int, DataStream] = {}
+    client: DBClient
+
     def __init__(
         self,
         api_token: str,
@@ -127,8 +140,8 @@ class DB:
 
     def get_dataset(self, dataset_id: int | None = None, dataset_path: str | None = None) -> Dataset:
         r = self.get(f"/datapool/{self.client.datapool}/dataset", params={"id": dataset_id, "path": dataset_path})
-
-        return Dataset(self.client, **validate_response(r, "Get dataset failed"))
+        r = validate_response(r, "Get dataset failed")
+        return Dataset(self.client, **r)
 
     def get_signals(self, dataset_id: int | None = None, dataset_path: str | None = None) -> list[Signal]:
         return self.get_dataset(dataset_id, dataset_path).get_signals()
