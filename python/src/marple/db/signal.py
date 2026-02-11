@@ -7,7 +7,7 @@ import pyarrow as pa
 from pydantic import BaseModel, PrivateAttr
 
 from marple.db.constants import COL_TIME, COL_VAL, COL_VAL_TEXT
-from marple.utils import DBSession, validate_response
+from marple.utils import DBClient, validate_response
 
 
 class Signal(BaseModel):
@@ -31,22 +31,18 @@ class Signal(BaseModel):
 
     _cold_paths: list[parse.ParseResult] | None = PrivateAttr(default=None)
     _data_folder: Path = PrivateAttr()
-    _session: DBSession = PrivateAttr()
+    _client: DBClient = PrivateAttr()
 
-    def __init__(self, session: DBSession, datastream_id: int, dataset_id: int, **kwargs):
+    def __init__(self, client: DBClient, datastream_id: int, dataset_id: int, **kwargs):
         super().__init__(datastream_id=datastream_id, dataset_id=dataset_id, **kwargs)
-        self._session = session
+        self._client = client
         self.datastream_id = datastream_id
         self.dataset_id = dataset_id
-        self._data_folder = Path(
-            f"{session.cache_folder}/{session.datapool}/dataset={self.dataset_id}/signal={self.id}"
-        )
+        self._data_folder = Path(f"{client.cache_folder}/{client.datapool}/dataset={self.dataset_id}/signal={self.id}")
 
     def _get_paths(self) -> tuple[list[parse.ParseResult], list[str]]:
         if self._cold_paths is None:
-            r = self._session.get(
-                f"/stream/{self.datastream_id}/dataset/{self.dataset_id}/signal/{self.id}/path"
-            )
+            r = self._session.get(f"/stream/{self.datastream_id}/dataset/{self.dataset_id}/signal/{self.id}/path")
             validate_response(r, "Get parquet path failed")
             self._cold_paths = [parse.urlparse(p) for p in r.json()["paths"]]
             os.makedirs(self._data_folder, exist_ok=True)
