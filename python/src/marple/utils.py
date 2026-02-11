@@ -1,4 +1,5 @@
 import requests
+import marple
 
 
 def validate_response(response: requests.Response, failure_message: str) -> dict:
@@ -27,7 +28,7 @@ class DBClient:
 
         self.session = requests.Session()
         self.session.headers.update({"Authorization": f"Bearer {self.api_token}"})
-        self.session.headers.update({"X-Request-Source": "sdk/python"})
+        self.session.headers.update({"X-Request-Source": f"sdk/python:{marple.__version__}"})
 
     def get(self, url: str, *args, **kwargs) -> requests.Response:
         return self.session.get(f"{self.api_url}{url}", *args, **kwargs)
