@@ -41,6 +41,3 @@ class DBClient:
 
     def delete(self, url: str, *args, **kwargs) -> requests.Response:
         return self.session.delete(f"{self.api_url}{url}", *args, **kwargs)
-
-    def check_connection(self) -> bool:
-        return True
