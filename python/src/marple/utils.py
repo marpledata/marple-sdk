@@ -18,7 +18,7 @@ def validate_response(response: requests.Response, failure_message: str) -> dict
     return r_json
 
 
-class DBSession:
+class DBClient:
     def __init__(self, api_token: str, api_url: str, datapool: str, cache_folder: str):
         self.api_token = api_token
         self.api_url = api_url
@@ -40,3 +40,6 @@ class DBSession:
 
     def delete(self, url: str, *args, **kwargs) -> requests.Response:
         return self.session.delete(f"{self.api_url}{url}", *args, **kwargs)
+
+    def check_connection(self) -> bool:
+        return True

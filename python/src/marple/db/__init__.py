@@ -9,6 +9,8 @@ import pandas as pd
 import pyarrow as pa
 import pyarrow.parquet as pq
 from requests import Response
+from requests.exceptions import ConnectionError
+import logging
 
 from marple.db.constants import (
     COL_SIG,
@@ -21,61 +23,70 @@ from marple.db.constants import (
 from marple.db.dataset import Dataset, DatasetList
 from marple.db.datastream import DataStream
 from marple.db.signal import Signal
-from marple.utils import DBSession, validate_response
+from marple.utils import DBClient, validate_response
 
 __all__ = ["DB", "DataStream", "Dataset", "DatasetList", "Signal", "SCHEMA"]
 
 
 class DB:
     def __init__(
-        self, api_token: str, api_url: str = SAAS_URL, datapool="default", cache_folder: str = "./.mdb_cache"
+        self,
+        api_token: str,
+        api_url: str = SAAS_URL,
+        datapool="default",
+        cache_folder: str = "./.mdb_cache",
     ):
-        self.api_url = api_url
-        self.api_token = api_token
         self._known_streams: dict[str, int] = {}
         self._streams: dict[int, DataStream] = {}
 
-        self.session = DBSession(api_token, api_url, datapool, cache_folder)
+        self.client = DBClient(api_token, api_url, datapool, cache_folder)
 
     # User functions #
 
     def get(self, url: str, *args, **kwargs) -> Response:
-        return self.session.get(url, *args, **kwargs)
+        return self.client.get(url, *args, **kwargs)
 
     def post(self, url: str, *args, **kwargs) -> Response:
-        return self.session.post(url, *args, **kwargs)
+        return self.client.post(url, *args, **kwargs)
 
     def patch(self, url: str, *args, **kwargs) -> Response:
-        return self.session.patch(url, *args, **kwargs)
+        return self.client.patch(url, *args, **kwargs)
 
     def delete(self, url: str, *args, **kwargs) -> Response:
-        return self.session.delete(url, *args, **kwargs)
+        return self.client.delete(url, *args, **kwargs)
 
     def check_connection(self) -> bool:
-        msg_fail_connect = "Could not connect to server at {}".format(self.api_url)
-        msg_fail_auth = "Could not authenticate with token"
-
         try:
-            # unauthenticated endpoints
-            r = self.get("/health")
-            validate_response(r, msg_fail_connect)
-
-            # authenticated endpoint
-            r = self.get("/streams")
-            validate_response(r, msg_fail_auth)
-
+            r = self.client.get("/health")
         except ConnectionError:
-            raise Exception(msg_fail_connect)
+            error_text = f"Could not connect to Marple DB at {self.client.api_url}. Please check if the api_url parameter is correct and try again."
+            logging.error(error_text)
+            return False
+        if r.status_code == 404:
+            error_text = f"Could not find Marple DB at {r.request.url}. Please check if the api_url parameter is correct and try again."
+            if not self.client.api_url.endswith("/api/v1"):
+                error_text += f" The api_url parameter should end with /api/v1"
+            logging.error(error_text)
+            return False
+        if r.status_code != 200:
+            error_text = f"Unknown error occurred while connecting to Marple DB at {r.request.url}. Status code: {r.status_code}."
+            logging.error(error_text)
+            return False
 
+        r = self.client.get("/streams")
+        if r.status_code == 403:
+            error_text = f"Invalid API token. Please check if the api_token parameter is correct and not expired."
+            logging.error(error_text)
+            return False
+
+        self._streams = {stream["id"]: DataStream(client=self.client, **stream) for stream in r.json()["streams"]}
         return True
 
     def get_streams(self) -> list[DataStream]:
         if len(self._streams) == 0:
             r = self.get("/streams")
             validate_response(r, "Get streams failed")
-            self._streams = {
-                stream["id"]: DataStream(session=self.session, **stream) for stream in r.json()["streams"]
-            }
+            self._streams = {stream["id"]: DataStream(client=self.client, **stream) for stream in r.json()["streams"]}
         return list(self._streams.values())
 
     def get_stream(self, stream_key: str | int) -> DataStream:
@@ -86,17 +97,15 @@ class DB:
         if stream_key is not None:
             return self.get_stream(stream_key).get_datasets()
         datasets = validate_response(
-            self.get(f"/datapool/{self.session.datapool}/datasets"),
-            f"Failed to get datasets for datapool {self.session.datapool}",
+            self.get(f"/datapool/{self.client.datapool}/datasets"),
+            f"Failed to get datasets for datapool {self.client.datapool}",
         )
-        return DatasetList([Dataset(self.session, **dataset) for dataset in datasets])
+        return DatasetList([Dataset(self.client, **dataset) for dataset in datasets])
 
     def get_dataset(self, dataset_id: int | None = None, dataset_path: str | None = None) -> Dataset:
-        r = self.get(
-            f"/datapool/{self.session.datapool}/dataset", params={"id": dataset_id, "path": dataset_path}
-        )
+        r = self.get(f"/datapool/{self.client.datapool}/dataset", params={"id": dataset_id, "path": dataset_path})
 
-        return Dataset(self.session, **validate_response(r, "Get dataset failed"))
+        return Dataset(self.client, **validate_response(r, "Get dataset failed"))
 
     def get_signals(self, dataset_id: int | None = None, dataset_path: str | None = None) -> list[Signal]:
         return self.get_dataset(dataset_id, dataset_path).get_signals()
@@ -156,7 +165,7 @@ class DB:
         validate_response(response, "Download original file failed")
         download_url = response.json()["path"]
         if not download_url.startswith("http"):
-            download_url = f"{self.api_url}/download/{download_url}"
+            download_url = f"{self.client.api_url}/download/{download_url}"
 
         target_path = Path(destination_folder) / parse.urlparse(download_url).path.rsplit("/")[1]
         request.urlretrieve(download_url, target_path)
@@ -269,9 +278,7 @@ class DB:
                 raise Exception(f"DataFrame must contain {COL_TIME} and {COL_SIG} columns")
             if not (COL_VAL in data.columns or COL_VAL_TEXT in data.columns):
                 raise Exception(f"DataFrame must contain at least one of {COL_VAL} or {COL_VAL_TEXT} columns")
-            value = (
-                pd.to_numeric(data[COL_VAL], errors="coerce") if COL_VAL in data.columns else pa.nulls(len(data))
-            )
+            value = pd.to_numeric(data[COL_VAL], errors="coerce") if COL_VAL in data.columns else pa.nulls(len(data))
             value_text = data[COL_VAL_TEXT] if COL_VAL_TEXT in data.columns else pa.nulls(len(data))
             table = pa.Table.from_arrays([data[COL_TIME], data[COL_SIG], value, value_text], schema=SCHEMA)
 

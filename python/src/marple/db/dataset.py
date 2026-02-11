@@ -9,7 +9,7 @@ from pydantic import BaseModel, ConfigDict, Field, PrivateAttr, ValidationError
 
 from marple.db.constants import COL_TIME, COL_VAL
 from marple.db.signal import Signal
-from marple.utils import DBSession, validate_response
+from marple.utils import DBClient, validate_response
 
 
 class Dataset(BaseModel):
@@ -39,13 +39,13 @@ class Dataset(BaseModel):
     import_speed: float | None
     parquet_version: int
 
-    _session: DBSession = PrivateAttr()
+    _client: DBClient = PrivateAttr()
     _known_signals: dict[str, int] = PrivateAttr(default_factory=dict)
     _signals: dict[int, "Signal"] = PrivateAttr(default_factory=dict)
 
-    def __init__(self, session: DBSession, **kwargs):
+    def __init__(self, client: DBClient, **kwargs):
         super().__init__(**kwargs)
-        self._session = session
+        self._client = client
 
     def get_signal(self, name: str | None = None, id: int | None = None) -> Optional["Signal"]:
         """Get a specific signal in this dataset by its name or ID."""
@@ -56,7 +56,7 @@ class Dataset(BaseModel):
 
         if name is not None:
             if name not in self._known_signals:
-                r = self._session.get(f"/datapool/{self._session.datapool}/signal/{name}/id")
+                r = self._client.get(f"/datapool/{self._client.datapool}/signal/{name}/id")
                 result = validate_response(r, f"Get signal ID for signal name {name} failed")
                 self._known_signals[name] = result["id"]
             id = self._known_signals.get(name)
@@ -65,16 +65,14 @@ class Dataset(BaseModel):
             raise ValueError(f"Signal with name {name} not found in dataset with id {self.id}.")
 
         if id not in self._signals:
-            r = self._session.get(f"/stream/{self.datastream_id}/dataset/{self.id}/signal/{id}")
+            r = self._client.get(f"/stream/{self.datastream_id}/dataset/{self.id}/signal/{id}")
             try:
                 result = validate_response(r, f"Get signal data for signal ID {id} failed")
             except Exception:
                 warnings.warn(f"Failed to get signal with id {id} and name {name}.")
                 return
 
-            signal = Signal(
-                session=self._session, datastream_id=self.datastream_id, dataset_id=self.id, **r.json()
-            )
+            signal = Signal(client=self._client, datastream_id=self.datastream_id, dataset_id=self.id, **r.json())
             self._signals[signal.id] = signal
             self._known_signals[signal.name] = signal.id
 
@@ -82,9 +80,7 @@ class Dataset(BaseModel):
 
     def get_signals(self, signal_names: Sequence[str | re.Pattern] | None = None) -> list["Signal"]:
 
-        compiled_filters = [
-            re.compile(f"^{re.escape(f)}$") if isinstance(f, str) else f for f in signal_names or []
-        ]
+        compiled_filters = [re.compile(f"^{re.escape(f)}$") if isinstance(f, str) else f for f in signal_names or []]
 
         def include(signal_name: str) -> bool:
             if signal_names is None:
@@ -92,11 +88,11 @@ class Dataset(BaseModel):
             return any(pattern.match(signal_name) for pattern in compiled_filters)
 
         if len(self._signals) < self.n_signals:
-            r = self._session.get(f"/stream/{self.datastream_id}/dataset/{self.id}/signals")
+            r = self._client.get(f"/stream/{self.datastream_id}/dataset/{self.id}/signals")
             for signal in r.json():
                 try:
                     signal_obj = Signal(
-                        session=self._session, datastream_id=self.datastream_id, dataset_id=self.id, **signal
+                        client=self._client, datastream_id=self.datastream_id, dataset_id=self.id, **signal
                     )
                 except ValidationError as e:
                     raise UserWarning(
@@ -139,9 +135,7 @@ class DatasetList(UserList[Dataset]):
     def __init__(self, datasets: Iterable[Dataset]):
         super().__init__(datasets)
 
-    def where_metadata(
-        self, metadata: dict[str, int | str | Iterable[int | str]] | None = None
-    ) -> "DatasetList":
+    def where_metadata(self, metadata: dict[str, int | str | Iterable[int | str]] | None = None) -> "DatasetList":
         """
         Filter datasets by their metadata fields.
 

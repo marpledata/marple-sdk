@@ -3,7 +3,7 @@ from typing import Literal, Optional
 from pydantic import BaseModel, PrivateAttr, ValidationError
 
 from marple.db.dataset import Dataset, DatasetList
-from marple.utils import DBSession
+from marple.utils import DBClient
 
 
 class DataStream(BaseModel):
@@ -32,11 +32,11 @@ class DataStream(BaseModel):
 
     _known_datasets: dict[str, int] = PrivateAttr(default_factory=dict)
     _datasets: dict[int, "Dataset"] = PrivateAttr(default_factory=dict)
-    _session = PrivateAttr()
+    _client = PrivateAttr()
 
-    def __init__(self, session: DBSession, **kwargs):
+    def __init__(self, client: DBClient, **kwargs):
         super().__init__(**kwargs)
-        self._session = session
+        self._client = client
 
     def get_dataset(self, id: int | None = None, path: str | None = None) -> "Dataset":
         """Get a specific dataset in this datastream by its ID or path."""
@@ -52,8 +52,8 @@ class DataStream(BaseModel):
             raise ValueError(f"Dataset with path {path} not found in datastream {self.name}.")
 
         if id not in self._datasets:
-            r = self._session.get(f"/stream/{self.id}/dataset/{id}")
-            dataset = Dataset(session=self._session, **r.json())
+            r = self._client.get(f"/stream/{self.id}/dataset/{id}")
+            dataset = Dataset(client=self._client, **r.json())
             self._datasets[id] = dataset
             self._known_datasets[dataset.path] = dataset.id
         return self._datasets[id]
@@ -66,10 +66,10 @@ class DataStream(BaseModel):
     def get_datasets(self) -> "DatasetList":
         """Get all datasets in this datastream."""
         if self.n_datasets is None or len(self._datasets) < self.n_datasets:
-            r = self._session.get(f"/stream/{self.id}/datasets")
+            r = self._client.get(f"/stream/{self.id}/datasets")
             for dataset in r.json():
                 try:
-                    dataset_obj = Dataset(session=self._session, **dataset)
+                    dataset_obj = Dataset(client=self._client, **dataset)
                 except ValidationError as e:
                     raise UserWarning(
                         f"Failed to parse dataset with id {dataset.get('id')} and path {dataset.get('path')}. Skipping. Error: {e}"
