@@ -26,6 +26,7 @@ class DBClient:
         self.api_url = api_url
         self.datapool = datapool
         self.cache_folder = cache_folder
+        self._signal_map: dict[str, int] | None = None
 
         self.session = requests.Session()
         self.session.headers.update({"Authorization": f"Bearer {self.api_token}"})
@@ -42,3 +43,9 @@ class DBClient:
 
     def delete(self, url: str, *args, **kwargs) -> requests.Response:
         return self.session.delete(f"{self.api_url}{url}", *args, **kwargs)
+
+    def get_signal_map(self) -> dict[str, int]:
+        if self._signal_map is None:
+            r = self.get(f"/datapool/{self.datapool}/signal_map")
+            self._signal_map = validate_response(r, "Get signals failed")
+        return self._signal_map

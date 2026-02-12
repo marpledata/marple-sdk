@@ -8,7 +8,7 @@ from urllib import parse, request
 
 import pandas as pd
 from pandas._typing import AggFuncType, Frequency
-from pydantic import BaseModel, ConfigDict, Field, PrivateAttr, ValidationError
+from pydantic import BaseModel, ConfigDict, Field, PrivateAttr
 from tabulate import tabulate
 
 from marple.db.constants import COL_TIME, COL_VAL
@@ -51,7 +51,6 @@ class Dataset(BaseModel):
     parquet_version: int
 
     _client: DBClient = PrivateAttr()
-    _known_signals: dict[str, int] = PrivateAttr(default_factory=dict)
     _signals: dict[int, "Signal"] = PrivateAttr(default_factory=dict)
 
     def __init__(self, client: DBClient, **kwargs):
@@ -78,11 +77,7 @@ class Dataset(BaseModel):
             raise ValueError("Only one of name or id can be provided.")
 
         if name is not None:
-            if name not in self._known_signals:
-                r = self._client.get(f"/datapool/{self._client.datapool}/signal/{name}/id")
-                result = validate_response(r, f"Get signal ID for signal name {name} failed")
-                self._known_signals[name] = result["id"]
-            id = self._known_signals.get(name)
+            id = self._client.get_signal_map().get(name)
 
         if id is None:
             raise ValueError(f"Signal with name {name} not found in dataset with id {self.id}.")
@@ -94,14 +89,18 @@ class Dataset(BaseModel):
             except Exception:
                 warnings.warn(f"Failed to get signal with id {id} and name {name}.")
                 return None
-
-            signal = Signal(
-                client=self._client, datastream_id=self.datastream_id, dataset_id=self.id, **r.json()
-            )
+            signal = Signal.from_dict(self._client, self.datastream_id, self.id, value=result)
             self._signals[signal.id] = signal
-            self._known_signals[signal.name] = signal.id
 
         return self._signals[id]
+
+    def _get_all_signals(self) -> list["Signal"]:
+        if self.n_signals is None or len(self._signals) < self.n_signals:
+            r = self._client.get(f"/stream/{self.datastream_id}/dataset/{self.id}/signals")
+            for signal in validate_response(r, "Failed to get signals"):
+                signal_obj = Signal.from_dict(self._client, self.datastream_id, self.id, value=signal)
+                self._signals[signal_obj.id] = signal_obj
+        return list(self._signals.values())
 
     def get_signals(self, signal_names: Sequence[str | re.Pattern] | None = None) -> list["Signal"]:
         """
@@ -110,31 +109,25 @@ class Dataset(BaseModel):
         If `signal_names` is provided, only signals with names matching any of the specified strings or regular expression patterns are returned.
         If `signal_names` is None, all signals in the dataset are returned.
         """
+        if signal_names is None:
+            return self._get_all_signals()
 
-        compiled_filters = [
-            re.compile(f"^{re.escape(f)}$") if isinstance(f, str) else f for f in signal_names or []
+        signal_map = self._client.get_signal_map()
+        literal_names = [signal for signal in signal_names if isinstance(signal, str) and signal in signal_map]
+        regex_patterns = [signal for signal in signal_names if isinstance(signal, re.Pattern)]
+        regex_names = [
+            signal for signal in signal_map if any(pattern.match(signal) for pattern in regex_patterns)
         ]
 
-        def include(signal_name: str) -> bool:
-            if signal_names is None:
-                return True
-            return any(pattern.match(signal_name) for pattern in compiled_filters)
-
-        if self.n_signals is None or len(self._signals) < self.n_signals:
-            r = self._client.get(f"/stream/{self.datastream_id}/dataset/{self.id}/signals")
-            for signal in validate_response(r, "Failed to get signals"):
-                try:
-                    signal_obj = Signal(
-                        client=self._client, datastream_id=self.datastream_id, dataset_id=self.id, **signal
-                    )
-                except ValidationError as e:
-                    raise UserWarning(
-                        f"Failed to parse signal with id {signal.get('id')} and name {signal.get('name')}. Skipping. Error: {e}"
-                    )
-                self._signals[signal_obj.id] = signal_obj
-                self._known_signals[signal_obj.name] = signal_obj.id
-
-        return [signal for signal in self._signals.values() if include(signal.name)]
+        all_signal_names = literal_names + regex_names
+        r = self._client.get(
+            f"/stream/{self.datastream_id}/dataset/{self.id}/signals",
+            params={"signal_names": all_signal_names},
+        )
+        return [
+            Signal.from_dict(self._client, self.datastream_id, self.id, value=signal)
+            for signal in validate_response(r, "Failed to get signals by name")
+        ]
 
     def get_data(
         self,
@@ -422,7 +415,7 @@ class DatasetList(UserList[Dataset]):
             for d in self.data
         ]
 
-        max_rows = 100
+        max_rows = 50
         if len(table_data) > max_rows:
             table_data = (
                 table_data[: max_rows // 2] + [["..."] * len(table_data[0])] + table_data[-max_rows // 2 :]

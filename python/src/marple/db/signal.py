@@ -1,5 +1,6 @@
 import os
 from pathlib import Path
+from typing import Literal
 from urllib import parse, request
 
 import pandas as pd
@@ -8,7 +9,6 @@ from pydantic import BaseModel, PrivateAttr
 
 from marple.db.constants import COL_TIME, COL_VAL, COL_VAL_TEXT
 from marple.utils import DBClient, validate_response
-from typing import Literal
 
 
 class Signal(BaseModel):
@@ -39,7 +39,18 @@ class Signal(BaseModel):
         self._client = client
         self.datastream_id = datastream_id
         self.dataset_id = dataset_id
-        self._data_folder = Path(f"{client.cache_folder}/{client.datapool}/dataset={self.dataset_id}/signal={self.id}")
+        self._data_folder = Path(
+            f"{client.cache_folder}/{client.datapool}/dataset={self.dataset_id}/signal={self.id}"
+        )
+
+    @classmethod
+    def from_dict(cls, client: DBClient, datastream_id, dataset_id, value: dict) -> "Signal":
+        try:
+            return cls(client, datastream_id, dataset_id, **value)
+        except Exception as e:
+            raise ValueError(
+                f"Failed to parse signal with id {value.get('id')} and name {value.get('name')}. Error: {e}"
+            )
 
     def _get_paths(self) -> tuple[list[parse.ParseResult], list[str]]:
         if self._cold_paths is None:
