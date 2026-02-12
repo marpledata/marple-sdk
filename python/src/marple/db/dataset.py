@@ -414,23 +414,29 @@ class DatasetList(UserList[Dataset]):
         metadata_fields: set[str] = set()
         for d in self.data:
             metadata_fields.update(d.metadata.keys())
-        # Prepare data list-of-lists (preserving your None checks)
+        sorted_metadata_fields = sorted(metadata_fields)
+
         table_data = [
-            [d.id, d.path, d.n_signals or 0, d.n_datapoints or 0, d.import_status]
-            + [d.metadata.get(field) for field in metadata_fields]
+            [d.id, d.path, d.n_signals, d.n_datapoints, d.import_status]
+            + [d.metadata.get(field) for field in sorted_metadata_fields]
             for d in self.data
         ]
 
-        preview_limit = 100
-        if len(table_data) > 2 * preview_limit:
+        max_rows = 100
+        if len(table_data) > max_rows:
             table_data = (
-                table_data[:preview_limit] + [["..."] * len(table_data[0])] + table_data[-preview_limit:]
+                table_data[: max_rows // 2] + [["..."] * len(table_data[0])] + table_data[-max_rows // 2 :]
             )
+        table_header = ["ID", "Path", "Signals", "Datapoints", "Status"] + sorted_metadata_fields
+        max_cols = 10
+        if len(sorted_metadata_fields) > max_cols:
+            table_data = [row[: max_cols // 2] + ["..."] + row[-max_cols // 2 :] for row in table_data]
+            table_header = table_header[: max_cols // 2] + ["..."] + table_header[-max_cols // 2 :]
 
         # Generate table
         table_str = tabulate(
             table_data,
-            headers=["ID", "Path", "Signals", "Datapoints", "Status"] + list(metadata_fields),
+            headers=table_header,
             tablefmt="tsv",
         )
 
