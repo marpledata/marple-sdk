@@ -411,8 +411,15 @@ class DatasetList(UserList[Dataset]):
         if not self.data:
             return header
 
+        metadata_fields: set[str] = set()
+        for d in self.data:
+            metadata_fields.update(d.metadata.keys())
         # Prepare data list-of-lists (preserving your None checks)
-        table_data = [[d.id, d.path, d.n_signals or 0, d.n_datapoints or 0, d.import_status] for d in self.data]
+        table_data = [
+            [d.id, d.path, d.n_signals or 0, d.n_datapoints or 0, d.import_status]
+            + [d.metadata.get(field) for field in metadata_fields]
+            for d in self.data
+        ]
 
         preview_limit = 100
         if len(table_data) > 2 * preview_limit:
@@ -422,7 +429,9 @@ class DatasetList(UserList[Dataset]):
 
         # Generate table
         table_str = tabulate(
-            table_data, headers=["ID", "Path", "Signals", "Datapoints", "Status"], tablefmt="tsv"
+            table_data,
+            headers=["ID", "Path", "Signals", "Datapoints", "Status"] + list(metadata_fields),
+            tablefmt="tsv",
         )
 
         return f"{header}\n{table_str}"
