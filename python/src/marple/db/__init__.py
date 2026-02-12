@@ -1,8 +1,7 @@
-import json
+import logging
 from io import BytesIO
 from pathlib import Path
 from typing import Literal, Optional
-from urllib import parse, request
 
 import numpy as np
 import pandas as pd
@@ -10,7 +9,6 @@ import pyarrow as pa
 import pyarrow.parquet as pq
 from requests import Response
 from requests.exceptions import ConnectionError
-import logging
 
 from marple.db.constants import (
     COL_SIG,
@@ -76,7 +74,7 @@ class DB:
         if r.status_code == 404:
             error_text = f"Could not find Marple DB at {r.request.url}. Please check if the api_url parameter is correct and try again."
             if not self.client.api_url.endswith("/api/v1"):
-                error_text += f" The api_url parameter should end with /api/v1"
+                error_text += " The api_url parameter should end with /api/v1"
             logging.error(error_text)
             return False
         if r.status_code != 200:
@@ -86,7 +84,7 @@ class DB:
 
         r = self.client.get("/streams")
         if r.status_code == 403:
-            error_text = f"Invalid API token. Please check if the api_token parameter is correct and not expired."
+            error_text = "Invalid API token. Please check if the api_token parameter is correct and not expired."
             logging.error(error_text)
             return False
 
@@ -107,7 +105,11 @@ class DB:
         if isinstance(stream_key, int):
             return self._streams.get(stream_key)
         return next(
-            (s for s in self._streams.values() if s.name.lower() == stream_key.lower() or str(s.id) == stream_key),
+            (
+                s
+                for s in self._streams.values()
+                if s.name.lower() == stream_key.lower() or str(s.id) == stream_key
+            ),
             None,
         )
 
@@ -137,7 +139,7 @@ class DB:
             return self.get_stream(stream_key).get_datasets()
         r = self.get(f"/datapool/{self.client.datapool}/datasets")
         r = validate_response(r, f"Failed to get datasets for datapool {self.client.datapool}")
-        return DatasetList.from_dicts(self.client, r.json()["datasets"])
+        return DatasetList.from_dicts(self.client, r)
 
     def get_dataset(self, dataset_id: int | None = None, dataset_path: str | None = None) -> Dataset:
         return Dataset.fetch(self.client, dataset_id, dataset_path)
@@ -289,7 +291,9 @@ class DB:
                 raise Exception(f"DataFrame must contain {COL_TIME} and {COL_SIG} columns")
             if not (COL_VAL in data.columns or COL_VAL_TEXT in data.columns):
                 raise Exception(f"DataFrame must contain at least one of {COL_VAL} or {COL_VAL_TEXT} columns")
-            value = pd.to_numeric(data[COL_VAL], errors="coerce") if COL_VAL in data.columns else pa.nulls(len(data))
+            value = (
+                pd.to_numeric(data[COL_VAL], errors="coerce") if COL_VAL in data.columns else pa.nulls(len(data))
+            )
             value_text = data[COL_VAL_TEXT] if COL_VAL_TEXT in data.columns else pa.nulls(len(data))
             table = pa.Table.from_arrays([data[COL_TIME], data[COL_SIG], value, value_text], schema=SCHEMA)
 

@@ -1,8 +1,8 @@
-from typing import Literal, Optional
-from pathlib import Path
 import json
+from pathlib import Path
+from typing import Literal, Optional
 
-from pydantic import BaseModel, PrivateAttr, ValidationError
+from pydantic import BaseModel, PrivateAttr
 
 from marple.db.dataset import Dataset, DatasetList
 from marple.utils import DBClient, validate_response
