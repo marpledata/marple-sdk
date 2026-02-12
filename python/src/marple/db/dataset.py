@@ -414,6 +414,12 @@ class DatasetList(UserList[Dataset]):
         # Prepare data list-of-lists (preserving your None checks)
         table_data = [[d.id, d.path, d.n_signals or 0, d.n_datapoints or 0, d.import_status] for d in self.data]
 
+        preview_limit = 100
+        if len(table_data) > 2 * preview_limit:
+            table_data = (
+                table_data[:preview_limit] + [["..."] * len(table_data[0])] + table_data[-preview_limit:]
+            )
+
         # Generate table
         table_str = tabulate(
             table_data, headers=["ID", "Path", "Signals", "Datapoints", "Status"], tablefmt="tsv"
