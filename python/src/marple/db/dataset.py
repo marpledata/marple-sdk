@@ -44,6 +44,7 @@ class Dataset(BaseModel):
     _signals: dict[int, "Signal"] = PrivateAttr(default_factory=dict)
 
     def __init__(self, client: DBClient, **kwargs):
+        kwargs["n_signals"] = kwargs.get("n_signals") or 0
         super().__init__(**kwargs)
         self._client = client
 
@@ -70,7 +71,7 @@ class Dataset(BaseModel):
                 result = validate_response(r, f"Get signal data for signal ID {id} failed")
             except Exception:
                 warnings.warn(f"Failed to get signal with id {id} and name {name}.")
-                return
+                return None
 
             signal = Signal(client=self._client, datastream_id=self.datastream_id, dataset_id=self.id, **r.json())
             self._signals[signal.id] = signal

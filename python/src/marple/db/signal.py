@@ -8,6 +8,7 @@ from pydantic import BaseModel, PrivateAttr
 
 from marple.db.constants import COL_TIME, COL_VAL, COL_VAL_TEXT
 from marple.utils import DBClient, validate_response
+from typing import Literal
 
 
 class Signal(BaseModel):
@@ -16,13 +17,13 @@ class Signal(BaseModel):
     unit: str | None
     description: str | None
     metadata: dict
-    storage_status: str
-    cold_bytes: int
+    storage_status: Literal["FROZEN_TO_COLD", "COLD", "COLD_TO_HOT", "HOT"]
+    cold_bytes: int | None
     hot_bytes: int | None
-    count: int
-    stats: dict
-    count_value: int
-    count_text: int
+    count: int | None
+    stats: dict | None
+    count_value: int | None
+    count_text: int | None
     time_min: int | None
     time_max: int | None
     parquet_version: int
