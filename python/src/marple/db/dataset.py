@@ -2,15 +2,15 @@ import re
 import time
 import warnings
 from collections import UserList
+from pathlib import Path
 from typing import Callable, Iterable, Literal, Optional, Sequence
+from urllib import parse, request
 
 import pandas as pd
 from pandas._typing import AggFuncType, Frequency
 from pydantic import BaseModel, ConfigDict, Field, PrivateAttr, ValidationError
 
 from marple.db.constants import COL_TIME, COL_VAL
-from pathlib import Path
-from urllib import parse, request
 from marple.db.signal import Signal
 from marple.utils import DBClient, validate_response
 
@@ -52,7 +52,9 @@ class Dataset(BaseModel):
         self._client = client
 
     @classmethod
-    def fetch(cls, client: DBClient, dataset_id: int | None = None, dataset_path: str | None = None) -> "Dataset":
+    def fetch(
+        cls, client: DBClient, dataset_id: int | None = None, dataset_path: str | None = None
+    ) -> "Dataset":
         if dataset_id is None and dataset_path is None:
             raise ValueError("Either dataset_id or dataset_path must be provided.")
         if dataset_id is not None and dataset_path is not None:
@@ -85,22 +87,32 @@ class Dataset(BaseModel):
                 warnings.warn(f"Failed to get signal with id {id} and name {name}.")
                 return None
 
-            signal = Signal(client=self._client, datastream_id=self.datastream_id, dataset_id=self.id, **r.json())
+            signal = Signal(
+                client=self._client, datastream_id=self.datastream_id, dataset_id=self.id, **r.json()
+            )
             self._signals[signal.id] = signal
             self._known_signals[signal.name] = signal.id
 
         return self._signals[id]
 
     def get_signals(self, signal_names: Sequence[str | re.Pattern] | None = None) -> list["Signal"]:
+        """
+        Get the signals in this dataset.
 
-        compiled_filters = [re.compile(f"^{re.escape(f)}$") if isinstance(f, str) else f for f in signal_names or []]
+        If `signal_names` is provided, only signals with names matching any of the specified strings or regular expression patterns are returned.
+        If `signal_names` is None, all signals in the dataset are returned.
+        """
+
+        compiled_filters = [
+            re.compile(f"^{re.escape(f)}$") if isinstance(f, str) else f for f in signal_names or []
+        ]
 
         def include(signal_name: str) -> bool:
             if signal_names is None:
                 return True
             return any(pattern.match(signal_name) for pattern in compiled_filters)
 
-        if len(self._signals) < self.n_signals:
+        if self.n_signals is None or len(self._signals) < self.n_signals:
             r = self._client.get(f"/stream/{self.datastream_id}/dataset/{self.id}/signals")
             for signal in validate_response(r, "Failed to get signals"):
                 try:
@@ -198,9 +210,14 @@ class DatasetList(UserList[Dataset]):
         return cls(datasets)
 
     def where_imported(self) -> "DatasetList":
+        """
+        Filter datasets that have been successfully imported.
+        """
         return self.where(lambda d: d.import_status == "FINISHED")
 
-    def where_metadata(self, metadata: dict[str, int | str | Iterable[int | str]] | None = None) -> "DatasetList":
+    def where_metadata(
+        self, metadata: dict[str, int | str | Iterable[int | str]] | None = None
+    ) -> "DatasetList":
         """
         Filter datasets by their metadata fields.
 
@@ -282,7 +299,7 @@ class DatasetList(UserList[Dataset]):
             if signal is None:
                 return False
             if stat in ["max", "min", "sum", "mean", "frequency"]:
-                value = signal.stats.get(stat)
+                value = (signal.stats or {}).get(stat)
             else:
                 value = getattr(signal, stat)
             if value is None:
@@ -298,6 +315,12 @@ class DatasetList(UserList[Dataset]):
         return self.where(predicate)
 
     def where(self, predicate: Callable[[Dataset], bool]) -> "DatasetList":
+        """
+        Filter datasets using a custom predicate function.
+
+        The `predicate` function takes a `Dataset` object as input and returns `True` if the dataset should be included in the results, or `False` otherwise.
+        Returns a new `DatasetList` containing only the datasets for which the predicate function returns `True`.
+        """
         return DatasetList([d for d in self.data if predicate(d)])
 
     def get_data(
