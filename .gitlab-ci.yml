@@ -92,4 +92,6 @@ publish-docs:
       - public
   dependencies:
     - build-docs
+  rules:
+    - when: on_success
 
