@@ -1,0 +1,25 @@
+@font-face {
+  font-family: "Mona Sans";
+  src: url("https://cdn.prod.website-files.com/67641bd90d46d45585d1d615/67641bd90d46d45585d1d6ca_MonaSans-Regular.otf")
+    format("opentype");
+  font-weight: 400;
+  font-style: normal;
+  font-display: swap;
+}
+
+@font-face {
+  font-family: "Mona Sans";
+  src: url("https://cdn.prod.website-files.com/67641bd90d46d45585d1d615/67641bd90d46d45585d1d6ad_MonaSans-Medium.otf")
+    format("opentype");
+  font-weight: 500;
+  font-style: normal;
+  font-display: swap;
+}
+
+:root {
+  --pst-color-primary: #5586f7;
+  --pst-color-link: #5586f7;
+  --pst-color-link-hover: #2467ff;
+  --pst-font-family-base: "Mona Sans", "Segoe UI", Helvetica, Arial, sans-serif;
+  --pst-font-family-heading: "Mona Sans", "Segoe UI", Helvetica, Arial, sans-serif;
+}
