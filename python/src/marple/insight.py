@@ -11,6 +11,14 @@ SAAS_URL = "https://insight.marpledata.com/api/v1"
 
 
 class Insight:
+    """
+    Client for the Marple Insight API.
+
+    Args:
+        api_token: The API token for Marple Insight.
+        api_url: The URL of the Marple Insight API.
+    """
+
     def __init__(self, api_token: str, api_url: str = SAAS_URL):
         self.api_url = api_url
         self.api_token = api_token

@@ -12,6 +12,15 @@ from marple.utils import DBClient, validate_response
 
 
 class Signal(BaseModel):
+    """
+    Represents a signal within a dataset.
+
+    Args:
+        client: DB client used to make API calls.
+        datastream_id: ID of the parent datastream.
+        dataset_id: ID of the parent dataset.
+    """
+
     id: int
     name: str
     unit: str | None

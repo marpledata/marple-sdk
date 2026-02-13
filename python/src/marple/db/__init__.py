@@ -45,7 +45,8 @@ class DB:
     """
     The DB class is the main entry point for the Marple DB API.
     It provides a high-level interface for interacting with the Marple DB API.
-    Parameters:
+
+    Args:
         api_token: The API token for the Marple DB API.
         api_url: The URL of the Marple DB API.
         datapool: The datapool to use (default: "default").
@@ -147,7 +148,8 @@ class DB:
         """
         Delete a datastream and all its datasets.
 
-        This is a destructive operation that cannot be undone.
+        Warning:
+            This is a destructive operation that cannot be undone.
         """
         stream_id = self._get_stream_id(stream_key)
         r = self.post(f"/stream/{stream_id}/delete")
@@ -265,7 +267,10 @@ class DB:
     @deprecated
     def delete_dataset(self, dataset_id: int | None, dataset_path: str | None):
         """
-        Delete a dataset by its ID. This is a destructive operation that cannot be undone.
+        Delete a dataset by its ID.
+
+        Warning:
+            This is a destructive operation that cannot be undone.
         """
         dataset = self.get_dataset(dataset_id, dataset_path)
         r = self.post(f"/stream/{dataset.datastream_id}/dataset/{dataset.id}/delete")
@@ -334,15 +339,17 @@ class DB:
         """
         Append new data to an existing dataset.
 
-        `data` is a DataFrame with the following columns. It can be in either "long" or "wide" format. If `shape` is not specified, the format is automatically detected.
-        - `"long"` format: Each row represents a single measurement for a single signal at a specific time. The following columns are expected:
-            - `time`: Unix timestamp in nanoseconds.
-            - `signal`: Name of the signal as a string. Signals not yet present in the dataset are automatically added. Use `upsert_signals` to set units, descriptions and metadata.
-            - `value`: (optional) Value of the signal as a float or integer.
-            - `value_text`: (optional) Text value of the signal as a string.
-            - At least one of the `value` or `value_text` columns must be present.
-        - `"wide"` format: Each row represents a single time point with multiple signals as columns. Expects at least a `time` column.
+        `data` is a DataFrame with the following columns. It can be in either "long" or "wide" format. If `shape` is not specified, the format is automatically detected:
 
+        - `"long"` format: Each row represents a single measurement for a single signal at a specific time. The following columns are expected:
+
+          - `time`: Unix timestamp in nanoseconds.
+          - `signal`: Name of the signal as a string. Signals not yet present in the dataset are automatically added. Use `upsert_signals` to set units, descriptions and metadata.
+          - `value`: (optional) Value of the signal as a float or integer.
+          - `value_text`: (optional) Text value of the signal as a string.
+          - At least one of the `value` or `value_text` columns must be present.
+
+        - `"wide"` format: Each row represents a single time point with multiple signals as columns. Expects at least a `time` column.
 
         """
         stream_id = self._get_stream_id(stream_key)

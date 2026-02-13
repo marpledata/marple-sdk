@@ -1,6 +1,8 @@
 lol.py
 .mdb_cache/
 
+/docs/_build/
+docs/api/marple.*.rst
 
 # Default ignored files
 /shelf/

@@ -23,6 +23,13 @@ BUSY_STATUSES = [
 
 
 class Dataset(BaseModel):
+    """
+    Represents a dataset in a Marple DB datastream.
+
+    Args:
+        client: DB client used to make API calls.
+    """
+
     model_config = ConfigDict(populate_by_name=True)
     id: int
     datastream_id: int = Field(alias="stream_id")
@@ -194,6 +201,9 @@ class Dataset(BaseModel):
     def delete(self) -> None:
         """
         Delete the dataset.
+
+        Warning:
+            This is a destructive action that cannot be undone.
         """
         r = self._client.post(f"/stream/{self.datastream_id}/dataset/{self.id}/delete")
         validate_response(r, "Delete dataset failed")
@@ -202,11 +212,19 @@ class Dataset(BaseModel):
 def find_matching_signals(existing_signals: set[str], filters: Iterable[str | re.Pattern]) -> set[str]:
     literal_names = {signal for signal in filters if isinstance(signal, str) and signal in existing_signals}
     regex_patterns = [signal for signal in filters if isinstance(signal, re.Pattern)]
-    regex_names = {signal for signal in existing_signals if any(pattern.search(signal) for pattern in regex_patterns)}
+    regex_names = {
+        signal for signal in existing_signals if any(pattern.search(signal) for pattern in regex_patterns)
+    }
     return literal_names | regex_names
 
 
 class DatasetList(UserList[Dataset]):
+    """
+    A list-like container for datasets with helper filtering methods.
+
+    Args:
+        datasets: Iterable of Dataset objects.
+    """
 
     def __init__(self, datasets: Iterable[Dataset]):
         super().__init__(datasets)

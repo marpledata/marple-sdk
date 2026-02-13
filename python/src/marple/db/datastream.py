@@ -9,6 +9,13 @@ from marple.utils import DBClient, validate_response
 
 
 class DataStream(BaseModel):
+    """
+    Represents a Marple DB datastream.
+
+    Args:
+        client: DB client used to make API calls.
+    """
+
     type: Literal["files", "realtime"]
     id: int
     name: str
@@ -65,6 +72,9 @@ class DataStream(BaseModel):
     def delete(self) -> None:
         """
         Delete the datastream.
+
+        Warning:
+            This is a destructive action that cannot be undone and will delete all datasets in the datastream.
         """
         r = self._client.post(f"/stream/{self.id}/delete")
         validate_response(r, "Delete stream failed")

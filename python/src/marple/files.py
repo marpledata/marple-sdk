@@ -12,6 +12,13 @@ DEFAULT_IMPORT_CONFIG = {"common": [], "signals_groups": []}
 
 
 class Marple:
+    """
+    Client for the legacy Marple Files API.
+
+    Args:
+        access_token: The API token for Marple Files.
+        api_url: The URL of the Marple Files API.
+    """
 
     plugin_map = {
         "csv": "csv_plugin",
