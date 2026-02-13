@@ -26,7 +26,8 @@ To get started:
 
 If you are using a VPC or self-hosted version, pass a custom `api_url` to `DB(...)` (it should end in `/api/v1`).
 
-### Example: import a file and poll ingest status
+### Examples
+#### Import a file and wait for it to import
 
 This is the typical flow for importing a new file into Marple DB:
 
@@ -43,23 +44,77 @@ db = DB(API_TOKEN, API_URL)
 
 db.check_connection()
 
-dataset_id = db.push_file(STREAM, "tests/examples_race.csv", metadata={"driver": "Mbaerto"})
+stream = db.get_stream(STREAM)
+dataset = stream.push_file("tests/examples_race.csv", metadata={"driver": "Mbaerto"})
+# Wait at most 10s for the dataset to completely import and get the new state of the dataset
+dataset = dataset.wait_for_import(timeout=10)
+```
 
-while True:
-    status = db.get_status(STREAM, dataset_id)
-    if status.get("import_status") in {"FINISHED", "FAILED"}:
-        break
-    time.sleep(1)
+#### Filter datasets and get resampled data
+```python
+# See previous example for setup
+datasets = stream.get_datasets()  # Get all datasets in a specific Data Stream
+# OR
+# datasets = db.get_datasets()  # Get all datasets in the datapool
+
+# Keep all datasets where car_id is 1 or 2 and track is track_1
+datasets = datasets.where_metadata({"car_id": [1, 2], "track": "track_1"})
+# Wait until all datasets are imported (to ensure all signals are available for the next step)
+datasets = datasets.wait_for_import()
+# Keep only datasets that have been succesfully imported
+datasets = datasets.where_imported()
+# Keep only datasets that have a car.speed signal and the max value of this signal is greater than 75
+datasets = datasets.where_signal("car.speed", "max", greater_than=75)
+datasets = datasets.where_signal("car.engine.temp", "mean", greater_than=30)
+# Keep only datasets with sufficient datapoints
+datasets = datasets.where_dataset("n_datapoints", greater_than=100000)
+
+def custom_filter_function(dataset: Dataset) -> bool:
+    return (
+        dataset.metadata.get("weather") == "sunny"
+        or dataset.get_signal("car.engine.NGear").stats.get("avg", 0) ** 2 > 16
+    )
+
+# Pass any function to filter the datasets on more complex conditions
+datasets = datasets.where(custom_filter_function)
+
+# Create an overview of the datasets as a pandas.DataFrame to save it to a CSV.
+datasets.to_dataframe().to_csv("all_datasets.csv")
+
+# Get a dataframe per dataset of the matching signals which is resampled at a period of 0.17s.
+# The regex patterns will match with car.wheel.rear.left.speed, car.wheel.rear.front.speed, ...
+for dataset, data in datasets.get_data(
+    signals=[
+        "car.speed",
+        "car.engine.temp",
+        re.compile("car.wheel.*.speed"),
+        re.compile("car.wheel.*.trq"),
+    ],
+    resample_rule="0.17s",
+):
+    machine_learning_model.train(data)
+```
+
+#### Download a dataset that failed to import
+```python
+datasets = stream.get_datasets()
+datasets = datasets.where_dataset("import_status", equals="FAILED")
+
+# datasets is of type DatasetList which is a subclass of list so you can do all normal list operations on it.
+if len(datasets) > 0:
+    datasets[0].download()
+
 ```
 
 ### Common operations
 
 - **List streams**: `db.get_streams()`
-- **List datasets in a stream**: `db.get_datasets(stream_key)`
-- **Upload a file to a file-stream**: `db.push_file(stream_key, file_path, metadata={...})`
-- **Poll ingest status**: `db.get_status(stream_key, dataset_id)`
-- **Download original uploaded file**: `db.download_original(stream_key, dataset_id, destination_folder=".")`
-- **Download parquet for a signal**: `db.download_signal(stream_key, dataset_id, signal_id, destination_folder=".")`
+- **List datasets in a stream**: `stream.get_datasets()`
+- **Upload a file to a file-stream**: `stream.push_file(file_path, metadata={...})`
+- **Wait for a dataset to import**: `dataset.wait_for_import(timeout=60)`
+- **Download original uploaded file**: `dataset.download(destination_folder=".")`
+- **Download parquet for a signal**: `dataset.get_signal(signal_name).download_data()`
+- **Get a resampled df of multiple signals**: `dataset.get_data(signals=[...], resample_rule="1s")`
 
 For live/realtime streams (creating and appending data):
 
