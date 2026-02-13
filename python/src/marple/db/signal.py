@@ -56,8 +56,7 @@ class Signal(BaseModel):
         """
         Download the parquet files for this signal to a local cache folder and return the folder path.
         """
-        cached = self._cache_folder.exists()
-        if not cached or refresh:
+        if not self._cache_folder.exists() or refresh:
             self._cache_folder.mkdir(parents=True, exist_ok=True)
             for file in self._cache_folder.iterdir():
                 file.unlink(missing_ok=True)
