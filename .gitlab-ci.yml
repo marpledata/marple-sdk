@@ -90,7 +90,7 @@ publish-docs:
   artifacts:
     paths:
       - public
-  dependencies:
+  needs:
     - build-docs
   rules:
     - when: on_success
