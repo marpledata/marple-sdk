@@ -1,0 +1,87 @@
+﻿marple.db.Dataset
+=================
+
+.. currentmodule:: marple.db
+
+.. autoclass:: Dataset
+
+   
+   .. automethod:: __init__
+
+   
+   .. rubric:: Methods
+
+   .. autosummary::
+   
+      ~Dataset.__init__
+      ~Dataset.construct
+      ~Dataset.copy
+      ~Dataset.delete
+      ~Dataset.dict
+      ~Dataset.download
+      ~Dataset.fetch
+      ~Dataset.from_orm
+      ~Dataset.get_data
+      ~Dataset.get_signal
+      ~Dataset.get_signals
+      ~Dataset.json
+      ~Dataset.model_construct
+      ~Dataset.model_copy
+      ~Dataset.model_dump
+      ~Dataset.model_dump_json
+      ~Dataset.model_json_schema
+      ~Dataset.model_parametrized_name
+      ~Dataset.model_post_init
+      ~Dataset.model_rebuild
+      ~Dataset.model_validate
+      ~Dataset.model_validate_json
+      ~Dataset.model_validate_strings
+      ~Dataset.parse_file
+      ~Dataset.parse_obj
+      ~Dataset.parse_raw
+      ~Dataset.schema
+      ~Dataset.schema_json
+      ~Dataset.update_forward_refs
+      ~Dataset.update_metadata
+      ~Dataset.validate
+      ~Dataset.wait_for_import
+   
+   
+
+   
+   
+   .. rubric:: Attributes
+
+   .. autosummary::
+   
+      ~Dataset.model_computed_fields
+      ~Dataset.model_config
+      ~Dataset.model_extra
+      ~Dataset.model_fields
+      ~Dataset.model_fields_set
+      ~Dataset.id
+      ~Dataset.datastream_id
+      ~Dataset.datastream_version
+      ~Dataset.created_at
+      ~Dataset.created_by
+      ~Dataset.import_status
+      ~Dataset.import_progress
+      ~Dataset.import_message
+      ~Dataset.import_time
+      ~Dataset.path
+      ~Dataset.metadata
+      ~Dataset.cold_path
+      ~Dataset.cold_bytes
+      ~Dataset.hot_bytes
+      ~Dataset.backup_path
+      ~Dataset.backup_size
+      ~Dataset.plugin
+      ~Dataset.plugin_args
+      ~Dataset.n_datapoints
+      ~Dataset.n_signals
+      ~Dataset.timestamp_start
+      ~Dataset.timestamp_stop
+      ~Dataset.import_speed
+      ~Dataset.parquet_version
+   
+   

@@ -1,0 +1,50 @@
+﻿marple.db.DB
+============
+
+.. currentmodule:: marple.db
+
+.. autoclass:: DB
+
+   
+   .. automethod:: __init__
+
+   
+   .. rubric:: Methods
+
+   .. autosummary::
+   
+      ~DB.__init__
+      ~DB.add_dataset
+      ~DB.check_connection
+      ~DB.create_stream
+      ~DB.dataset_append
+      ~DB.delete
+      ~DB.delete_dataset
+      ~DB.delete_stream
+      ~DB.download_original
+      ~DB.download_signal
+      ~DB.get
+      ~DB.get_dataset
+      ~DB.get_datasets
+      ~DB.get_signal
+      ~DB.get_signals
+      ~DB.get_status
+      ~DB.get_stream
+      ~DB.get_streams
+      ~DB.patch
+      ~DB.post
+      ~DB.push_file
+      ~DB.update_metadata
+      ~DB.upsert_signals
+   
+   
+
+   
+   
+   .. rubric:: Attributes
+
+   .. autosummary::
+   
+      ~DB.client
+   
+   

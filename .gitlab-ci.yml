@@ -81,7 +81,7 @@ build-docs:
   rules:
     - when: manual
 
-publish-docs:
+pages:
   stage: docs
   image: alpine:latest
   script:
