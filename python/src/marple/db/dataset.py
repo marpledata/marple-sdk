@@ -101,7 +101,7 @@ class Dataset(BaseModel):
                 self._signals[signal_obj.id] = signal_obj
         return list(self._signals.values())
 
-    def get_signals(self, signal_names: Sequence[str | re.Pattern] | None = None) -> list["Signal"]:
+    def get_signals(self, signal_names: Iterable[str | re.Pattern] | None = None) -> list["Signal"]:
         """
         Get the signals in this dataset.
 
@@ -111,17 +111,12 @@ class Dataset(BaseModel):
         if signal_names is None:
             return self._get_all_signals()
 
-        signal_map = self._client.get_signal_map()
-        literal_names = [signal for signal in signal_names if isinstance(signal, str) and signal in signal_map]
-        regex_patterns = [signal for signal in signal_names if isinstance(signal, re.Pattern)]
-        regex_names = [
-            signal for signal in signal_map if any(pattern.match(signal) for pattern in regex_patterns)
-        ]
+        all_signal_names = set(self._client.get_signal_map().keys())
+        matching_signals = find_matching_signals(all_signal_names, filters=signal_names)
 
-        all_signal_names = literal_names + regex_names
         r = self._client.get(
             f"/stream/{self.datastream_id}/dataset/{self.id}/signals",
-            params={"signal_names": all_signal_names},
+            params={"signal_names": list(matching_signals)},
         )
         return [
             Signal.from_dict(self._client, self.datastream_id, self.id, value=signal)
@@ -130,7 +125,7 @@ class Dataset(BaseModel):
 
     def get_data(
         self,
-        signals: Sequence[str | re.Pattern],
+        signals: Iterable[str | re.Pattern],
         resample_rule: Optional[Frequency] = None,
         resample_aggregate: AggFuncType = "mean",
         **kwargs,
@@ -197,6 +192,15 @@ class Dataset(BaseModel):
             time.sleep(0.5)
         warnings.warn(f"Import did not finish after {timeout} seconds")
         return self.fetch(self._client, self.id)
+
+
+def find_matching_signals(existing_signals: set[str], filters: Iterable[str | re.Pattern]) -> set[str]:
+    literal_names = {signal for signal in filters if isinstance(signal, str) and signal in existing_signals}
+    regex_patterns = [signal for signal in filters if isinstance(signal, re.Pattern)]
+    regex_names = {
+        signal for signal in existing_signals if any(pattern.search(signal) for pattern in regex_patterns)
+    }
+    return literal_names | regex_names
 
 
 class DatasetList(UserList[Dataset]):
@@ -361,7 +365,7 @@ class DatasetList(UserList[Dataset]):
 
     def get_data(
         self,
-        signals: Sequence[str | re.Pattern],
+        signals: Iterable[str | re.Pattern],
         resample_rule: None | Frequency = None,
         resample_aggregate: AggFuncType = "mean",
         **kwargs,
@@ -373,9 +377,12 @@ class DatasetList(UserList[Dataset]):
         The dataframe is resampled according to the `resampling` parameter, which is passed to pandas `resample` function.
         If `resampling` is None, the original data is returned.
         """
+        # Avoid having to search the regexes for every individual dataset
+        existing_signals = set(self.data[0]._client.get_signal_map().keys()) if self.data else set()
+        matching_signals = find_matching_signals(existing_signals, signals)
         for dataset in self.data:
             yield dataset, dataset.get_data(
-                signals=signals,
+                signals=matching_signals,
                 resample_rule=resample_rule,
                 resample_aggregate=resample_aggregate,
                 **kwargs,
