@@ -60,9 +60,7 @@ class Dataset(BaseModel):
         self._client = client
 
     @classmethod
-    def fetch(
-        cls, client: DBClient, dataset_id: int | None = None, dataset_path: str | None = None
-    ) -> "Dataset":
+    def fetch(cls, client: DBClient, dataset_id: int | None = None, dataset_path: str | None = None) -> "Dataset":
         if dataset_id is None and dataset_path is None:
             raise ValueError("Either dataset_id or dataset_path must be provided.")
         if dataset_id is not None and dataset_path is not None:
@@ -95,9 +93,7 @@ class Dataset(BaseModel):
                 warnings.warn(f"Failed to get signal with id {id} and name {name}.")
                 return None
 
-            signal = Signal(
-                client=self._client, datastream_id=self.datastream_id, dataset_id=self.id, **r.json()
-            )
+            signal = Signal(client=self._client, datastream_id=self.datastream_id, dataset_id=self.id, **r.json())
             self._signals[signal.id] = signal
             self._known_signals[signal.name] = signal.id
 
@@ -111,9 +107,7 @@ class Dataset(BaseModel):
         If `signal_names` is None, all signals in the dataset are returned.
         """
 
-        compiled_filters = [
-            re.compile(f"^{re.escape(f)}$") if isinstance(f, str) else f for f in signal_names or []
-        ]
+        compiled_filters = [re.compile(f"^{re.escape(f)}$") if isinstance(f, str) else f for f in signal_names or []]
 
         def include(signal_name: str) -> bool:
             if signal_names is None:
@@ -193,7 +187,7 @@ class Dataset(BaseModel):
         If the dataset is still in a busy status (WAITING, IMPORTING, POST_PROCESSING, UPDATING_ICEBERG) after the timeout, a warning is issued and the current dataset information is returned.
         If `force_fetch` is True, the import status is fetched at least once even if the dataset is not in a busy status, to ensure the latest status is returned.
         """
-        if not force_fetch and self.import_status in BUSY_STATUSES:
+        if not (force_fetch or self.import_status in BUSY_STATUSES):
             return self
 
         deadline = time.monotonic() + max(timeout, 0.1)  # Ensure we fetch at least once
@@ -232,9 +226,7 @@ class DatasetList(UserList[Dataset]):
         """
         return self.where(lambda d: d.import_status == "FINISHED")
 
-    def where_metadata(
-        self, metadata: dict[str, int | str | Iterable[int | str]] | None = None
-    ) -> "DatasetList":
+    def where_metadata(self, metadata: dict[str, int | str | Iterable[int | str]] | None = None) -> "DatasetList":
         """
         Filter datasets by their metadata fields.
 
@@ -398,11 +390,12 @@ class DatasetList(UserList[Dataset]):
         Returns a new DatasetList with the updated dataset information.
         """
 
-        deadline = time.monotonic() + timeout
-        result = DatasetList([])
-        for dataset in self.data:
-            result.append(dataset.wait_for_import(timeout=deadline - time.monotonic(), force_fetch=force_fetch))
-        return result
+        return DatasetList(
+            [
+                dataset.wait_for_import(timeout=(timeout / len(self.data)), force_fetch=force_fetch)
+                for dataset in self.data
+            ]
+        )
 
     def __str__(self) -> str:
         count = len(self.data)
@@ -424,9 +417,7 @@ class DatasetList(UserList[Dataset]):
 
         max_rows = 100
         if len(table_data) > max_rows:
-            table_data = (
-                table_data[: max_rows // 2] + [["..."] * len(table_data[0])] + table_data[-max_rows // 2 :]
-            )
+            table_data = table_data[: max_rows // 2] + [["..."] * len(table_data[0])] + table_data[-max_rows // 2 :]
         table_header = ["ID", "Path", "Signals", "Datapoints", "Status"] + sorted_metadata_fields
         max_cols = 10
         if len(sorted_metadata_fields) > max_cols:
