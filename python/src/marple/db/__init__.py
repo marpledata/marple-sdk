@@ -108,6 +108,51 @@ class DB:
 
     # Stream functions #
 
+    def create_stream(
+        self,
+        name: str,
+        description: Optional[str] = None,
+        type: Literal["files", "realtime"] = "files",
+        layer_shifts: Optional[list[int]] = None,
+        datapool: Optional[str] = None,
+        plugin: Optional[str] = None,
+        plugin_args: Optional[str] = None,
+        signal_reduction: Optional[list] = None,
+        insight_workspace: Optional[str] = None,
+        insight_project: Optional[str] = None,
+    ) -> int:
+        """
+        Create a new datastream.
+        """
+        r = self.post(
+            "/stream",
+            json={
+                "name": name,
+                "description": description,
+                "type": type,
+                "layer_shifts": layer_shifts,
+                "datapool": datapool,
+                "plugin": plugin,
+                "plugin_args": plugin_args,
+                "signal_reduction": signal_reduction,
+                "insight_workspace": insight_workspace,
+                "insight_project": insight_project,
+            },
+        )
+        r_json = validate_response(r, "Create stream failed")
+        return self.get_stream(r_json["id"])
+
+    @deprecated
+    def delete_stream(self, stream_key: str | int) -> None:
+        """
+        Delete a datastream and all its datasets.
+
+        This is a destructive operation that cannot be undone.
+        """
+        stream_id = self._get_stream_id(stream_key)
+        r = self.post(f"/stream/{stream_id}/delete")
+        validate_response(r, "Delete stream failed")
+
     def get_streams(self) -> list[DataStream]:
         self._refresh_stream_cache()
         return list(self._streams.values())
@@ -120,11 +165,7 @@ class DB:
         if isinstance(stream_key, int):
             return self._streams.get(stream_key)
         return next(
-            (
-                s
-                for s in self._streams.values()
-                if s.name.lower() == stream_key.lower() or str(s.id) == stream_key
-            ),
+            (s for s in self._streams.values() if s.name.lower() == stream_key.lower() or str(s.id) == stream_key),
             None,
         )
 
@@ -172,6 +213,7 @@ class DB:
         return self.get_dataset(dataset_id, dataset_path).get_signal(signal_name, signal_id)
 
     # Deprecated functions #
+
     @deprecated
     def push_file(
         self,
@@ -205,6 +247,7 @@ class DB:
         dataset_path: str | None = None,
         signal_id: int | None = None,
         signal_name: str | None = None,
+        refresh_cache: bool = False,
     ) -> list[Path]:
         """
         Download the parquet file for a signal from the dataset to the destination folder.
@@ -217,27 +260,7 @@ class DB:
         )
         if signal is None:
             raise Exception("Signal not found")
-        signal.download_data()
-        return signal.get_local_parquet_paths()
-
-    @deprecated
-    def add_dataset(self, stream_key: str | int, dataset_name: str, metadata: dict | None = None) -> int:
-        """
-        Create a new empty dataset in the specified live stream.
-        Returns the ID of the newly created dataset.
-
-        Use `dataset_append` to add data to the dataset and `upsert_signals` to define signals.
-
-        To add datasets from a file to a file stream, use `push_file` instead.
-        """
-        stream_id = self._get_stream_id(stream_key)
-        r = self.post(
-            f"/stream/{stream_id}/dataset/add",
-            json={"dataset_name": dataset_name, "metadata": metadata or {}},
-        )
-        r_json = validate_response(r, "Add dataset failed")
-
-        return r_json["dataset_id"]
+        return signal.get_parquet_files(refresh_cache)
 
     @deprecated
     def delete_dataset(self, dataset_id: int | None, dataset_path: str | None):
@@ -266,7 +289,26 @@ class DB:
             metadata = {}
         self.get_dataset(dataset_id, dataset_path).update_metadata(metadata, overwrite)
 
-    @deprecated
+    # Realtime functions #
+
+    def add_dataset(self, stream_key: str | int, dataset_name: str, metadata: dict | None = None) -> int:
+        """
+        Create a new empty dataset in the specified live stream.
+        Returns the ID of the newly created dataset.
+
+        Use `dataset_append` to add data to the dataset and `upsert_signals` to define signals.
+
+        To add datasets from a file to a file stream, use `push_file` instead.
+        """
+        stream_id = self._get_stream_id(stream_key)
+        r = self.post(
+            f"/stream/{stream_id}/dataset/add",
+            json={"dataset_name": dataset_name, "metadata": metadata or {}},
+        )
+        r_json = validate_response(r, "Add dataset failed")
+
+        return r_json["dataset_id"]
+
     def upsert_signals(self, stream_key: str | int, dataset_id: int, signals: list[dict]) -> None:
         """
         Add signals to a dataset or update existing ones.
@@ -282,7 +324,6 @@ class DB:
         r = self.post(f"/stream/{stream_id}/dataset/{dataset_id}/signals", json=signals)
         validate_response(r, "Upsert signals failed")
 
-    @deprecated
     def dataset_append(
         self,
         stream_key: str | int,
@@ -315,9 +356,7 @@ class DB:
                 raise Exception(f"DataFrame must contain {COL_TIME} and {COL_SIG} columns")
             if not (COL_VAL in data.columns or COL_VAL_TEXT in data.columns):
                 raise Exception(f"DataFrame must contain at least one of {COL_VAL} or {COL_VAL_TEXT} columns")
-            value = (
-                pd.to_numeric(data[COL_VAL], errors="coerce") if COL_VAL in data.columns else pa.nulls(len(data))
-            )
+            value = pd.to_numeric(data[COL_VAL], errors="coerce") if COL_VAL in data.columns else pa.nulls(len(data))
             value_text = data[COL_VAL_TEXT] if COL_VAL_TEXT in data.columns else pa.nulls(len(data))
             table = pa.Table.from_arrays([data[COL_TIME], data[COL_SIG], value, value_text], schema=SCHEMA)
 
@@ -330,52 +369,6 @@ class DB:
 
         r = self.post(f"/stream/{stream_id}/dataset/{dataset_id}/append", files=files)
         validate_response(r, "Append data failed")
-
-    @deprecated
-    def create_stream(
-        self,
-        name: str,
-        description: Optional[str] = None,
-        type: Literal["files", "realtime"] = "files",
-        layer_shifts: Optional[list[int]] = None,
-        datapool: Optional[str] = None,
-        plugin: Optional[str] = None,
-        plugin_args: Optional[str] = None,
-        signal_reduction: Optional[list] = None,
-        insight_workspace: Optional[str] = None,
-        insight_project: Optional[str] = None,
-    ) -> int:
-        """
-        Create a new datastream.
-        """
-        r = self.post(
-            "/stream",
-            json={
-                "name": name,
-                "description": description,
-                "type": type,
-                "layer_shifts": layer_shifts,
-                "datapool": datapool,
-                "plugin": plugin,
-                "plugin_args": plugin_args,
-                "signal_reduction": signal_reduction,
-                "insight_workspace": insight_workspace,
-                "insight_project": insight_project,
-            },
-        )
-        r_json = validate_response(r, "Create stream failed")
-        return r_json["id"]
-
-    @deprecated
-    def delete_stream(self, stream_key: str | int) -> None:
-        """
-        Delete a datastream and all its datasets.
-
-        This is a destructive operation that cannot be undone.
-        """
-        stream_id = self._get_stream_id(stream_key)
-        r = self.post(f"/stream/{stream_id}/delete")
-        validate_response(r, "Delete stream failed")
 
     # Internal functions #
 

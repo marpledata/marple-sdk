@@ -61,3 +61,10 @@ class DataStream(BaseModel):
 
             r = self._client.post(f"/stream/{self.id}/ingest", files=files, data=data)
             return self.get_dataset(validate_response(r, "File upload failed")["dataset_id"])
+
+    def delete(self) -> None:
+        """
+        Delete the datastream.
+        """
+        r = self._client.post(f"/stream/{self.id}/delete")
+        validate_response(r, "Delete stream failed")
