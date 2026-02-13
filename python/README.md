@@ -45,7 +45,7 @@ db = DB(API_TOKEN, API_URL)
 db.check_connection()
 
 stream = db.get_stream(STREAM)
-dataset = stream.push_file("tests/examples_race.csv", metadata={"driver": "Mbaerto"})
+dataset = stream.push_file("examples_race.csv", metadata={"driver": "Mbaerto"})
 # Wait at most 10s for the dataset to completely import and get the new state of the dataset
 dataset = dataset.wait_for_import(timeout=10)
 ```
@@ -53,6 +53,9 @@ dataset = dataset.wait_for_import(timeout=10)
 #### Filter datasets and get resampled data
 ```python
 # See previous example for setup
+import re
+from marple.db import Dataset
+
 datasets = stream.get_datasets()  # Get all datasets in a specific Data Stream
 # OR
 # datasets = db.get_datasets()  # Get all datasets in the datapool
@@ -79,7 +82,7 @@ def custom_filter_function(dataset: Dataset) -> bool:
 datasets = datasets.where(custom_filter_function)
 
 # Create an overview of the datasets as a pandas.DataFrame to save it to a CSV.
-datasets.to_dataframe().to_csv("all_datasets.csv")
+datasets.to_pandas().to_csv("all_datasets.csv")
 
 # Get a dataframe per dataset of the matching signals which is resampled at a period of 0.17s.
 # The regex patterns will match with car.wheel.rear.left.speed, car.wheel.rear.front.speed, ...
@@ -95,15 +98,14 @@ for dataset, data in datasets.get_data(
     machine_learning_model.train(data)
 ```
 
-#### Download a dataset that failed to import
+#### Delete a dataset that failed to import
 ```python
 datasets = stream.get_datasets()
 datasets = datasets.where_dataset("import_status", equals="FAILED")
 
 # datasets is of type DatasetList which is a subclass of list so you can do all normal list operations on it.
 if len(datasets) > 0:
-    datasets[0].download()
-
+    datasets[0].delete()
 ```
 
 ### Common operations
@@ -113,7 +115,7 @@ if len(datasets) > 0:
 - **Upload a file to a file-stream**: `stream.push_file(file_path, metadata={...})`
 - **Wait for a dataset to import**: `dataset.wait_for_import(timeout=60)`
 - **Download original uploaded file**: `dataset.download(destination_folder=".")`
-- **Download parquet for a signal**: `dataset.get_signal(signal_name).download_data()`
+- **Download parquet for a signal**: `dataset.get_signal(signal_name).download(destination_folder=".")`
 - **Get a resampled df of multiple signals**: `dataset.get_data(signals=[...], resample_rule="1s")`
 
 For live/realtime streams (creating and appending data):
@@ -130,6 +132,12 @@ For advanced use cases, you can call API endpoints directly:
 db.get("/health")
 db.post("/query", json={"query": "select 1"})
 ```
+
+### Notes on DB API changes
+
+- Methods like `DB.push_file`, `DB.download_signal`, and `DB.update_metadata` are deprecated.
+- Prefer stream/dataset methods instead: `stream.push_file`, `dataset.get_signal(...).download()`, and `dataset.update_metadata(...)`.
+- These are still available for compatibility, but the examples above use the current API.
 
 ## Marple Insight
 
@@ -153,7 +161,7 @@ STREAM = "Car data"
 insight = Insight(INSIGHT_TOKEN, INSIGHT_URL)
 db = DB(DB_TOKEN, DB_URL)
 
-dataset_id = db.get_datasets(STREAM)[0]["id"]
+dataset_id = db.get_datasets(STREAM)[0].id
 insight_dataset = insight.get_dataset_mdb(dataset_id)
 
 file_path = insight.export_data_mdb(
