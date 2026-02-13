@@ -178,7 +178,7 @@ class Dataset(BaseModel):
         If the dataset is still in a busy status (WAITING, IMPORTING, POST_PROCESSING, UPDATING_ICEBERG) after the timeout, a warning is issued and the current dataset information is returned.
         If `force_fetch` is True, the import status is fetched at least once even if the dataset is not in a busy status, to ensure the latest status is returned.
         """
-        if not force_fetch and self.import_status in BUSY_STATUSES:
+        if not (force_fetch or self.import_status in BUSY_STATUSES):
             return self
 
         deadline = time.monotonic() + max(timeout, 0.1)  # Ensure we fetch at least once
