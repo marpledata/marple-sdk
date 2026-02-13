@@ -78,10 +78,10 @@ docs:
     paths:
       - python/docs/_build/html
     expire_in: 30 days
-  when: manual
-  only:
-    - main
-    - master
+  rules:
+    - if: $CI_COMMIT_BRANCH == "main" || $CI_COMMIT_BRANCH == "master"
+      when: manual
+  needs: []
 
 pages:
   stage: docs
@@ -92,10 +92,8 @@ pages:
   artifacts:
     paths:
       - public
-  when: manual
-  only:
-    - main
-    - master
+  rules:
+    - if: $CI_COMMIT_BRANCH == "main" || $CI_COMMIT_BRANCH == "master"
   dependencies:
     - docs
 
