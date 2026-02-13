@@ -9,10 +9,18 @@ from urllib import parse, request
 import pandas as pd
 from pandas._typing import AggFuncType, Frequency
 from pydantic import BaseModel, ConfigDict, Field, PrivateAttr, ValidationError
+from tabulate import tabulate
 
 from marple.db.constants import COL_TIME, COL_VAL
 from marple.db.signal import Signal
 from marple.utils import DBClient, validate_response
+
+BUSY_STATUSES = [
+    "WAITING",
+    "IMPORTING",
+    "POST_PROCESSING",
+    "UPDATING_ICEBERG",
+]
 
 
 class Dataset(BaseModel):
@@ -52,9 +60,7 @@ class Dataset(BaseModel):
         self._client = client
 
     @classmethod
-    def fetch(
-        cls, client: DBClient, dataset_id: int | None = None, dataset_path: str | None = None
-    ) -> "Dataset":
+    def fetch(cls, client: DBClient, dataset_id: int | None = None, dataset_path: str | None = None) -> "Dataset":
         if dataset_id is None and dataset_path is None:
             raise ValueError("Either dataset_id or dataset_path must be provided.")
         if dataset_id is not None and dataset_path is not None:
@@ -87,9 +93,7 @@ class Dataset(BaseModel):
                 warnings.warn(f"Failed to get signal with id {id} and name {name}.")
                 return None
 
-            signal = Signal(
-                client=self._client, datastream_id=self.datastream_id, dataset_id=self.id, **r.json()
-            )
+            signal = Signal(client=self._client, datastream_id=self.datastream_id, dataset_id=self.id, **r.json())
             self._signals[signal.id] = signal
             self._known_signals[signal.name] = signal.id
 
@@ -103,9 +107,7 @@ class Dataset(BaseModel):
         If `signal_names` is None, all signals in the dataset are returned.
         """
 
-        compiled_filters = [
-            re.compile(f"^{re.escape(f)}$") if isinstance(f, str) else f for f in signal_names or []
-        ]
+        compiled_filters = [re.compile(f"^{re.escape(f)}$") if isinstance(f, str) else f for f in signal_names or []]
 
         def include(signal_name: str) -> bool:
             if signal_names is None:
@@ -178,12 +180,21 @@ class Dataset(BaseModel):
         validate_response(r, "Update metadata failed")
         return self.fetch(self._client, self.id)
 
-    def wait_for_import(self, timeout: float = 60) -> "Dataset":
-        deadline = time.monotonic() + timeout
+    def wait_for_import(self, timeout: float = 60, force_fetch: bool = False) -> "Dataset":
+        """
+        Wait for the dataset import to complete.
+
+        If the dataset is still in a busy status (WAITING, IMPORTING, POST_PROCESSING, UPDATING_ICEBERG) after the timeout, a warning is issued and the current dataset information is returned.
+        If `force_fetch` is True, the import status is fetched at least once even if the dataset is not in a busy status, to ensure the latest status is returned.
+        """
+        if not (force_fetch or self.import_status in BUSY_STATUSES):
+            return self
+
+        deadline = time.monotonic() + max(timeout, 0.1)  # Ensure we fetch at least once
         while time.monotonic() < deadline:
             r = self._client.post(f"/stream/{self.datastream_id}/datasets/status", json=[self.id])
             status = validate_response(r, "Get import status failed")
-            if status[0]["import_status"] not in ["WAITING", "IMPORTING", "POST_PROCESSING", "UPDATING_ICEBERG"]:
+            if status[0]["import_status"] not in BUSY_STATUSES:
                 return self.fetch(self._client, self.id)
             time.sleep(0.5)
         warnings.warn(f"Import did not finish after {timeout} seconds")
@@ -215,9 +226,7 @@ class DatasetList(UserList[Dataset]):
         """
         return self.where(lambda d: d.import_status == "FINISHED")
 
-    def where_metadata(
-        self, metadata: dict[str, int | str | Iterable[int | str]] | None = None
-    ) -> "DatasetList":
+    def where_metadata(self, metadata: dict[str, int | str | Iterable[int | str]] | None = None) -> "DatasetList":
         """
         Filter datasets by their metadata fields.
 
@@ -250,15 +259,22 @@ class DatasetList(UserList[Dataset]):
         greater_than: float | None = None,
         less_than: float | None = None,
         equals: float | str | None = None,
+        on_missing: Literal["exclude", "include", "raise"] = "exclude",
     ) -> "DatasetList":
         """
         Filter datasets by their statistics.
 
         If multiple conditions are provided, a dataset must satisfy all of them to be included in the results.
+        The `on_missing` parameter determines how to handle cases where the specified statistic is not found in a dataset:
+        - "exclude": The dataset is excluded from the results.
+        - "include": The dataset is included in the results.
+        - "raise": A ValueError is raised.
         """
 
         def predicate(dataset: Dataset) -> bool:
             value = getattr(dataset, stat)
+            if value is None:
+                return self.handle_missing(on_missing)
             if greater_than is not None and value <= greater_than:
                 return False
             if less_than is not None and value >= less_than:
@@ -289,9 +305,18 @@ class DatasetList(UserList[Dataset]):
         greater_than: float | None = None,
         less_than: float | None = None,
         equals: float | str | None = None,
+        on_missing: Literal["exclude", "include", "raise"] = "exclude",
     ) -> "DatasetList":
         """
         Filter datasets by the statistics of a specific signal.
+
+        The `signal_name` parameter specifies the name of the signal to filter by.
+        The `stat` parameter specifies the signal statistic to filter by.
+        If multiple conditions (greater_than, less_than, equals) are provided, a dataset must satisfy all of them to be included in the results.
+        The `on_missing` parameter determines how to handle cases where the specified signal or statistic is not found in a dataset:
+        - "exclude": The dataset is excluded from the results.
+        - "include": The dataset is included in the results.
+        - "raise": A ValueError is raised.
         """
 
         def predicate(dataset: Dataset) -> bool:
@@ -303,7 +328,7 @@ class DatasetList(UserList[Dataset]):
             else:
                 value = getattr(signal, stat)
             if value is None:
-                raise ValueError(f"Stat {stat} not found in {dataset}. ")
+                return self.handle_missing(on_missing)
             if greater_than is not None and not value > greater_than:
                 return False
             if less_than is not None and not value < less_than:
@@ -322,6 +347,17 @@ class DatasetList(UserList[Dataset]):
         Returns a new `DatasetList` containing only the datasets for which the predicate function returns `True`.
         """
         return DatasetList([d for d in self.data if predicate(d)])
+
+    @staticmethod
+    def handle_missing(on_missing: Literal["exclude", "include", "raise"]) -> bool:
+        if on_missing == "raise":
+            raise ValueError("Cannot perform comparison on missing value")
+        elif on_missing == "exclude":
+            return False
+        elif on_missing == "include":
+            return True
+        else:
+            raise ValueError(f"Invalid value for on_missing: {on_missing}")
 
     def get_data(
         self,
@@ -344,3 +380,55 @@ class DatasetList(UserList[Dataset]):
                 resample_aggregate=resample_aggregate,
                 **kwargs,
             )
+
+    def wait_for_import(self, timeout: float = 60, force_fetch: bool = False) -> "DatasetList":
+        """
+        Wait for the datasets in this DatasetList to be imported.
+
+        If a dataset is still in a busy status (WAITING, IMPORTING, POST_PROCESSING, UPDATING_ICEBERG) after the timeout, a warning is issued and the current dataset information is returned.
+        If `force_fetch` is True, the import status is fetched at least once for each dataset even if they are not in a busy status, to ensure the latest status is returned.
+        Returns a new DatasetList with the updated dataset information.
+        """
+
+        return DatasetList(
+            [
+                dataset.wait_for_import(timeout=(timeout / len(self.data)), force_fetch=force_fetch)
+                for dataset in self.data
+            ]
+        )
+
+    def __str__(self) -> str:
+        count = len(self.data)
+        header = f"DatasetList ({count} dataset{'s' if count != 1 else ''})"
+
+        if not self.data:
+            return header
+
+        metadata_fields: set[str] = set()
+        for d in self.data:
+            metadata_fields.update(d.metadata.keys())
+        sorted_metadata_fields = sorted(metadata_fields)
+
+        table_data = [
+            [d.id, d.path, d.n_signals, d.n_datapoints, d.import_status]
+            + [d.metadata.get(field) for field in sorted_metadata_fields]
+            for d in self.data
+        ]
+
+        max_rows = 100
+        if len(table_data) > max_rows:
+            table_data = table_data[: max_rows // 2] + [["..."] * len(table_data[0])] + table_data[-max_rows // 2 :]
+        table_header = ["ID", "Path", "Signals", "Datapoints", "Status"] + sorted_metadata_fields
+        max_cols = 10
+        if len(sorted_metadata_fields) > max_cols:
+            table_data = [row[: max_cols // 2] + ["..."] + row[-max_cols // 2 :] for row in table_data]
+            table_header = table_header[: max_cols // 2] + ["..."] + table_header[-max_cols // 2 :]
+
+        # Generate table
+        table_str = tabulate(
+            table_data,
+            headers=table_header,
+            tablefmt="tsv",
+        )
+
+        return f"{header}\n{table_str}"
