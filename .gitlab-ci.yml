@@ -79,9 +79,8 @@ docs:
       - python/docs/_build/html
     expire_in: 30 days
   rules:
-    - if: $CI_COMMIT_BRANCH == "main" || $CI_COMMIT_BRANCH == "master"
+    - if: '$CI_COMMIT_BRANCH =~ /^(main|master)$/'
       when: manual
-  needs: []
 
 pages:
   stage: docs
@@ -93,7 +92,7 @@ pages:
     paths:
       - public
   rules:
-    - if: $CI_COMMIT_BRANCH == "main" || $CI_COMMIT_BRANCH == "master"
+    - if: '$CI_COMMIT_BRANCH =~ /^(main|master)$/'
   dependencies:
     - docs
 
