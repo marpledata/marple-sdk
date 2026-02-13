@@ -60,17 +60,15 @@ datasets = stream.get_datasets()  # Get all datasets in a specific Data Stream
 # OR
 # datasets = db.get_datasets()  # Get all datasets in the datapool
 
-# Keep all datasets where car_id is 1 or 2 and track is track_1
-datasets = datasets.where_metadata({"car_id": [1, 2], "track": "track_1"})
-# Wait until all datasets are imported (to ensure all signals are available for the next step)
-datasets = datasets.wait_for_import()
-# Keep only datasets that have been succesfully imported
-datasets = datasets.where_imported()
-# Keep only datasets that have a car.speed signal and the max value of this signal is greater than 75
-datasets = datasets.where_signal("car.speed", "max", greater_than=75)
-datasets = datasets.where_signal("car.engine.temp", "mean", greater_than=30)
-# Keep only datasets with sufficient datapoints
-datasets = datasets.where_dataset("n_datapoints", greater_than=100000)
+datasets = (
+    datasets
+    .where_metadata({"car_id": [1, 2], "track": "track_1"})
+    .wait_for_import()
+    .where_imported()
+    .where_signal("car.speed", "max", greater_than=75)
+    .where_signal("car.engine.temp", "mean", greater_than=30)
+    .where_dataset("n_datapoints", greater_than=100000)
+)
 
 def custom_filter_function(dataset: Dataset) -> bool:
     return (
