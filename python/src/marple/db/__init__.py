@@ -260,7 +260,7 @@ class DB:
         if signal is None:
             raise Exception("Signal not found")
         signal.download()
-        return signal._list_cached_parquets()
+        return signal.list_parquet_cache()
 
     @deprecated
     def delete_dataset(self, dataset_id: int | None, dataset_path: str | None):

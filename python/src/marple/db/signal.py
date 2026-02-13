@@ -39,7 +39,6 @@ class Signal(BaseModel):
         self.datastream_id = datastream_id
         self.dataset_id = dataset_id
         self._cache_folder = Path(f"{client.cache_folder}/{client.datapool}/dataset={self.dataset_id}/signal={self.id}")
-        self._cache_folder.mkdir(parents=True, exist_ok=True)
 
     @classmethod
     def from_dict(cls, client: DBClient, datastream_id, dataset_id, value: dict) -> "Signal":
@@ -57,9 +56,10 @@ class Signal(BaseModel):
         """
         Download the parquet files for this signal to a local cache folder and return the folder path.
         """
-        cached = self.list_parquet_cache()
+        cached = self._cache_folder.exists()
         if not cached or refresh:
-            for file in cached:
+            self._cache_folder.mkdir(parents=True, exist_ok=True)
+            for file in self._cache_folder.iterdir():
                 file.unlink(missing_ok=True)
             r = self._client.get(f"/stream/{self.datastream_id}/dataset/{self.dataset_id}/signal/{self.id}/path")
             paths = validate_response(r, "Get parquet path failed")["paths"]
