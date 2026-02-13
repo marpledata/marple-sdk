@@ -1,8 +1,7 @@
-import json
+import logging
 from io import BytesIO
 from pathlib import Path
 from typing import Literal, Optional
-from urllib import parse, request
 
 import numpy as np
 import pandas as pd
@@ -10,7 +9,6 @@ import pyarrow as pa
 import pyarrow.parquet as pq
 from requests import Response
 from requests.exceptions import ConnectionError
-import logging
 
 from marple.db.constants import (
     COL_SIG,
@@ -76,7 +74,7 @@ class DB:
         if r.status_code == 404:
             error_text = f"Could not find Marple DB at {r.request.url}. Please check if the api_url parameter is correct and try again."
             if not self.client.api_url.endswith("/api/v1"):
-                error_text += f" The api_url parameter should end with /api/v1"
+                error_text += " The api_url parameter should end with /api/v1"
             logging.error(error_text)
             return False
         if r.status_code != 200:
@@ -86,7 +84,7 @@ class DB:
 
         r = self.client.get("/streams")
         if r.status_code == 403:
-            error_text = f"Invalid API token. Please check if the api_token parameter is correct and not expired."
+            error_text = "Invalid API token. Please check if the api_token parameter is correct and not expired."
             logging.error(error_text)
             return False
 
@@ -107,7 +105,11 @@ class DB:
         if isinstance(stream_key, int):
             return self._streams.get(stream_key)
         return next(
-            (s for s in self._streams.values() if s.name.lower() == stream_key.lower() or str(s.id) == stream_key),
+            (
+                s
+                for s in self._streams.values()
+                if s.name.lower() == stream_key.lower() or str(s.id) == stream_key
+            ),
             None,
         )
 
@@ -126,22 +128,21 @@ class DB:
     def _refresh_stream_cache(self, r: Response | None = None) -> None:
         if r is None:
             r = self.get("/streams")
-        validate_response(r, "Failed to fetch streams")
-        self._streams = {stream["id"]: DataStream(client=self.client, **stream) for stream in r.json()["streams"]}
+
+        self._streams = {
+            stream["id"]: DataStream(client=self.client, **stream)
+            for stream in validate_response(r, "Failed to fetch streams")["streams"]
+        }
 
     def get_datasets(self, stream_key: str | int | None = None) -> DatasetList:
         if stream_key is not None:
             return self.get_stream(stream_key).get_datasets()
-        datasets = validate_response(
-            self.get(f"/datapool/{self.client.datapool}/datasets"),
-            f"Failed to get datasets for datapool {self.client.datapool}",
-        )
-        return DatasetList([Dataset(self.client, **dataset) for dataset in datasets])
+        r = self.get(f"/datapool/{self.client.datapool}/datasets")
+        r = validate_response(r, f"Failed to get datasets for datapool {self.client.datapool}")
+        return DatasetList.from_dicts(self.client, r)
 
     def get_dataset(self, dataset_id: int | None = None, dataset_path: str | None = None) -> Dataset:
-        r = self.get(f"/datapool/{self.client.datapool}/dataset", params={"id": dataset_id, "path": dataset_path})
-        r = validate_response(r, "Get dataset failed")
-        return Dataset(self.client, **r)
+        return Dataset.fetch(self.client, dataset_id, dataset_path)
 
     def get_signals(self, dataset_id: int | None = None, dataset_path: str | None = None) -> list[Signal]:
         return self.get_dataset(dataset_id, dataset_path).get_signals()
@@ -155,6 +156,7 @@ class DB:
     ) -> Signal | None:
         return self.get_dataset(dataset_id, dataset_path).get_signal(signal_name, signal_id)
 
+    # Deprecated functions #
     def push_file(
         self,
         stream_key: str | int,
@@ -162,30 +164,13 @@ class DB:
         metadata: dict | None = None,
         file_name: str | None = None,
     ) -> int:
-        stream_id = self._get_stream_id(stream_key)
-
-        with open(file_path, "rb") as file:
-            files = {"file": file}
-            data = {
-                "dataset_name": file_name or Path(file_path).name,
-                "metadata": json.dumps(metadata or {}),
-            }
-
-            r = self.post(f"/stream/{stream_id}/ingest", files=files, data=data)
-            r_json = validate_response(r, "File upload failed")
-            if stream_id in self._streams:
-                self._streams = {}
-                self._known_streams = {}
-
-            return r_json["dataset_id"]
+        stream = self.get_stream(stream_key)
+        return stream.push_file(file_path, metadata, file_name).id
 
     def get_status(self, stream_key: str | int, dataset_id: int) -> dict:
         stream_id = self._get_stream_id(stream_key)
         r = self.post(f"/stream/{stream_id}/datasets/status", json=[dataset_id])
-        if r.status_code != 200:
-            r.raise_for_status()
-
-        datasets = r.json()
+        datasets = validate_response(r, "Failed to get status for dataset")["datasets"]
         for dataset in datasets:
             if dataset["dataset_id"] == dataset_id:
                 return dataset
@@ -193,19 +178,7 @@ class DB:
         raise Exception(f"No status found for dataset {dataset_id} in stream {stream_key}")
 
     def download_original(self, stream_key: str | int, dataset_id: int, destination_folder: str = ".") -> Path:
-        """
-        Download the original file from the dataset to the destination folder.
-        """
-        stream = self.get_stream(stream_key)
-        response = self.get(f"/stream/{stream.id}/dataset/{dataset_id}/backup")
-        validate_response(response, "Download original file failed")
-        download_url = response.json()["path"]
-        if not download_url.startswith("http"):
-            download_url = f"{self.client.api_url}/download/{download_url}"
-
-        target_path = Path(destination_folder) / parse.urlparse(download_url).path.rsplit("/")[1]
-        request.urlretrieve(download_url, target_path)
-        return target_path
+        return self.get_dataset(dataset_id).download(destination_folder)
 
     def download_signal(
         self,
@@ -255,7 +228,11 @@ class DB:
         validate_response(r, "Delete dataset failed")
 
     def update_metadata(
-        self, dataset_id: int | None, dataset_path: str | None, metadata: dict, overwrite: bool = False
+        self,
+        dataset_id: int | None = None,
+        dataset_path: str | None = None,
+        metadata: dict | None = None,
+        overwrite: bool = False,
     ) -> None:
         """
         Update the metadata of a dataset.
@@ -263,9 +240,9 @@ class DB:
         By default, the new metadata is merged with the existing metadata.
         If `overwrite` is True, the existing metadata is replaced with the new metadata.
         """
-        dataset = self.get_dataset(dataset_id, dataset_path)
-        new_metadata = metadata if overwrite else {**dataset.metadata, **metadata}
-        self.post(f"/stream/{dataset.datastream_id}/dataset/{dataset.id}/metadata", json=new_metadata)
+        if metadata is None:
+            metadata = {}
+        self.get_dataset(dataset_id, dataset_path).update_metadata(metadata, overwrite)
 
     def upsert_signals(self, stream_key: str | int, dataset_id: int, signals: list[dict]) -> None:
         """
@@ -314,7 +291,9 @@ class DB:
                 raise Exception(f"DataFrame must contain {COL_TIME} and {COL_SIG} columns")
             if not (COL_VAL in data.columns or COL_VAL_TEXT in data.columns):
                 raise Exception(f"DataFrame must contain at least one of {COL_VAL} or {COL_VAL_TEXT} columns")
-            value = pd.to_numeric(data[COL_VAL], errors="coerce") if COL_VAL in data.columns else pa.nulls(len(data))
+            value = (
+                pd.to_numeric(data[COL_VAL], errors="coerce") if COL_VAL in data.columns else pa.nulls(len(data))
+            )
             value_text = data[COL_VAL_TEXT] if COL_VAL_TEXT in data.columns else pa.nulls(len(data))
             table = pa.Table.from_arrays([data[COL_TIME], data[COL_SIG], value, value_text], schema=SCHEMA)
 

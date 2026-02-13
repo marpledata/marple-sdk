@@ -89,10 +89,7 @@ def wait_for_ingestion(db: DB, stream_name, dataset_ids: list[int], timeout: flo
     while time.monotonic() < deadline:
         for dataset_id in dataset_ids:
             last_statuses[dataset_id] = db.get_status(stream_name, dataset_id)
-        if all(
-            last_statuses[dataset_id].get("import_status") in ["FINISHED", "FAILED"]
-            for dataset_id in dataset_ids
-        ):
+        if all(last_statuses[dataset_id].get("import_status") in ["FINISHED", "FAILED"] for dataset_id in dataset_ids):
             break
         time.sleep(0.5)
     print(f"Waited for {time.monotonic() - start:.1f}s for ingestion to finish. Last statuses: {last_statuses}")
@@ -185,7 +182,7 @@ def test_db_filter_datasets(db: DB, stream_name: str) -> None:
             or dataset.get_signal("car.engine.NGear").stats.get("max", 0) ** 2 > 16
         )
 
-    assert len(all_datasets.where_predicate(custom_filter)) == len(ids)
+    assert len(all_datasets.where(custom_filter)) == len(ids)
 
 
 def test_get_data(db: DB, stream_name: str) -> None:
