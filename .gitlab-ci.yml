@@ -73,7 +73,7 @@ build-docs:
     - /root/.local/bin/uv --version
   script:
     - cd python
-    - /root/.local/bin/uv run sphinx-build -b html docs docs/_build/html
+    - /root/.local/bin/uv run --group docs sphinx-build -b html docs docs/_build/html
   artifacts:
     paths:
       - python/docs/_build/html
