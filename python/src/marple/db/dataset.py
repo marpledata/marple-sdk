@@ -399,7 +399,7 @@ class DatasetList(UserList[Dataset]):
             ]
         )
 
-    def to_dataframe(self) -> pd.DataFrame:
+    def to_pandas(self) -> pd.DataFrame:
         """
         Convert the DatasetList to a pandas DataFrame with a row for each dataset and columns for id, path, n_signals, n_datapoints, import_status, and all unique metadata fields.
         """
@@ -418,7 +418,7 @@ class DatasetList(UserList[Dataset]):
 
     def __str__(self) -> str:
         pd.DataFrame().__str__
-        df = self.to_dataframe()
+        df = self.to_pandas()
 
         df_str = df.to_string(
             max_rows=pd.get_option("display.max_rows"),
