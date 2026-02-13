@@ -8,8 +8,7 @@ from urllib import parse, request
 
 import pandas as pd
 from pandas._typing import AggFuncType, Frequency
-from pydantic import BaseModel, ConfigDict, Field, PrivateAttr, ValidationError
-from tabulate import tabulate
+from pydantic import BaseModel, ConfigDict, Field, PrivateAttr
 
 from marple.db.constants import COL_TIME, COL_VAL
 from marple.db.signal import Signal
@@ -51,7 +50,6 @@ class Dataset(BaseModel):
     parquet_version: int
 
     _client: DBClient = PrivateAttr()
-    _known_signals: dict[str, int] = PrivateAttr(default_factory=dict)
     _signals: dict[int, "Signal"] = PrivateAttr(default_factory=dict)
 
     def __init__(self, client: DBClient, **kwargs):
@@ -76,11 +74,7 @@ class Dataset(BaseModel):
             raise ValueError("Only one of name or id can be provided.")
 
         if name is not None:
-            if name not in self._known_signals:
-                r = self._client.get(f"/datapool/{self._client.datapool}/signal/{name}/id")
-                result = validate_response(r, f"Get signal ID for signal name {name} failed")
-                self._known_signals[name] = result["id"]
-            id = self._known_signals.get(name)
+            id = self._client.get_signal_map().get(name)
 
         if id is None:
             raise ValueError(f"Signal with name {name} not found in dataset with id {self.id}.")
@@ -92,47 +86,44 @@ class Dataset(BaseModel):
             except Exception:
                 warnings.warn(f"Failed to get signal with id {id} and name {name}.")
                 return None
-
-            signal = Signal(client=self._client, datastream_id=self.datastream_id, dataset_id=self.id, **r.json())
+            signal = Signal.from_dict(self._client, self.datastream_id, self.id, value=result)
             self._signals[signal.id] = signal
-            self._known_signals[signal.name] = signal.id
 
         return self._signals[id]
 
-    def get_signals(self, signal_names: Sequence[str | re.Pattern] | None = None) -> list["Signal"]:
+    def _get_all_signals(self) -> list["Signal"]:
+        if self.n_signals is None or len(self._signals) < self.n_signals:
+            r = self._client.get(f"/stream/{self.datastream_id}/dataset/{self.id}/signals")
+            for signal in validate_response(r, "Failed to get signals"):
+                signal_obj = Signal.from_dict(self._client, self.datastream_id, self.id, value=signal)
+                self._signals[signal_obj.id] = signal_obj
+        return list(self._signals.values())
+
+    def get_signals(self, signal_names: Iterable[str | re.Pattern] | None = None) -> list["Signal"]:
         """
         Get the signals in this dataset.
 
         If `signal_names` is provided, only signals with names matching any of the specified strings or regular expression patterns are returned.
         If `signal_names` is None, all signals in the dataset are returned.
         """
+        if signal_names is None:
+            return self._get_all_signals()
 
-        compiled_filters = [re.compile(f"^{re.escape(f)}$") if isinstance(f, str) else f for f in signal_names or []]
+        all_signal_names = set(self._client.get_signal_map().keys())
+        matching_signals = find_matching_signals(all_signal_names, filters=signal_names)
 
-        def include(signal_name: str) -> bool:
-            if signal_names is None:
-                return True
-            return any(pattern.match(signal_name) for pattern in compiled_filters)
-
-        if self.n_signals is None or len(self._signals) < self.n_signals:
-            r = self._client.get(f"/stream/{self.datastream_id}/dataset/{self.id}/signals")
-            for signal in validate_response(r, "Failed to get signals"):
-                try:
-                    signal_obj = Signal(
-                        client=self._client, datastream_id=self.datastream_id, dataset_id=self.id, **signal
-                    )
-                except ValidationError as e:
-                    raise UserWarning(
-                        f"Failed to parse signal with id {signal.get('id')} and name {signal.get('name')}. Skipping. Error: {e}"
-                    )
-                self._signals[signal_obj.id] = signal_obj
-                self._known_signals[signal_obj.name] = signal_obj.id
-
-        return [signal for signal in self._signals.values() if include(signal.name)]
+        r = self._client.get(
+            f"/stream/{self.datastream_id}/dataset/{self.id}/signals",
+            params={"signal_names": list(matching_signals)},
+        )
+        return [
+            Signal.from_dict(self._client, self.datastream_id, self.id, value=signal)
+            for signal in validate_response(r, "Failed to get signals by name")
+        ]
 
     def get_data(
         self,
-        signals: Sequence[str | re.Pattern],
+        signals: Iterable[str | re.Pattern],
         resample_rule: Optional[Frequency] = None,
         resample_aggregate: AggFuncType = "mean",
         **kwargs,
@@ -199,6 +190,20 @@ class Dataset(BaseModel):
             time.sleep(0.5)
         warnings.warn(f"Import did not finish after {timeout} seconds")
         return self.fetch(self._client, self.id)
+
+    def delete(self) -> None:
+        """
+        Delete the dataset.
+        """
+        r = self._client.post(f"/stream/{self.datastream_id}/dataset/{self.id}/delete")
+        validate_response(r, "Delete dataset failed")
+
+
+def find_matching_signals(existing_signals: set[str], filters: Iterable[str | re.Pattern]) -> set[str]:
+    literal_names = {signal for signal in filters if isinstance(signal, str) and signal in existing_signals}
+    regex_patterns = [signal for signal in filters if isinstance(signal, re.Pattern)]
+    regex_names = {signal for signal in existing_signals if any(pattern.search(signal) for pattern in regex_patterns)}
+    return literal_names | regex_names
 
 
 class DatasetList(UserList[Dataset]):
@@ -361,7 +366,7 @@ class DatasetList(UserList[Dataset]):
 
     def get_data(
         self,
-        signals: Sequence[str | re.Pattern],
+        signals: Iterable[str | re.Pattern],
         resample_rule: None | Frequency = None,
         resample_aggregate: AggFuncType = "mean",
         **kwargs,
@@ -373,9 +378,12 @@ class DatasetList(UserList[Dataset]):
         The dataframe is resampled according to the `resampling` parameter, which is passed to pandas `resample` function.
         If `resampling` is None, the original data is returned.
         """
+        # Avoid having to search the regexes for every individual dataset
+        existing_signals = set(self.data[0]._client.get_signal_map().keys()) if self.data else set()
+        matching_signals = find_matching_signals(existing_signals, signals)
         for dataset in self.data:
             yield dataset, dataset.get_data(
-                signals=signals,
+                signals=matching_signals,
                 resample_rule=resample_rule,
                 resample_aggregate=resample_aggregate,
                 **kwargs,
@@ -390,45 +398,39 @@ class DatasetList(UserList[Dataset]):
         Returns a new DatasetList with the updated dataset information.
         """
 
+        deadline = time.monotonic() + timeout
         return DatasetList(
             [
-                dataset.wait_for_import(timeout=(timeout / len(self.data)), force_fetch=force_fetch)
+                dataset.wait_for_import(timeout=deadline - time.monotonic(), force_fetch=force_fetch)
                 for dataset in self.data
             ]
         )
 
-    def __str__(self) -> str:
-        count = len(self.data)
-        header = f"DatasetList ({count} dataset{'s' if count != 1 else ''})"
-
-        if not self.data:
-            return header
-
+    def to_pandas(self) -> pd.DataFrame:
+        """
+        Convert the DatasetList to a pandas DataFrame with a row for each dataset and columns for id, path, n_signals, n_datapoints, import_status, and all unique metadata fields.
+        """
         metadata_fields: set[str] = set()
         for d in self.data:
             metadata_fields.update(d.metadata.keys())
         sorted_metadata_fields = sorted(metadata_fields)
 
+        table_header = ["id", "path", "n_signals", "n_datapoints", "import_status"] + sorted_metadata_fields
         table_data = [
             [d.id, d.path, d.n_signals, d.n_datapoints, d.import_status]
             + [d.metadata.get(field) for field in sorted_metadata_fields]
             for d in self.data
         ]
+        return pd.DataFrame(table_data, columns=table_header)
 
-        max_rows = 100
-        if len(table_data) > max_rows:
-            table_data = table_data[: max_rows // 2] + [["..."] * len(table_data[0])] + table_data[-max_rows // 2 :]
-        table_header = ["ID", "Path", "Signals", "Datapoints", "Status"] + sorted_metadata_fields
-        max_cols = 10
-        if len(sorted_metadata_fields) > max_cols:
-            table_data = [row[: max_cols // 2] + ["..."] + row[-max_cols // 2 :] for row in table_data]
-            table_header = table_header[: max_cols // 2] + ["..."] + table_header[-max_cols // 2 :]
+    def __str__(self) -> str:
+        pd.DataFrame().__str__
+        df = self.to_pandas()
 
-        # Generate table
-        table_str = tabulate(
-            table_data,
-            headers=table_header,
-            tablefmt="tsv",
+        df_str = df.to_string(
+            max_rows=pd.get_option("display.max_rows"),
+            max_cols=pd.get_option("display.max_columns"),
+            line_width=pd.get_option("display.width"),
+            index=False,
         )
-
-        return f"{header}\n{table_str}"
+        return f"{df_str}\nDatasetList with {len(self.data)} datasets and {len(df.columns) - 5} unique metadata fields."
