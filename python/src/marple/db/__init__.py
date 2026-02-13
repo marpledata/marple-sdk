@@ -247,6 +247,7 @@ class DB:
         dataset_path: str | None = None,
         signal_id: int | None = None,
         signal_name: str | None = None,
+        refresh_cache: bool = False,
     ) -> list[Path]:
         """
         Download the parquet file for a signal from the dataset to the destination folder.
@@ -259,8 +260,7 @@ class DB:
         )
         if signal is None:
             raise Exception("Signal not found")
-        signal.download()
-        return signal.list_parquet_cache()
+        return signal.get_parquet_files(refresh_cache)
 
     @deprecated
     def delete_dataset(self, dataset_id: int | None, dataset_path: str | None):

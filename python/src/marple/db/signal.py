@@ -49,14 +49,11 @@ class Signal(BaseModel):
                 f"Failed to parse signal with id {value.get('id')} and name {value.get('name')}. Error: {e}"
             )
 
-    def list_parquet_cache(self) -> list[Path]:
-        return [self._cache_folder / file.name for file in self._cache_folder.iterdir()]
-
-    def download(self, refresh: bool = False) -> Path:
+    def download(self, refresh_cache: bool = False) -> Path:
         """
         Download the parquet files for this signal to a local cache folder and return the folder path.
         """
-        if not self._cache_folder.exists() or refresh:
+        if not self._cache_folder.exists() or refresh_cache:
             self._cache_folder.mkdir(parents=True, exist_ok=True)
             for file in self._cache_folder.iterdir():
                 file.unlink(missing_ok=True)
@@ -67,7 +64,11 @@ class Signal(BaseModel):
                 request.urlretrieve(url.geturl(), self._cache_folder / url.path.rsplit("/")[-1])
         return self._cache_folder
 
-    def get_data(self, prefer_numeric: bool = True) -> pd.DataFrame:
+    def get_parquet_files(self, refresh_cache: bool = False) -> list[Path]:
+        parquet_folder = self.download(refresh_cache)
+        return [parquet_folder / file.name for file in parquet_folder.iterdir()]
+
+    def get_data(self, prefer_numeric: bool = True, refresh_cache: bool = False) -> pd.DataFrame:
         """
         Get this signal's raw data as a pandas DataFrame.
 
@@ -87,7 +88,7 @@ class Signal(BaseModel):
                 pa.field(COL_VAL, pa.float64()) if use_numeric else pa.field(COL_VAL_TEXT, pa.string()),
             ]
         )
-        df = pd.read_parquet(self.download(), engine="pyarrow", schema=schema)
+        df = pd.read_parquet(self.download(refresh_cache), engine="pyarrow", schema=schema)
         df = df.rename(columns={COL_VAL_TEXT: COL_VAL})
         if self.time_min is not None and self.time_min > 1e17:
             df[COL_TIME] = pd.to_datetime(df[COL_TIME], unit="ns")
