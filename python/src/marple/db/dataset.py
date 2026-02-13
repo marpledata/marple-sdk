@@ -397,40 +397,31 @@ class DatasetList(UserList[Dataset]):
             result.append(dataset.wait_for_import(timeout=deadline - time.monotonic(), force_fetch=force_fetch))
         return result
 
-    def __str__(self) -> str:
-        count = len(self.data)
-        header = f"DatasetList ({count} dataset{'s' if count != 1 else ''})"
-
-        if not self.data:
-            return header
-
+    def to_dataframe(self) -> pd.DataFrame:
+        """
+        Convert the DatasetList to a pandas DataFrame with a row for each dataset and columns for id, path, n_signals, n_datapoints, import_status, and all unique metadata fields.
+        """
         metadata_fields: set[str] = set()
         for d in self.data:
             metadata_fields.update(d.metadata.keys())
         sorted_metadata_fields = sorted(metadata_fields)
 
+        table_header = ["id", "path", "n_signals", "n_datapoints", "import_status"] + sorted_metadata_fields
         table_data = [
             [d.id, d.path, d.n_signals, d.n_datapoints, d.import_status]
             + [d.metadata.get(field) for field in sorted_metadata_fields]
             for d in self.data
         ]
+        return pd.DataFrame(table_data, columns=table_header)
 
-        max_rows = 50
-        if len(table_data) > max_rows:
-            table_data = (
-                table_data[: max_rows // 2] + [["..."] * len(table_data[0])] + table_data[-max_rows // 2 :]
-            )
-        table_header = ["ID", "Path", "Signals", "Datapoints", "Status"] + sorted_metadata_fields
-        max_cols = 10
-        if len(sorted_metadata_fields) > max_cols:
-            table_data = [row[: max_cols // 2] + ["..."] + row[-max_cols // 2 :] for row in table_data]
-            table_header = table_header[: max_cols // 2] + ["..."] + table_header[-max_cols // 2 :]
+    def __str__(self) -> str:
+        pd.DataFrame().__str__
+        df = self.to_dataframe()
 
-        # Generate table
-        table_str = tabulate(
-            table_data,
-            headers=table_header,
-            tablefmt="tsv",
+        df_str = df.to_string(
+            max_rows=pd.get_option("display.max_rows"),
+            max_cols=pd.get_option("display.max_columns"),
+            line_width=pd.get_option("display.width"),
+            index=False,
         )
-
-        return f"{header}\n{table_str}"
+        return f"{df_str}\nDatasetList with {len(self.data)} datasets and {len(df.columns) - 5} unique metadata fields."

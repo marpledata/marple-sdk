@@ -23,9 +23,22 @@ from marple.db.constants import (
 from marple.db.dataset import Dataset, DatasetList
 from marple.db.datastream import DataStream
 from marple.db.signal import Signal
-from marple.utils import DBClient, deprecated, validate_response
+from marple.utils import DBClient, validate_response
 
 __all__ = ["DB", "DataStream", "Dataset", "DatasetList", "Signal", "SCHEMA"]
+
+
+def deprecated(func):
+    @wraps(func)
+    def wrapper(*args, **kwargs):
+        warnings.warn(
+            f"The function db.{func.__name__} is deprecated and it is encouraged to use the Datastream, Dataset and Signal classes directly.",
+            category=DeprecationWarning,
+            stacklevel=2,
+        )
+        return func(*args, **kwargs)
+
+    return wrapper
 
 
 class DB:
@@ -398,16 +411,3 @@ def _to_numeric(col: pd.Series) -> pd.Series | None:
     numeric_col = pd.to_numeric(col, errors="coerce")
     is_numeric = (numeric_col.isnull().sum() - null_count) / max(len(col), 1) < 0.2
     return numeric_col if is_numeric else None
-
-
-def deprecated(func):
-    @wraps(func)
-    def wrapper(*args, **kwargs):
-        warnings.warn(
-            f"The function db.{func.__name__} is deprecated and it is encouraged to use the Datastream, Dataset and Signal classes directly.",
-            category=DeprecationWarning,
-            stacklevel=2,
-        )
-        return func(*args, **kwargs)
-
-    return wrapper
