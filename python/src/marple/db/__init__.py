@@ -1,4 +1,6 @@
 import logging
+import warnings
+from functools import wraps
 from io import BytesIO
 from pathlib import Path
 from typing import Literal, Optional
@@ -21,7 +23,7 @@ from marple.db.constants import (
 from marple.db.dataset import Dataset, DatasetList
 from marple.db.datastream import DataStream
 from marple.db.signal import Signal
-from marple.utils import DBClient, validate_response
+from marple.utils import DBClient, deprecated, validate_response
 
 __all__ = ["DB", "DataStream", "Dataset", "DatasetList", "Signal", "SCHEMA"]
 
@@ -157,6 +159,7 @@ class DB:
         return self.get_dataset(dataset_id, dataset_path).get_signal(signal_name, signal_id)
 
     # Deprecated functions #
+    @deprecated
     def push_file(
         self,
         stream_key: str | int,
@@ -167,6 +170,7 @@ class DB:
         stream = self.get_stream(stream_key)
         return stream.push_file(file_path, metadata, file_name).id
 
+    @deprecated
     def get_status(self, stream_key: str | int, dataset_id: int) -> dict:
         stream_id = self._get_stream_id(stream_key)
         r = self.post(f"/stream/{stream_id}/datasets/status", json=[dataset_id])
@@ -177,9 +181,11 @@ class DB:
 
         raise Exception(f"No status found for dataset {dataset_id} in stream {stream_key}")
 
+    @deprecated
     def download_original(self, stream_key: str | int, dataset_id: int, destination_folder: str = ".") -> Path:
         return self.get_dataset(dataset_id).download(destination_folder)
 
+    @deprecated
     def download_signal(
         self,
         dataset_id: int | None = None,
@@ -201,6 +207,7 @@ class DB:
         signal.download_data()
         return signal.get_local_parquet_paths()
 
+    @deprecated
     def add_dataset(self, stream_key: str | int, dataset_name: str, metadata: dict | None = None) -> int:
         """
         Create a new empty dataset in the specified live stream.
@@ -219,6 +226,7 @@ class DB:
 
         return r_json["dataset_id"]
 
+    @deprecated
     def delete_dataset(self, dataset_id: int | None, dataset_path: str | None):
         """
         Delete a dataset by its ID. This is a destructive operation that cannot be undone.
@@ -227,6 +235,7 @@ class DB:
         r = self.post(f"/stream/{dataset.datastream_id}/dataset/{dataset.id}/delete")
         validate_response(r, "Delete dataset failed")
 
+    @deprecated
     def update_metadata(
         self,
         dataset_id: int | None = None,
@@ -244,6 +253,7 @@ class DB:
             metadata = {}
         self.get_dataset(dataset_id, dataset_path).update_metadata(metadata, overwrite)
 
+    @deprecated
     def upsert_signals(self, stream_key: str | int, dataset_id: int, signals: list[dict]) -> None:
         """
         Add signals to a dataset or update existing ones.
@@ -259,6 +269,7 @@ class DB:
         r = self.post(f"/stream/{stream_id}/dataset/{dataset_id}/signals", json=signals)
         validate_response(r, "Upsert signals failed")
 
+    @deprecated
     def dataset_append(
         self,
         stream_key: str | int,
@@ -307,6 +318,7 @@ class DB:
         r = self.post(f"/stream/{stream_id}/dataset/{dataset_id}/append", files=files)
         validate_response(r, "Append data failed")
 
+    @deprecated
     def create_stream(
         self,
         name: str,
@@ -341,6 +353,7 @@ class DB:
         r_json = validate_response(r, "Create stream failed")
         return r_json["id"]
 
+    @deprecated
     def delete_stream(self, stream_key: str | int) -> None:
         """
         Delete a datastream and all its datasets.
@@ -385,3 +398,16 @@ def _to_numeric(col: pd.Series) -> pd.Series | None:
     numeric_col = pd.to_numeric(col, errors="coerce")
     is_numeric = (numeric_col.isnull().sum() - null_count) / max(len(col), 1) < 0.2
     return numeric_col if is_numeric else None
+
+
+def deprecated(func):
+    @wraps(func)
+    def wrapper(*args, **kwargs):
+        warnings.warn(
+            f"The function db.{func.__name__} is deprecated and it is encouraged to use the Datastream, Dataset and Signal classes directly.",
+            category=DeprecationWarning,
+            stacklevel=2,
+        )
+        return func(*args, **kwargs)
+
+    return wrapper
