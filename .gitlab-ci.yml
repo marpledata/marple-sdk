@@ -64,7 +64,7 @@ rust:mdb-cli:
       changes:
         - mdb-cli/**/*
 
-docs:
+build-docs:
   image: python:3.11
   stage: docs
   before_script:
@@ -81,7 +81,7 @@ docs:
   rules:
     - when: manual
 
-pages:
+publish-docs:
   stage: docs
   image: alpine:latest
   script:
@@ -90,8 +90,6 @@ pages:
   artifacts:
     paths:
       - public
-  rules:
-    - when: on_success
   dependencies:
-    - docs
+    - build-docs
 
