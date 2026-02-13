@@ -191,6 +191,13 @@ class Dataset(BaseModel):
         warnings.warn(f"Import did not finish after {timeout} seconds")
         return self.fetch(self._client, self.id)
 
+    def delete(self) -> None:
+        """
+        Delete the dataset.
+        """
+        r = self._client.post(f"/stream/{self.datastream_id}/dataset/{self.id}/delete")
+        validate_response(r, "Delete dataset failed")
+
 
 def find_matching_signals(existing_signals: set[str], filters: Iterable[str | re.Pattern]) -> set[str]:
     literal_names = {signal for signal in filters if isinstance(signal, str) and signal in existing_signals}
