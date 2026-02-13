@@ -137,13 +137,19 @@ class Dataset(BaseModel):
         The `resample_aggregate` parameter determines how to aggregate if there are multiple values for the same time period during resampling.
         Extra keyword arguments are passed to the pandas `resample` function.
         """
+        t = time.monotonic()
         signal_objs = self.get_signals(signal_names=signals)
+        print("get_signals", self.id, time.monotonic() - t)
+        t = time.monotonic()
         df = pd.DataFrame()
         for signal_obj in signal_objs:
             signal_df = signal_obj.get_data().rename(columns={COL_VAL: signal_obj.name}).set_index(COL_TIME)
             df = df.join(signal_df, how="outer")
+        print("join", self.id, time.monotonic() - t)
+        t = time.monotonic()
         if resample_rule is not None and not df.empty:
             df = df.resample(resample_rule, **kwargs).agg(resample_aggregate)  # type: ignore
+        print("resample", self.id, time.monotonic() - t)
         return df
 
     def download(self, destination_folder: str = ".") -> Path:

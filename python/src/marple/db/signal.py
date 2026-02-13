@@ -30,8 +30,7 @@ class Signal(BaseModel):
     datastream_id: int
     dataset_id: int
 
-    _cold_paths: list[parse.ParseResult] | None = PrivateAttr(default=None)
-    _data_folder: Path = PrivateAttr()
+    _cache_folder: Path = PrivateAttr()
     _client: DBClient = PrivateAttr()
 
     def __init__(self, client: DBClient, datastream_id: int, dataset_id: int, **kwargs):
@@ -39,9 +38,8 @@ class Signal(BaseModel):
         self._client = client
         self.datastream_id = datastream_id
         self.dataset_id = dataset_id
-        self._data_folder = Path(
-            f"{client.cache_folder}/{client.datapool}/dataset={self.dataset_id}/signal={self.id}"
-        )
+        self._cache_folder = Path(f"{client.cache_folder}/{client.datapool}/dataset={self.dataset_id}/signal={self.id}")
+        self._cache_folder.mkdir(parents=True, exist_ok=True)
 
     @classmethod
     def from_dict(cls, client: DBClient, datastream_id, dataset_id, value: dict) -> "Signal":
@@ -52,35 +50,23 @@ class Signal(BaseModel):
                 f"Failed to parse signal with id {value.get('id')} and name {value.get('name')}. Error: {e}"
             )
 
-    def _get_paths(self) -> tuple[list[parse.ParseResult], list[str]]:
-        if self._cold_paths is None:
-            r = self._client.get(f"/stream/{self.datastream_id}/dataset/{self.dataset_id}/signal/{self.id}/path")
-            validate_response(r, "Get parquet path failed")
-            self._cold_paths = [parse.urlparse(p) for p in r.json()["paths"]]
-            os.makedirs(self._data_folder, exist_ok=True)
-            return self._cold_paths, os.listdir(self._data_folder)
-        return self._cold_paths, os.listdir(self._data_folder)
+    def list_parquet_cache(self) -> list[Path]:
+        return [self._cache_folder / file.name for file in self._cache_folder.iterdir()]
 
-    def get_local_parquet_paths(self) -> list[Path]:
-        """
-        Get the local paths of the parquet files for this signal in the cache folder.
-        Returns an empty list if the files have not been downloaded yet.
-        """
-        if self._data_folder is None:
-            return []
-        return [self._data_folder / p for p in os.listdir(self._data_folder)]
-
-    def download_data(self) -> Path:
+    def download(self, refresh: bool = False) -> Path:
         """
         Download the parquet files for this signal to a local cache folder and return the folder path.
         """
-        cold_files, loaded_data = self._get_paths()
-        assert self._data_folder is not None
-        for cold_file in cold_files:
-            if cold_file.path.split("/")[-1] not in loaded_data:
-                dest_path = self._data_folder / cold_file.path.split("/")[-1]
-                request.urlretrieve(cold_file.geturl(), dest_path)
-        return self._data_folder
+        cached = self.list_parquet_cache()
+        if not cached or refresh:
+            for file in cached:
+                file.unlink(missing_ok=True)
+            r = self._client.get(f"/stream/{self.datastream_id}/dataset/{self.dataset_id}/signal/{self.id}/path")
+            paths = validate_response(r, "Get parquet path failed")["paths"]
+            for path in paths:
+                url = parse.urlparse(path)
+                request.urlretrieve(url.geturl(), self._cache_folder / url.path.rsplit("/")[-1])
+        return self._cache_folder
 
     def get_data(self, prefer_numeric: bool = True) -> pd.DataFrame:
         """
@@ -102,7 +88,7 @@ class Signal(BaseModel):
                 pa.field(COL_VAL, pa.float64()) if use_numeric else pa.field(COL_VAL_TEXT, pa.string()),
             ]
         )
-        df = pd.read_parquet(self.download_data(), engine="pyarrow", schema=schema)
+        df = pd.read_parquet(self.download(), engine="pyarrow", schema=schema)
         df = df.rename(columns={COL_VAL_TEXT: COL_VAL})
         if self.time_min is not None and self.time_min > 1e17:
             df[COL_TIME] = pd.to_datetime(df[COL_TIME], unit="ns")
