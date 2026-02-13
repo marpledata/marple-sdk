@@ -65,7 +65,17 @@ class Dataset(BaseModel):
         self._client = client
 
     @classmethod
-    def fetch(cls, client: DBClient, dataset_id: int | None = None, dataset_path: str | None = None) -> "Dataset":
+    def fetch(
+        cls, client: DBClient, dataset_id: int | None = None, dataset_path: str | None = None
+    ) -> "Dataset":
+        """
+        Fetch a dataset by its ID or path.
+
+        Args:
+            client: DB client used to make API calls.
+            dataset_id: The ID of the dataset to fetch.
+            dataset_path: The path of the dataset to fetch.
+        """
         if dataset_id is None and dataset_path is None:
             raise ValueError("Either dataset_id or dataset_path must be provided.")
         if dataset_id is not None and dataset_path is not None:

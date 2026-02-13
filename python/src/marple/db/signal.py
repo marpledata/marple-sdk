@@ -74,6 +74,12 @@ class Signal(BaseModel):
         return self._cache_folder
 
     def get_parquet_files(self, refresh_cache: bool = False) -> list[Path]:
+        """
+        Get the list of parquet files for this signal, downloading them to the local cache if necessary.
+
+        Args:
+            refresh_cache: If True, re-download the parquet files even if they already exist in the cache.
+        """
         parquet_folder = self.download(refresh_cache)
         return [parquet_folder / file.name for file in parquet_folder.iterdir()]
 

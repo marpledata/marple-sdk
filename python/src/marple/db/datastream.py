@@ -46,6 +46,7 @@ class DataStream(BaseModel):
         self._client = client
 
     def get_dataset(self, id: int | None = None, path: str | None = None) -> "Dataset":
+        """Get a single dataset in the datastream by ID or path."""
         return Dataset.fetch(self._client, id, path)
 
     def get_datasets(self) -> "DatasetList":
@@ -59,6 +60,14 @@ class DataStream(BaseModel):
         metadata: dict | None = None,
         file_name: str | None = None,
     ) -> Dataset:
+        """
+        Push a file to the datastream. The file will be ingested as a new dataset.
+
+        Args:
+            file_path: The path to the file to push.
+            metadata: Optional metadata to attach to the dataset.
+            file_name: Optional name for the dataset. If not provided, the file name will be used.
+        """
         with open(file_path, "rb") as file:
             files = {"file": file}
             data = {
