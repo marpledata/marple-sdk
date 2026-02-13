@@ -9,7 +9,6 @@ from urllib import parse, request
 import pandas as pd
 from pandas._typing import AggFuncType, Frequency
 from pydantic import BaseModel, ConfigDict, Field, PrivateAttr
-from tabulate import tabulate
 
 from marple.db.constants import COL_TIME, COL_VAL
 from marple.db.signal import Signal
