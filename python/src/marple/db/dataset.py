@@ -58,9 +58,7 @@ class Dataset(BaseModel):
         self._client = client
 
     @classmethod
-    def fetch(
-        cls, client: DBClient, dataset_id: int | None = None, dataset_path: str | None = None
-    ) -> "Dataset":
+    def fetch(cls, client: DBClient, dataset_id: int | None = None, dataset_path: str | None = None) -> "Dataset":
         if dataset_id is None and dataset_path is None:
             raise ValueError("Either dataset_id or dataset_path must be provided.")
         if dataset_id is not None and dataset_path is not None:
@@ -197,9 +195,7 @@ class Dataset(BaseModel):
 def find_matching_signals(existing_signals: set[str], filters: Iterable[str | re.Pattern]) -> set[str]:
     literal_names = {signal for signal in filters if isinstance(signal, str) and signal in existing_signals}
     regex_patterns = [signal for signal in filters if isinstance(signal, re.Pattern)]
-    regex_names = {
-        signal for signal in existing_signals if any(pattern.search(signal) for pattern in regex_patterns)
-    }
+    regex_names = {signal for signal in existing_signals if any(pattern.search(signal) for pattern in regex_patterns)}
     return literal_names | regex_names
 
 
@@ -228,9 +224,7 @@ class DatasetList(UserList[Dataset]):
         """
         return self.where(lambda d: d.import_status == "FINISHED")
 
-    def where_metadata(
-        self, metadata: dict[str, int | str | Iterable[int | str]] | None = None
-    ) -> "DatasetList":
+    def where_metadata(self, metadata: dict[str, int | str | Iterable[int | str]] | None = None) -> "DatasetList":
         """
         Filter datasets by their metadata fields.
 
@@ -398,10 +392,12 @@ class DatasetList(UserList[Dataset]):
         """
 
         deadline = time.monotonic() + timeout
-        result = DatasetList([])
-        for dataset in self.data:
-            result.append(dataset.wait_for_import(timeout=deadline - time.monotonic(), force_fetch=force_fetch))
-        return result
+        return DatasetList(
+            [
+                dataset.wait_for_import(timeout=deadline - time.monotonic(), force_fetch=force_fetch)
+                for dataset in self.data
+            ]
+        )
 
     def to_dataframe(self) -> pd.DataFrame:
         """
