@@ -130,7 +130,6 @@ For advanced use cases, you can call API endpoints directly:
 
 ```python
 db.get("/health")
-db.post("/query", json={"query": "select 1"})
 ```
 
 ### Notes on DB API changes
