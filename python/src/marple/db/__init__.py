@@ -69,18 +69,31 @@ class DB:
     # Utility functions #
 
     def get(self, url: str, *args, **kwargs) -> Response:
+        """
+        Send a GET request to the Marple DB API.
+        """
         return self.client.get(url, *args, **kwargs)
 
     def post(self, url: str, *args, **kwargs) -> Response:
+        """Send a POST request to the Marple DB API."""
         return self.client.post(url, *args, **kwargs)
 
     def patch(self, url: str, *args, **kwargs) -> Response:
+        """Send a PATCH request to the Marple DB API."""
         return self.client.patch(url, *args, **kwargs)
 
     def delete(self, url: str, *args, **kwargs) -> Response:
+        """
+        Send a DELETE request to the Marple DB API.
+        """
         return self.client.delete(url, *args, **kwargs)
 
     def check_connection(self) -> bool:
+        """
+        Check if the connection to the Marple DB API is working.
+         - If the connection is successful, returns True.
+         - If the connection fails, logs an error message and returns False.
+        """
         try:
             r = self.client.get("/health")
         except ConnectionError:
@@ -156,10 +169,17 @@ class DB:
         validate_response(r, "Delete stream failed")
 
     def get_streams(self) -> list[DataStream]:
+        """
+        Get a list of all datastreams in the datapool.
+        """
         self._refresh_stream_cache()
         return list(self._streams.values())
 
     def get_stream(self, stream_key: str | int) -> DataStream:
+        """
+        Get a datastream by its name or ID.
+
+        """
         stream_id = self._get_stream_id(stream_key)
         return self._streams[stream_id]
 
@@ -193,6 +213,12 @@ class DB:
         }
 
     def get_datasets(self, stream_key: str | int | None = None) -> DatasetList:
+        """
+        Get a list of datasets for a given stream key.
+
+        If stream_key is provided, returns the datasets for the specified stream.
+        If stream_key is not provided, returns all datasets in the datapool.
+        """
         if stream_key is not None:
             return self.get_stream(stream_key).get_datasets()
         r = self.get(f"/datapool/{self.client.datapool}/datasets")
@@ -200,9 +226,15 @@ class DB:
         return DatasetList.from_dicts(self.client, r)
 
     def get_dataset(self, dataset_id: int | None = None, dataset_path: str | None = None) -> Dataset:
+        """
+        Get a dataset by its ID or path.
+        """
         return Dataset.fetch(self.client, dataset_id, dataset_path)
 
     def get_signals(self, dataset_id: int | None = None, dataset_path: str | None = None) -> list[Signal]:
+        """
+        Get all signals for a dataset.
+        """
         return self.get_dataset(dataset_id, dataset_path).get_signals()
 
     def get_signal(
@@ -212,6 +244,11 @@ class DB:
         signal_name: str | None = None,
         signal_id: int | None = None,
     ) -> Signal | None:
+        """
+        Get a signal from a dataset.
+
+        You can specify the signal by its name or ID and the dataset by its ID or path.
+        """
         return self.get_dataset(dataset_id, dataset_path).get_signal(signal_name, signal_id)
 
     # Deprecated functions #
@@ -224,11 +261,27 @@ class DB:
         metadata: dict | None = None,
         file_name: str | None = None,
     ) -> int:
+        """
+        Push a file to a datastream.
+        - `stream_key`: The name or ID of the stream to push the file to.
+        - `file_path`: The path to the file to be pushed.
+        - `metadata`: (optional) A dictionary of metadata to be associated with the file.
+        - `file_name`: (optional) The name of the file to be stored in the
+
+        Note:
+            This function is deprecated and it is encouraged to use the `push_file` method in the `DataStream` class directly.
+        """
         stream = self.get_stream(stream_key)
         return stream.push_file(file_path, metadata, file_name).id
 
     @deprecated
     def get_status(self, stream_key: str | int, dataset_id: int) -> dict:
+        """
+        Get the status of a dataset in a stream.
+
+        Note:
+          This function is deprecated and it is encouraged to use the Dataset class directly.
+        """
         stream_id = self._get_stream_id(stream_key)
         r = self.post(f"/stream/{stream_id}/datasets/status", json=[dataset_id])
         datasets = validate_response(r, "Failed to get status for dataset")["datasets"]
@@ -240,6 +293,12 @@ class DB:
 
     @deprecated
     def download_original(self, stream_key: str | int, dataset_id: int, destination_folder: str = ".") -> Path:
+        """
+        Download the original file for a dataset to the destination folder.
+
+        Note:
+          This function is deprecated and it is encouraged to use the `download` method in the `Dataset` class directly.
+        """
         return self.get_dataset(dataset_id).download(destination_folder)
 
     @deprecated
@@ -253,6 +312,9 @@ class DB:
     ) -> list[Path]:
         """
         Download the parquet file for a signal from the dataset to the destination folder.
+
+        Note:
+          This function is deprecated and it is encouraged to use the `download` method in the `Signal` class directly.
         """
         signal = self.get_signal(
             dataset_id,
@@ -271,6 +333,9 @@ class DB:
 
         Warning:
             This is a destructive operation that cannot be undone.
+
+        Note:
+          This function is deprecated and it is encouraged to use the `delete` method in the `Dataset` class directly.
         """
         dataset = self.get_dataset(dataset_id, dataset_path)
         r = self.post(f"/stream/{dataset.datastream_id}/dataset/{dataset.id}/delete")
@@ -289,6 +354,9 @@ class DB:
 
         By default, the new metadata is merged with the existing metadata.
         If `overwrite` is True, the existing metadata is replaced with the new metadata.
+
+        Note:
+          This function is deprecated and it is encouraged to use the `update_metadata` method in the `Dataset` class directly.
         """
         if metadata is None:
             metadata = {}

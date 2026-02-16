@@ -307,7 +307,7 @@ class DatasetList(UserList[Dataset]):
         def predicate(dataset: Dataset) -> bool:
             value = getattr(dataset, stat)
             if value is None:
-                return self.handle_missing(on_missing)
+                return self._handle_missing(on_missing)
             if greater_than is not None and value <= greater_than:
                 return False
             if less_than is not None and value >= less_than:
@@ -361,7 +361,7 @@ class DatasetList(UserList[Dataset]):
             else:
                 value = getattr(signal, stat)
             if value is None:
-                return self.handle_missing(on_missing)
+                return self._handle_missing(on_missing)
             if greater_than is not None and not value > greater_than:
                 return False
             if less_than is not None and not value < less_than:
@@ -382,7 +382,7 @@ class DatasetList(UserList[Dataset]):
         return DatasetList([d for d in self.data if predicate(d)])
 
     @staticmethod
-    def handle_missing(on_missing: Literal["exclude", "include", "raise"]) -> bool:
+    def _handle_missing(on_missing: Literal["exclude", "include", "raise"]) -> bool:
         if on_missing == "raise":
             raise ValueError("Cannot perform comparison on missing value")
         elif on_missing == "exclude":
