@@ -316,13 +316,11 @@ async fn test_db_flow_via_cli() {
     let paths_json = mdb_cmd(&token, url.as_deref())
         .args([
             "get",
-            &format!("/stream/{stream_id}/dataset/{dataset_id}/signal/{signal_id}/path"),
+            &format!("/datapool/default/dataset/{dataset_id}/signal/{signal_id}/data"),
         ])
         .assert()
         .success();
-    let paths = parse_json_stdout(&paths_json)
-        .get("paths")
-        .and_then(|v| v.as_array())
+    let paths = parse_json_stdout(&paths_json).as_array()
         .expect("paths array")
         .iter()
         .filter_map(|v| v.as_str().map(|s| s.to_string()))

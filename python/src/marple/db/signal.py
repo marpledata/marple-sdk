@@ -57,9 +57,8 @@ class Signal(BaseModel):
             self._cache_folder.mkdir(parents=True, exist_ok=True)
             for file in self._cache_folder.iterdir():
                 file.unlink(missing_ok=True)
-            r = self._client.get(f"/stream/{self.datastream_id}/dataset/{self.dataset_id}/signal/{self.id}/path")
-            paths = validate_response(r, "Get parquet path failed")["paths"]
-            for path in paths:
+            r = self._client.get(f"/datapool/{self._client.datapool}/dataset/{self.dataset_id}/signal/{self.id}/data")
+            for path in validate_response(r, "Get parquet data failed"):
                 url = parse.urlparse(path)
                 request.urlretrieve(url.geturl(), self._cache_folder / url.path.rsplit("/")[-1])
         return self._cache_folder
