@@ -35,7 +35,7 @@ dependencies = [
 
 [project.urls]
 Homepage = "https://www.marpledata.com/"
-Documentation = "https://docs.marpledata.com/docs"
+Documentation = "https://marpledata.gitlab.io/marple-sdk/"
 Repository = "https://gitlab.com/marpledata/marple-sdk/-/tree/main/python"
 Issues = "https://github.com/marpledata/marple-sdk/issues"
 

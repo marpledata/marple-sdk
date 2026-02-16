@@ -50,11 +50,35 @@ html_favicon = "_static/favicon.png"
 html_theme_options = {
     "header_links_before_dropdown": 6,
     "navigation_with_keys": True,
+    "use_edit_page_button": True,
     "show_nav_level": 2,
+    "icon_links": [
+        {
+            "name": "GitHub",
+            "url": "https://github.com/marpledata/marple-sdk",
+            "icon": "fa-brands fa-github",
+        },
+        {
+            "name": "GitLab",
+            "url": "https://gitlab.com/marpledata/marple-sdk",
+            "icon": "fa-brands fa-gitlab",
+        },
+    ],
+}
+
+html_context = {
+    "github_url": "https://github.com",
+    "github_user": "marpledata",
+    "github_repo": "marple-sdk",
+    "github_version": "main",
+    "doc_path": "python/docs",
+    "gitlab_url": "https://gitlab.com",
+    "gitlab_user": "marpledata",
+    "gitlab_repo": "marple-sdk",
+    "gitlab_version": "main",
 }
 
 
-# Add this to the bottom of conf.py
 def skip_pydantic_internals(app, what, name, obj, skip, options):
     """
     Triggers on every member. If it looks like a Pydantic internal, skip it.
