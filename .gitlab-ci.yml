@@ -64,7 +64,7 @@ rust:mdb-cli:
       changes:
         - mdb-cli/**/*
 
-build-docs:
+pages:
   image: python:3.11
   stage: docs
   before_script:
@@ -74,24 +74,12 @@ build-docs:
   script:
     - cd python
     - /root/.local/bin/uv run --group docs sphinx-build -b html docs docs/_build/html
-  artifacts:
-    paths:
-      - python/docs/_build/html
-    expire_in: 30 days
-  rules:
-    - when: manual
-
-pages:
-  stage: docs
-  image: alpine:latest
-  script:
-    - mkdir -p public
-    - cp -r python/docs/_build/html/* public/
+    - mkdir -p ../../public
+    - cp -r docs/_build/html/* ../../public/
   artifacts:
     paths:
       - public
-  needs:
-    - build-docs
+    expire_in: 30 days
   rules:
-    - when: on_success
+    - when: manual
 
