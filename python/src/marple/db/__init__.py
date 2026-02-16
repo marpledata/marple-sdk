@@ -45,7 +45,8 @@ class DB:
     """
     The DB class is the main entry point for the Marple DB API.
     It provides a high-level interface for interacting with the Marple DB API.
-    Parameters:
+
+    Args:
         api_token: The API token for the Marple DB API.
         api_url: The URL of the Marple DB API.
         datapool: The datapool to use (default: "default").
@@ -68,18 +69,31 @@ class DB:
     # Utility functions #
 
     def get(self, url: str, *args, **kwargs) -> Response:
+        """
+        Send a GET request to the Marple DB API.
+        """
         return self.client.get(url, *args, **kwargs)
 
     def post(self, url: str, *args, **kwargs) -> Response:
+        """Send a POST request to the Marple DB API."""
         return self.client.post(url, *args, **kwargs)
 
     def patch(self, url: str, *args, **kwargs) -> Response:
+        """Send a PATCH request to the Marple DB API."""
         return self.client.patch(url, *args, **kwargs)
 
     def delete(self, url: str, *args, **kwargs) -> Response:
+        """
+        Send a DELETE request to the Marple DB API.
+        """
         return self.client.delete(url, *args, **kwargs)
 
     def check_connection(self) -> bool:
+        """
+        Check if the connection to the Marple DB API is working.
+         - If the connection is successful, returns True.
+         - If the connection fails, logs an error message and returns False.
+        """
         try:
             r = self.client.get("/health")
         except ConnectionError:
@@ -147,17 +161,25 @@ class DB:
         """
         Delete a datastream and all its datasets.
 
-        This is a destructive operation that cannot be undone.
+        Warning:
+            This is a destructive operation that cannot be undone.
         """
         stream_id = self._get_stream_id(stream_key)
         r = self.post(f"/stream/{stream_id}/delete")
         validate_response(r, "Delete stream failed")
 
     def get_streams(self) -> list[DataStream]:
+        """
+        Get a list of all datastreams in the datapool.
+        """
         self._refresh_stream_cache()
         return list(self._streams.values())
 
     def get_stream(self, stream_key: str | int) -> DataStream:
+        """
+        Get a datastream by its name or ID.
+
+        """
         stream_id = self._get_stream_id(stream_key)
         return self._streams[stream_id]
 
@@ -165,7 +187,11 @@ class DB:
         if isinstance(stream_key, int):
             return self._streams.get(stream_key)
         return next(
-            (s for s in self._streams.values() if s.name.lower() == stream_key.lower() or str(s.id) == stream_key),
+            (
+                s
+                for s in self._streams.values()
+                if s.name.lower() == stream_key.lower() or str(s.id) == stream_key
+            ),
             None,
         )
 
@@ -191,6 +217,12 @@ class DB:
         }
 
     def get_datasets(self, stream_key: str | int | None = None) -> DatasetList:
+        """
+        Get a list of datasets for a given stream key.
+
+        If stream_key is provided, returns the datasets for the specified stream.
+        If stream_key is not provided, returns all datasets in the datapool.
+        """
         if stream_key is not None:
             return self.get_stream(stream_key).get_datasets()
         r = self.get(f"/datapool/{self.client.datapool}/datasets")
@@ -198,9 +230,15 @@ class DB:
         return DatasetList.from_dicts(self.client, r)
 
     def get_dataset(self, dataset_id: int | None = None, dataset_path: str | None = None) -> Dataset:
+        """
+        Get a dataset by its ID or path.
+        """
         return Dataset.fetch(self.client, dataset_id, dataset_path)
 
     def get_signals(self, dataset_id: int | None = None, dataset_path: str | None = None) -> list[Signal]:
+        """
+        Get all signals for a dataset.
+        """
         return self.get_dataset(dataset_id, dataset_path).get_signals()
 
     def get_signal(
@@ -210,6 +248,11 @@ class DB:
         signal_name: str | None = None,
         signal_id: int | None = None,
     ) -> Signal | None:
+        """
+        Get a signal from a dataset.
+
+        You can specify the signal by its name or ID and the dataset by its ID or path.
+        """
         return self.get_dataset(dataset_id, dataset_path).get_signal(signal_name, signal_id)
 
     # Deprecated functions #
@@ -222,11 +265,27 @@ class DB:
         metadata: dict | None = None,
         file_name: str | None = None,
     ) -> int:
+        """
+        Push a file to a datastream.
+        - `stream_key`: The name or ID of the stream to push the file to.
+        - `file_path`: The path to the file to be pushed.
+        - `metadata`: (optional) A dictionary of metadata to be associated with the file.
+        - `file_name`: (optional) The name of the file to be stored in the
+
+        Note:
+            This function is deprecated and it is encouraged to use the `push_file` method in the `DataStream` class directly.
+        """
         stream = self.get_stream(stream_key)
         return stream.push_file(file_path, metadata, file_name).id
 
     @deprecated
     def get_status(self, stream_key: str | int, dataset_id: int) -> dict:
+        """
+        Get the status of a dataset in a stream.
+
+        Note:
+          This function is deprecated and it is encouraged to use the Dataset class directly.
+        """
         stream_id = self._get_stream_id(stream_key)
         r = self.post(f"/stream/{stream_id}/datasets/status", json=[dataset_id])
         datasets = validate_response(r, "Failed to get status for dataset")["datasets"]
@@ -238,6 +297,12 @@ class DB:
 
     @deprecated
     def download_original(self, stream_key: str | int, dataset_id: int, destination_folder: str = ".") -> Path:
+        """
+        Download the original file for a dataset to the destination folder.
+
+        Note:
+          This function is deprecated and it is encouraged to use the `download` method in the `Dataset` class directly.
+        """
         return self.get_dataset(dataset_id).download(destination_folder)
 
     @deprecated
@@ -251,6 +316,9 @@ class DB:
     ) -> list[Path]:
         """
         Download the parquet file for a signal from the dataset to the destination folder.
+
+        Note:
+          This function is deprecated and it is encouraged to use the `download` method in the `Signal` class directly.
         """
         signal = self.get_signal(
             dataset_id,
@@ -265,7 +333,13 @@ class DB:
     @deprecated
     def delete_dataset(self, dataset_id: int | None, dataset_path: str | None):
         """
-        Delete a dataset by its ID. This is a destructive operation that cannot be undone.
+        Delete a dataset by its ID.
+
+        Warning:
+            This is a destructive operation that cannot be undone.
+
+        Note:
+          This function is deprecated and it is encouraged to use the `delete` method in the `Dataset` class directly.
         """
         dataset = self.get_dataset(dataset_id, dataset_path)
         r = self.post(f"/stream/{dataset.datastream_id}/dataset/{dataset.id}/delete")
@@ -284,6 +358,9 @@ class DB:
 
         By default, the new metadata is merged with the existing metadata.
         If `overwrite` is True, the existing metadata is replaced with the new metadata.
+
+        Note:
+          This function is deprecated and it is encouraged to use the `update_metadata` method in the `Dataset` class directly.
         """
         if metadata is None:
             metadata = {}
@@ -334,15 +411,17 @@ class DB:
         """
         Append new data to an existing dataset.
 
-        `data` is a DataFrame with the following columns. It can be in either "long" or "wide" format. If `shape` is not specified, the format is automatically detected.
-        - `"long"` format: Each row represents a single measurement for a single signal at a specific time. The following columns are expected:
-            - `time`: Unix timestamp in nanoseconds.
-            - `signal`: Name of the signal as a string. Signals not yet present in the dataset are automatically added. Use `upsert_signals` to set units, descriptions and metadata.
-            - `value`: (optional) Value of the signal as a float or integer.
-            - `value_text`: (optional) Text value of the signal as a string.
-            - At least one of the `value` or `value_text` columns must be present.
-        - `"wide"` format: Each row represents a single time point with multiple signals as columns. Expects at least a `time` column.
+        `data` is a DataFrame with the following columns. It can be in either "long" or "wide" format. If `shape` is not specified, the format is automatically detected:
 
+        - `"long"` format: Each row represents a single measurement for a single signal at a specific time. The following columns are expected:
+
+          - `time`: Unix timestamp in nanoseconds.
+          - `signal`: Name of the signal as a string. Signals not yet present in the dataset are automatically added. Use `upsert_signals` to set units, descriptions and metadata.
+          - `value`: (optional) Value of the signal as a float or integer.
+          - `value_text`: (optional) Text value of the signal as a string.
+          - At least one of the `value` or `value_text` columns must be present.
+
+        - `"wide"` format: Each row represents a single time point with multiple signals as columns. Expects at least a `time` column.
 
         """
         stream_id = self._get_stream_id(stream_key)
@@ -356,7 +435,9 @@ class DB:
                 raise Exception(f"DataFrame must contain {COL_TIME} and {COL_SIG} columns")
             if not (COL_VAL in data.columns or COL_VAL_TEXT in data.columns):
                 raise Exception(f"DataFrame must contain at least one of {COL_VAL} or {COL_VAL_TEXT} columns")
-            value = pd.to_numeric(data[COL_VAL], errors="coerce") if COL_VAL in data.columns else pa.nulls(len(data))
+            value = (
+                pd.to_numeric(data[COL_VAL], errors="coerce") if COL_VAL in data.columns else pa.nulls(len(data))
+            )
             value_text = data[COL_VAL_TEXT] if COL_VAL_TEXT in data.columns else pa.nulls(len(data))
             table = pa.Table.from_arrays([data[COL_TIME], data[COL_SIG], value, value_text], schema=SCHEMA)
 

@@ -1,5 +1,6 @@
 stages:
   - test
+  - docs
 
 variables:
   UV_CACHE_DIR: "$CI_PROJECT_DIR/.cache/uv"
@@ -62,3 +63,23 @@ rust:mdb-cli:
     - if: $CI_COMMIT_BRANCH
       changes:
         - mdb-cli/**/*
+
+pages:
+  image: python:3.11
+  stage: docs
+  before_script:
+    - python --version
+    - curl -LsSf https://astral.sh/uv/install.sh | sh
+    - /root/.local/bin/uv --version
+  script:
+    - cd python
+    - /root/.local/bin/uv run --group docs sphinx-build -b html docs docs/_build/html
+    - mkdir -p ../public
+    - cp -r docs/_build/html/* ../public/
+  artifacts:
+    paths:
+      - public
+    expire_in: 30 days
+  rules:
+    - when: manual
+

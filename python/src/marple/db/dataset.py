@@ -23,6 +23,13 @@ BUSY_STATUSES = [
 
 
 class Dataset(BaseModel):
+    """
+    Represents a dataset in a Marple DB datastream.
+
+    Args:
+        client: DB client used to make API calls.
+    """
+
     model_config = ConfigDict(populate_by_name=True)
     id: int
     datastream_id: int = Field(alias="stream_id")
@@ -58,7 +65,17 @@ class Dataset(BaseModel):
         self._client = client
 
     @classmethod
-    def fetch(cls, client: DBClient, dataset_id: int | None = None, dataset_path: str | None = None) -> "Dataset":
+    def fetch(
+        cls, client: DBClient, dataset_id: int | None = None, dataset_path: str | None = None
+    ) -> "Dataset":
+        """
+        Fetch a dataset by its ID or path.
+
+        Args:
+            client: DB client used to make API calls.
+            dataset_id: The ID of the dataset to fetch.
+            dataset_path: The path of the dataset to fetch.
+        """
         if dataset_id is None and dataset_path is None:
             raise ValueError("Either dataset_id or dataset_path must be provided.")
         if dataset_id is not None and dataset_path is not None:
@@ -194,6 +211,9 @@ class Dataset(BaseModel):
     def delete(self) -> None:
         """
         Delete the dataset.
+
+        Warning:
+            This is a destructive action that cannot be undone.
         """
         r = self._client.post(f"/stream/{self.datastream_id}/dataset/{self.id}/delete")
         validate_response(r, "Delete dataset failed")
@@ -202,11 +222,19 @@ class Dataset(BaseModel):
 def find_matching_signals(existing_signals: set[str], filters: Iterable[str | re.Pattern]) -> set[str]:
     literal_names = {signal for signal in filters if isinstance(signal, str) and signal in existing_signals}
     regex_patterns = [signal for signal in filters if isinstance(signal, re.Pattern)]
-    regex_names = {signal for signal in existing_signals if any(pattern.search(signal) for pattern in regex_patterns)}
+    regex_names = {
+        signal for signal in existing_signals if any(pattern.search(signal) for pattern in regex_patterns)
+    }
     return literal_names | regex_names
 
 
 class DatasetList(UserList[Dataset]):
+    """
+    A list-like container for datasets with helper filtering methods.
+
+    Args:
+        datasets: Iterable of Dataset objects.
+    """
 
     def __init__(self, datasets: Iterable[Dataset]):
         super().__init__(datasets)
@@ -231,7 +259,9 @@ class DatasetList(UserList[Dataset]):
         """
         return self.where(lambda d: d.import_status == "FINISHED")
 
-    def where_metadata(self, metadata: dict[str, int | str | Iterable[int | str]] | None = None) -> "DatasetList":
+    def where_metadata(
+        self, metadata: dict[str, int | str | Iterable[int | str]] | None = None
+    ) -> "DatasetList":
         """
         Filter datasets by their metadata fields.
 
@@ -279,7 +309,7 @@ class DatasetList(UserList[Dataset]):
         def predicate(dataset: Dataset) -> bool:
             value = getattr(dataset, stat)
             if value is None:
-                return self.handle_missing(on_missing)
+                return self._handle_missing(on_missing)
             if greater_than is not None and value <= greater_than:
                 return False
             if less_than is not None and value >= less_than:
@@ -333,7 +363,7 @@ class DatasetList(UserList[Dataset]):
             else:
                 value = getattr(signal, stat)
             if value is None:
-                return self.handle_missing(on_missing)
+                return self._handle_missing(on_missing)
             if greater_than is not None and not value > greater_than:
                 return False
             if less_than is not None and not value < less_than:
@@ -354,7 +384,7 @@ class DatasetList(UserList[Dataset]):
         return DatasetList([d for d in self.data if predicate(d)])
 
     @staticmethod
-    def handle_missing(on_missing: Literal["exclude", "include", "raise"]) -> bool:
+    def _handle_missing(on_missing: Literal["exclude", "include", "raise"]) -> bool:
         if on_missing == "raise":
             raise ValueError("Cannot perform comparison on missing value")
         elif on_missing == "exclude":

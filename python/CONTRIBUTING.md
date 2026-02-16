@@ -11,6 +11,17 @@ export INSIGHT_TOKEN=...
 uv run pytest -vs
 ```
 
+### Documentation
+
+Build the Sphinx docs locally:
+
+```bash
+uv sync --group docs
+uv run sphinx-build -b html docs docs/_build/html
+```
+
+Open `docs/_build/html/index.html` in your browser to view the site.
+
 ### Local build
 
 - `uv build`
@@ -18,7 +29,7 @@ uv run pytest -vs
 - `uv run python`
   - `import marple`
   - `marple.__version__`
-  - `from marple import Marple, Insight, DB`
+  - `from marple import Insight, DB`
 
 ### Publishing (Test Pypi)
 

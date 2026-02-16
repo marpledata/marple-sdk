@@ -9,6 +9,13 @@ from marple.utils import DBClient, validate_response
 
 
 class DataStream(BaseModel):
+    """
+    Represents a Marple DB datastream.
+
+    Args:
+        client: DB client used to make API calls.
+    """
+
     type: Literal["files", "realtime"]
     id: int
     name: str
@@ -39,6 +46,7 @@ class DataStream(BaseModel):
         self._client = client
 
     def get_dataset(self, id: int | None = None, path: str | None = None) -> "Dataset":
+        """Get a single dataset in the datastream by ID or path."""
         return Dataset.fetch(self._client, id, path)
 
     def get_datasets(self) -> "DatasetList":
@@ -52,6 +60,14 @@ class DataStream(BaseModel):
         metadata: dict | None = None,
         file_name: str | None = None,
     ) -> Dataset:
+        """
+        Push a file to the datastream. The file will be ingested as a new dataset.
+
+        Args:
+            file_path: The path to the file to push.
+            metadata: Optional metadata to attach to the dataset.
+            file_name: Optional name for the dataset. If not provided, the file name will be used.
+        """
         with open(file_path, "rb") as file:
             files = {"file": file}
             data = {
@@ -65,6 +81,9 @@ class DataStream(BaseModel):
     def delete(self) -> None:
         """
         Delete the datastream.
+
+        Warning:
+            This is a destructive action that cannot be undone and will delete all datasets in the datastream.
         """
         r = self._client.post(f"/stream/{self.id}/delete")
         validate_response(r, "Delete stream failed")

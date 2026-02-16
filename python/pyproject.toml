@@ -1,6 +1,6 @@
 [project]
 name = "marpledata"
-version = "3.0.0.dev1"
+version = "3.0.0"
 description = "Marple SDK for Python"
 authors = [
   { name = "Matthias Baert", email = "support@marpledata.com" },
@@ -35,7 +35,7 @@ dependencies = [
 
 [project.urls]
 Homepage = "https://www.marpledata.com/"
-Documentation = "https://docs.marpledata.com/docs"
+Documentation = "https://marpledata.gitlab.io/marple-sdk/"
 Repository = "https://gitlab.com/marpledata/marple-sdk/-/tree/main/python"
 Issues = "https://github.com/marpledata/marple-sdk/issues"
 
@@ -58,4 +58,9 @@ dev = [
     "h5py>=3.15.1",
     "pytest>=9.0.2",
     "pytest-cov>=7.0.0",
+]
+docs = [
+  "autodoc-pydantic>=2.2.0",
+  "pydata-sphinx-theme>=0.15.4",
+  "sphinx>=7.2.6",
 ]
