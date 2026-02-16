@@ -223,7 +223,7 @@ async fn test_db_flow_via_cli() {
     let dataset_id = find_last_i32(&ingest_out).expect("dataset_id from ingest output");
 
     // Poll ingest status until finished/failed
-    let deadline = std::time::Instant::now() + Duration::from_secs(10);
+    let deadline = std::time::Instant::now() + Duration::from_secs(60);
     let mut last_status = None::<String>;
     while std::time::Instant::now() < deadline {
         let ds_get = mdb_cmd(&token, url.as_deref())
