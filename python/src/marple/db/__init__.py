@@ -83,7 +83,7 @@ class DB:
         try:
             r = self.client.get("/health")
         except ConnectionError:
-            error_text = f"Could not connect to Marple DB at {self.client.api_url}. Please check if the api_url parameter is correct and try again."
+            error_text = f"Could not connect to Marple DB at {self.client.api_url}. Please check if the api_url parameter is correct (ends with /api/v1) and try again."
             logging.error(error_text)
             return False
         if r.status_code == 404:
