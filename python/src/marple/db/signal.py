@@ -49,15 +49,6 @@ class Signal(BaseModel):
         self.dataset_id = dataset_id
         self._cache_folder = Path(f"{client.cache_folder}/{client.datapool}/dataset={self.dataset_id}/signal={self.id}")
 
-    @classmethod
-    def from_dict(cls, client: DBClient, datastream_id, dataset_id, value: dict) -> "Signal":
-        try:
-            return cls(client, datastream_id, dataset_id, **value)
-        except Exception as e:
-            raise ValueError(
-                f"Failed to parse signal with id {value.get('id')} and name {value.get('name')}. Error: {e}"
-            )
-
     def download(self, refresh_cache: bool = False) -> Path:
         """
         Download the parquet files for this signal to a local cache folder and return the folder path.

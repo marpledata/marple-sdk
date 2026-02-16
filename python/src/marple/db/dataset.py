@@ -9,6 +9,7 @@ from urllib import parse, request
 import pandas as pd
 from pandas._typing import AggFuncType, Frequency
 from pydantic import BaseModel, ConfigDict, Field, PrivateAttr
+from pydantic import ValidationError
 
 from marple.db.constants import COL_TIME, COL_VAL
 from marple.db.signal import Signal
@@ -65,9 +66,7 @@ class Dataset(BaseModel):
         self._client = client
 
     @classmethod
-    def fetch(
-        cls, client: DBClient, dataset_id: int | None = None, dataset_path: str | None = None
-    ) -> "Dataset":
+    def fetch(cls, client: DBClient, dataset_id: int | None = None, dataset_path: str | None = None) -> "Dataset":
         """
         Fetch a dataset by its ID or path.
 
@@ -100,10 +99,10 @@ class Dataset(BaseModel):
             r = self._client.get(f"/stream/{self.datastream_id}/dataset/{self.id}/signal/{id}")
             try:
                 result = validate_response(r, f"Get signal data for signal ID {id} failed")
-            except Exception:
-                warnings.warn(f"Failed to get signal with id {id} and name {name}.")
+                signal = Signal(self._client, self.datastream_id, self.id, **result)
+            except Exception as e:
+                warnings.warn(f"Failed to get signal with id {id} and name {name}: {e}")
                 return None
-            signal = Signal.from_dict(self._client, self.datastream_id, self.id, value=result)
             self._signals[signal.id] = signal
 
         return self._signals[id]
@@ -111,8 +110,13 @@ class Dataset(BaseModel):
     def _get_all_signals(self) -> list["Signal"]:
         if self.n_signals is None or len(self._signals) < self.n_signals:
             r = self._client.get(f"/stream/{self.datastream_id}/dataset/{self.id}/signals")
+            self._signals.clear()
             for signal in validate_response(r, "Failed to get signals"):
-                signal_obj = Signal.from_dict(self._client, self.datastream_id, self.id, value=signal)
+                try:
+                    signal_obj = Signal(self._client, self.datastream_id, self.id, **signal)
+                except ValidationError as e:
+                    warnings.warn(f"Failed to create signal {signal['name']} (id {signal['id']}): {e}")
+                    continue
                 self._signals[signal_obj.id] = signal_obj
         return list(self._signals.values())
 
@@ -133,10 +137,15 @@ class Dataset(BaseModel):
             f"/stream/{self.datastream_id}/dataset/{self.id}/signals",
             params={"signal_names": list(matching_signals)},
         )
-        return [
-            Signal.from_dict(self._client, self.datastream_id, self.id, value=signal)
-            for signal in validate_response(r, "Failed to get signals by name")
-        ]
+        signals = []
+        for signal in validate_response(r, "Failed to get signals by name"):
+            try:
+                signals.append(Signal(self._client, self.datastream_id, self.id, **signal))
+            except ValidationError as e:
+                warnings.warn(f"Failed to create signal {signal['name']} (id {signal['id']}): {e}")
+                continue
+            self._signals[signal.id] = signal
+        return signals
 
     def get_data(
         self,
@@ -222,9 +231,7 @@ class Dataset(BaseModel):
 def find_matching_signals(existing_signals: set[str], filters: Iterable[str | re.Pattern]) -> set[str]:
     literal_names = {signal for signal in filters if isinstance(signal, str) and signal in existing_signals}
     regex_patterns = [signal for signal in filters if isinstance(signal, re.Pattern)]
-    regex_names = {
-        signal for signal in existing_signals if any(pattern.search(signal) for pattern in regex_patterns)
-    }
+    regex_names = {signal for signal in existing_signals if any(pattern.search(signal) for pattern in regex_patterns)}
     return literal_names | regex_names
 
 
@@ -245,10 +252,8 @@ class DatasetList(UserList[Dataset]):
         for value in values:
             try:
                 dataset = Dataset(client=client, **value)
-            except Exception as e:
-                warnings.warn(
-                    f"Skipping dataset with id {value.get('id')} and path {value.get('path')}. {e.__class__.__name__}"
-                )
+            except ValidationError as e:
+                warnings.warn(f"Failed to create dataset with id {value.get('id')} and path {value.get('path')}: {e}")
                 continue
             datasets.append(dataset)
         return cls(datasets)
@@ -259,9 +264,7 @@ class DatasetList(UserList[Dataset]):
         """
         return self.where(lambda d: d.import_status == "FINISHED")
 
-    def where_metadata(
-        self, metadata: dict[str, int | str | Iterable[int | str]] | None = None
-    ) -> "DatasetList":
+    def where_metadata(self, metadata: dict[str, int | str | Iterable[int | str]] | None = None) -> "DatasetList":
         """
         Filter datasets by their metadata fields.
 

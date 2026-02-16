@@ -9,6 +9,7 @@ import numpy as np
 import pandas as pd
 import pyarrow as pa
 import pyarrow.parquet as pq
+from pydantic import ValidationError
 from requests import Response
 from requests.exceptions import ConnectionError
 
@@ -211,10 +212,13 @@ class DB:
         if r is None:
             r = self.get("/streams")
 
-        self._streams = {
-            stream["id"]: DataStream(client=self.client, **stream)
-            for stream in validate_response(r, "Failed to fetch streams")["streams"]
-        }
+        self._streams.clear()
+        for stream in validate_response(r, "Failed to fetch streams")["streams"]:
+            try:
+                self._streams[stream["id"]] = DataStream(client=self.client, **stream)
+            except ValidationError as e:
+                warnings.warn(f"Failed to create stream {stream['name']} (id {stream['id']}): {e}")
+                continue
 
     def get_datasets(self, stream_key: str | int | None = None) -> DatasetList:
         """
