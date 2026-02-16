@@ -60,6 +60,7 @@ dev = [
     "pytest-cov>=7.0.0",
 ]
 docs = [
+  "autodoc-pydantic>=2.2.0",
   "pydata-sphinx-theme>=0.15.4",
   "sphinx>=7.2.6",
 ]

@@ -18,6 +18,7 @@ extensions = [
     "sphinx.ext.autodoc",
     "sphinx.ext.napoleon",
     "sphinx.ext.autosummary",
+    "sphinxcontrib.autodoc_pydantic",
 ]
 
 autosummary_generate = True
@@ -27,21 +28,15 @@ autodoc_default_options = {
     "member-order": "groupwise",
     "inherited-members": False,
     "private-members": False,
-    "exclude-members": (
-        # Pydantic v2 model methods
-        "model_config,model_fields,model_dump,model_dump_json,model_validate,"
-        "model_validate_json,model_validate_strings,model_copy,model_post_init,"
-        "model_rebuild,model_json_schema,model_fields_set,"
-        # Pydantic v1 methods
-        "dict,json,parse_obj,parse_raw,validate,copy,construct,from_orm,schema,schema_json,"
-        # Pydantic BaseModel dunder methods and attributes
-        "__fields__,__validators__,__config__,__fields_set__,"
-        "__pydantic_decorators__,__pydantic_complete__,__pydantic_custom_init__,"
-        "__pydantic_fields_set__,__pydantic_generic_metadata__,__pydantic_parent_namespace__,"
-        "__pydantic_post_init__,__pydantic_private__,__pydantic_self_init__,"
-        "__private_attributes__,__signature__,__version__,__repr_args__,__repr_name__"
-    ),
 }
+
+# Pydantic Settings: Clean up the docs
+autodoc_pydantic_model_show_json = False
+autodoc_pydantic_model_show_config = False
+autodoc_pydantic_settings_show_json = False
+
+# This hides the 'model_dump', 'model_validate', etc. methods
+autodoc_pydantic_model_members = False
 
 templates_path = ["_templates"]
 exclude_patterns = ["_build", "Thumbs.db", ".DS_Store"]
@@ -57,3 +52,53 @@ html_theme_options = {
     "navigation_with_keys": True,
     "show_nav_level": 2,
 }
+
+
+# Add this to the bottom of conf.py
+def skip_pydantic_internals(app, what, name, obj, skip, options):
+    """
+    Triggers on every member. If it looks like a Pydantic internal, skip it.
+    """
+    # List of exact names to skip (Pydantic V1/V2 compat methods)
+    pydantic_internals = {
+        "model_copy",
+        "model_dump",
+        "model_dump_json",
+        "model_json_schema",
+        "model_parametrized_name",
+        "model_post_init",
+        "model_rebuild",
+        "model_validate",
+        "model_validate_json",
+        "schema",
+        "schema_json",
+        "update_forward_refs",
+        "model_validate_strings",
+        "parse_file",
+        "parse_obj",
+        "parse_raw",
+        "from_orm",
+        "validate",
+        "construct",
+        "copy",
+        "json",
+        "dict",
+    }
+
+    # If the name is in our blacklist, SKIP it (return True)
+    if name in pydantic_internals:
+        return True
+
+    # Optional: Skip anything starting with "model_" if you are bold
+    if name.startswith("model_"):
+        return True
+
+    if name.startswith("_"):
+        return True
+
+    return skip
+
+
+def setup(app):
+    # Register the function above to run during the build
+    app.connect("autodoc-skip-member", skip_pydantic_internals)
