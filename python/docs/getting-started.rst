@@ -8,6 +8,8 @@ Install the Marple SDK using your package manager:
 
 .. code-block:: bash
 
+   poetry add marpledata
+   uv add marpledata
    pip install marpledata
 
 The SDK exposes the main entry points:
@@ -22,7 +24,6 @@ Marple DB quickstart
 
 .. code-block:: python
 
-   import time
    from marple import DB
 
    stream_name = "Car data"

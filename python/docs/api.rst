@@ -6,5 +6,3 @@ API Reference
 
    api/insight
    api/db
-   api/files
-

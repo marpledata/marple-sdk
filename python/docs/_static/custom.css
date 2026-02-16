@@ -1,7 +1,4 @@
 :root {
-  --pst-color-primary: #5586f7;
-  --pst-color-link: #5586f7;
-  --pst-color-link-hover: #2467ff;
-  --pst-font-family-base: "Mona Sans", "Segoe UI", Helvetica, Arial, sans-serif;
-  --pst-font-family-heading: "Mona Sans", "Segoe UI", Helvetica, Arial, sans-serif;
+    /* The primary color used for links and active states */
+    --pst-color-primary: #0253A3;
 }
