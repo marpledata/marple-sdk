@@ -98,8 +98,8 @@ class Dataset(BaseModel):
         if id not in self._signals:
             r = self._client.get(f"/stream/{self.datastream_id}/dataset/{self.id}/signal/{id}")
             try:
-                result = validate_response(r, f"Get signal data for signal ID {id} failed")
-                signal = Signal(self._client, self.datastream_id, self.id, **result)
+                response = validate_response(r, f"Get signal data for signal ID {id} failed")
+                signal = Signal(self._client, self.datastream_id, self.id, **response)
             except Exception as e:
                 warnings.warn(f"Failed to get signal with id {id} and name {name}: {e}")
                 return None
@@ -111,13 +111,13 @@ class Dataset(BaseModel):
         if self.n_signals is None or len(self._signals) < self.n_signals:
             r = self._client.get(f"/stream/{self.datastream_id}/dataset/{self.id}/signals")
             self._signals.clear()
-            for signal in validate_response(r, "Failed to get signals"):
+            for response in validate_response(r, "Failed to get signals"):
                 try:
-                    signal_obj = Signal(self._client, self.datastream_id, self.id, **signal)
+                    signal = Signal(self._client, self.datastream_id, self.id, **response)
                 except ValidationError as e:
-                    warnings.warn(f"Failed to create signal {signal['name']} (id {signal['id']}): {e}")
+                    warnings.warn(f"Failed to create signal {response['name']} (id {response['id']}): {e}")
                     continue
-                self._signals[signal_obj.id] = signal_obj
+                self._signals[signal.id] = signal
         return list(self._signals.values())
 
     def get_signals(self, signal_names: Iterable[str | re.Pattern] | None = None) -> list["Signal"]:
@@ -138,11 +138,12 @@ class Dataset(BaseModel):
             params={"signal_names": list(matching_signals)},
         )
         signals = []
-        for signal in validate_response(r, "Failed to get signals by name"):
+        for response in validate_response(r, "Failed to get signals by name"):
             try:
-                signals.append(Signal(self._client, self.datastream_id, self.id, **signal))
+                signal = Signal(self._client, self.datastream_id, self.id, **response)
+                signals.append(signal)
             except ValidationError as e:
-                warnings.warn(f"Failed to create signal {signal['name']} (id {signal['id']}): {e}")
+                warnings.warn(f"Failed to create signal {response['name']} (id {response['id']}): {e}")
                 continue
             self._signals[signal.id] = signal
         return signals
