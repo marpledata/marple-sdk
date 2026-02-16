@@ -74,8 +74,8 @@ pages:
   script:
     - cd python
     - /root/.local/bin/uv run --group docs sphinx-build -b html docs docs/_build/html
-    - mkdir -p ../../public
-    - cp -r docs/_build/html/* ../../public/
+    - mkdir -p ../public
+    - cp -r docs/_build/html/* ../public/
   artifacts:
     paths:
       - public
