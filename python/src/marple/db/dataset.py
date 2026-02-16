@@ -131,6 +131,8 @@ class Dataset(BaseModel):
         if signal_names is None:
             return self._get_all_signals()
         signals = self._client.find_matching_signals(signal_names)
+        if len(signals) == 0:
+            return []
 
         r = self._client.get(
             f"/stream/{self.datastream_id}/dataset/{self.id}/signals",

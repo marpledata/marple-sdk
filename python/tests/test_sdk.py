@@ -202,10 +202,13 @@ def test_test_dataset(db: DB, example_dataset: Dataset) -> None:
     with pytest.raises(ValueError):
         db.get_dataset()
 
-    db.get_dataset(dataset_id=example_dataset.id, dataset_path="non.existent.path")
+    with pytest.raises(ValueError):
+        db.get_dataset(dataset_id=example_dataset.id, dataset_path="non.existent.path")
 
     with pytest.raises(HTTPError):
         db.get_dataset(dataset_id=-3)
+
+    assert db.get_dataset(dataset_id=example_dataset.id).id == example_dataset.id
 
 
 def test_get_signal(example_dataset: Dataset) -> None:
@@ -213,7 +216,7 @@ def test_get_signal(example_dataset: Dataset) -> None:
     assert signal.name == "car.speed"
     assert signal.count == 12500
 
-    with pytest.raises(HTTPError):
+    with pytest.raises(ValueError):
         example_dataset.get_signal("non.existent.signal")
 
     with pytest.raises(ValueError):
@@ -234,14 +237,12 @@ def test_db_get_original(example_dataset: Dataset) -> None:
 def test_db_get_parquet(example_dataset: Dataset) -> None:
     signals = example_dataset.get_signals()
     signal = random.choice(signals)
-    paths = signal.download()
+    paths = signal.list_parquet_files()
     assert len(paths) > 0
     for path in paths:
         table = pq.read_table(path, schema=SCHEMA)
         assert table is not None
-        assert "time" in table.column_names
-        assert "value" in table.column_names
-        assert "value_text" in table.column_names
+        assert table.column_names == ["dataset", "signal", "time", "value", "value_text"]
 
 
 @pytest.fixture()
