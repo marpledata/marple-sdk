@@ -5,7 +5,6 @@ import time
 from datetime import datetime
 from pathlib import Path
 from tempfile import TemporaryDirectory
-from typing import Generator
 
 import dotenv
 import marple
@@ -14,7 +13,7 @@ import pyarrow.parquet as pq
 import pytest
 from h5py import File
 from marple import DB, Insight
-from marple.db import Dataset, DatasetList, DataStream
+from marple.db import Dataset, DataStream
 from marple.db.constants import SCHEMA
 from requests import HTTPError
 
@@ -100,6 +99,7 @@ def test_db_filter_datasets(example_stream: DataStream) -> None:
 
     datasets_b23 = all_datasets.where_metadata({"B": [2, 3]})
     assert len(datasets_b23) == 2
+
     assert dataset_1.id == all_datasets.where_metadata({"A": 1, "B": 1})[0].id
 
     assert len(all_datasets.where_dataset("hot_bytes", equals=0)) == n_datasets

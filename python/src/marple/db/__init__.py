@@ -111,6 +111,16 @@ class DB:
             error_text = f"Unknown error occurred while connecting to Marple DB at {r.request.url}. Status code: {r.status_code}."
             logging.error(error_text)
             return False
+        try:
+            status = r.json()["status"]
+        except Exception:
+            error_text = f"Could not connect to Marple DB at {self.client.api_url}. Please check if the api_url parameter is correct (ends with /api/v1) and try again."
+            logging.error(error_text)
+            return False
+        if status != "healthy":
+            error_text = f"Could not connect to Marple DB at {self.client.api_url}. Please check if the api_url parameter is correct (ends with /api/v1) and try again."
+            logging.error(error_text)
+            return False
 
         r = self.client.get("/streams")
         if r.status_code == 403:
