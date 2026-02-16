@@ -70,3 +70,4 @@ To ensure pip correctly updates our package, correct versioning is important. Us
 - `uv config pypi-token.pypi pypi-XXXXXXXXXXXXXXXXXXXXXXXXXXXX`
 - `uv build`
 - `uv publish`
+- Run the GitLab pipeline `pages` to build & release the docs
