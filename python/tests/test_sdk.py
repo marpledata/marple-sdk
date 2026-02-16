@@ -237,12 +237,9 @@ def test_db_get_original(example_dataset: Dataset) -> None:
 def test_db_get_parquet(example_dataset: Dataset) -> None:
     signals = example_dataset.get_signals()
     signal = random.choice(signals)
-    paths = signal.list_parquet_files()
-    assert len(paths) > 0
-    for path in paths:
-        table = pq.read_table(path, schema=SCHEMA)
-        assert table is not None
-        assert table.column_names == ["dataset", "signal", "time", "value", "value_text"]
+    table = pq.ParquetDataset(signal.cache_parquet()).read()
+    assert table.column_names == ["dataset", "signal", "time", "value", "value_text"]
+    assert table.num_rows == 12500
 
 
 @pytest.fixture()
