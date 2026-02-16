@@ -29,7 +29,7 @@ Open `docs/_build/html/index.html` in your browser to view the site.
 - `uv run python`
   - `import marple`
   - `marple.__version__`
-  - `from marple import Marple, Insight, DB`
+  - `from marple import Insight, DB`
 
 ### Publishing (Test Pypi)
 

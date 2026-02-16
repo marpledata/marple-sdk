@@ -174,5 +174,5 @@ print("Wrote", file_path)
 For advanced use cases, you can call API endpoints directly:
 ```python
 insight.get("/user/info")
-isinght.post("sources/search")
+insight.post("sources/search")
 ```
