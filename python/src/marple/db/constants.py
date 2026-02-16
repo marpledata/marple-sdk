@@ -6,8 +6,8 @@ COL_TIME = "time"
 COL_SIG = "signal"
 COL_VAL = "value"
 COL_VAL_TEXT = "value_text"
-COL_VAL_IDX = 4
-COL_VAL_TEXT_IDX = 5
+COL_VAL_IDX = 3
+COL_VAL_TEXT_IDX = 4
 
 SCHEMA = pa.schema(
     [

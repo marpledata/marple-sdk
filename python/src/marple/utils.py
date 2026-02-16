@@ -75,16 +75,16 @@ class DBClient:
         """
         Download the parquet files for this signal to a local cache folder and return the folder path.
         """
-        cache_folder = Path(f"{self.cache_folder}/{self.datapool}/dataset={dataset_id}/signal={signal_id}")
-        if not cache_folder.exists() or refresh_cache:
-            cache_folder.mkdir(parents=True, exist_ok=True)
-            for file in self._cache_folder.iterdir():
+        signal_cache = Path(f"{self.cache_folder}/{self.datapool}/dataset={dataset_id}/signal={signal_id}")
+        if not signal_cache.exists() or refresh_cache:
+            signal_cache.mkdir(parents=True, exist_ok=True)
+            for file in signal_cache.iterdir():
                 file.unlink(missing_ok=True)
-            r = self.get(f"/datapool/{self.datapool}/dataset/{dataset_id}/signal/{signal_id}/dat")
+            r = self.get(f"/datapool/{self.datapool}/dataset/{dataset_id}/signal/{signal_id}/data")
             for path in validate_response(r, "Get parquet path failed"):
                 url = parse.urlparse(path)
-                request.urlretrieve(url.geturl(), cache_folder / url.path.rsplit("/")[-1])
-        return self._cache_folder
+                request.urlretrieve(url.geturl(), signal_cache / url.path.rsplit("/")[-1])
+        return signal_cache
 
     def list_parquet_files(self, dataset_id: int, signal_id: int, refresh_cache: bool = False) -> list[Path]:
         """
@@ -95,15 +95,6 @@ class DBClient:
         """
         parquet_folder = self.cache_parquet(dataset_id, signal_id, refresh_cache)
         return [parquet_folder / file.name for file in parquet_folder.iterdir()]
-
-    def count_values(self, dataset_id: int, signal_id: int) -> tuple[int, int]:
-        count_value, count_text = 0, 0
-        for file in self.list_parquet_files(dataset_id, signal_id):
-            meta = pq.read_metadata(file)
-            for rg in meta.row_groups:
-                count_value += rg.column(COL_VAL_IDX).statistics.num_values
-                count_text += rg.column(COL_VAL_TEXT_IDX).statistics.num_values
-        return count_value, count_text
 
     def get_dataframe(
         self,
@@ -119,8 +110,7 @@ class DBClient:
         The `datatype` parameter determines which data to use in the `value` column.
         """
         if dtype is None:
-            n_values, n_texts = self.count_values(dataset_id, signal_id)
-            dtype = "numeric" if n_values >= n_texts else "text"
+            dtype = self._infer_dtype(dataset_id, signal_id)
         schema = pa.schema(
             [
                 pa.field(COL_TIME, pa.int64()),
@@ -128,9 +118,19 @@ class DBClient:
             ]
         )
         df = pd.read_parquet(self.cache_parquet(dataset_id, signal_id, refresh_cache), engine="pyarrow", schema=schema)
-        df = df.rename(columns={COL_VAL_TEXT: COL_VAL})
-        if self.time_min is not None and self.time_min > 1e17:
-            df[COL_TIME] = pd.to_datetime(df[COL_TIME], unit="ns")
+        df = df.rename(columns={COL_VAL_TEXT: COL_VAL}).set_index(COL_TIME)
+        if df.index.min() > 1e17:
+            df.index = pd.to_datetime(df.index, unit="ns")
         else:
-            df[COL_TIME] = pd.to_timedelta(df[COL_TIME], unit="ns")
+            df.index = pd.to_timedelta(df.index, unit="ns")
         return df
+
+    def _infer_dtype(self, dataset_id: int, signal_id: int) -> Literal["numeric", "text"]:
+        count_value, count_text = 0, 0
+        for file in self.list_parquet_files(dataset_id, signal_id):
+            meta = pq.read_metadata(file)
+            for idx in range(meta.num_row_groups):
+                rg = meta.row_group(idx)
+                count_value += rg.column(COL_VAL_IDX).statistics.num_values
+                count_text += rg.column(COL_VAL_TEXT_IDX).statistics.num_values
+        return "numeric" if count_value >= count_text else "text"
