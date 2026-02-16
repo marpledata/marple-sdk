@@ -79,11 +79,11 @@ def test_db_check_connection(db: DB) -> None:
     assert not DB("invalid_token", marple.db.SAAS_URL).check_connection()
 
 
-def test_db_get_streams_and_datasets(db: DB, stream_name: str) -> None:
+def test_db_get_streams_and_datasets(db: DB, example_stream: DataStream) -> None:
     streams = db.get_streams()
-    assert stream_name in [stream.name for stream in streams]
+    assert example_stream.name in [stream.name for stream in streams]
 
-    datasets = db.get_datasets(stream_name)
+    datasets = example_stream.get_datasets()
     assert isinstance(datasets, marple.db.DatasetList)
 
 
