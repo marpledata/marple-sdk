@@ -259,7 +259,9 @@ class DatasetList(UserList[Dataset]):
         """
         return self.where(lambda d: d.import_status == "FINISHED")
 
-    def where_metadata(self, metadata: dict[str, int | str | Iterable[int | str]] | None = None) -> "DatasetList":
+    def where_metadata(
+        self, metadata: dict[str, int | str | Iterable[int | str]] | None = None
+    ) -> "DatasetList":
         """
         Filter datasets by their metadata fields.
 

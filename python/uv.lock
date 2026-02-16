@@ -433,7 +433,7 @@ wheels = [
 
 [[package]]
 name = "marpledata"
-version = "3.0.0.dev1"
+version = "3.0.0"
 source = { editable = "." }
 dependencies = [
     { name = "dotenv" },

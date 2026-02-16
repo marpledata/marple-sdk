@@ -1,6 +1,6 @@
 [project]
 name = "marpledata"
-version = "3.0.0.dev1"
+version = "3.0.0"
 description = "Marple SDK for Python"
 authors = [
   { name = "Matthias Baert", email = "support@marpledata.com" },
