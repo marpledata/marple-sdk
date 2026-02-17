@@ -76,7 +76,9 @@ def example_dataset(example_stream: DataStream) -> Dataset:
 
 def test_db_check_connection(db: DB) -> None:
     assert db.check_connection() is True
-    assert not DB("invalid_token", marple.db.SAAS_URL).check_connection()
+    with pytest.raises(Exception, match="Invalid API token"):
+        DB("invalid_token", marple.db.SAAS_URL).check_connection()
+
 
 
 def test_db_get_streams_and_datasets(db: DB, example_stream: DataStream) -> None:
