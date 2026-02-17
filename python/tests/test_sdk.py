@@ -76,14 +76,16 @@ def example_dataset(example_stream: DataStream) -> Dataset:
 
 def test_db_check_connection(db: DB) -> None:
     assert db.check_connection() is True
-    assert not DB("invalid_token", marple.db.SAAS_URL).check_connection()
+    with pytest.raises(Exception, match="Invalid API token"):
+        DB("invalid_token", marple.db.SAAS_URL).check_connection()
 
 
-def test_db_get_streams_and_datasets(db: DB, stream_name: str) -> None:
+
+def test_db_get_streams_and_datasets(db: DB, example_stream: DataStream) -> None:
     streams = db.get_streams()
-    assert stream_name in [stream.name for stream in streams]
+    assert example_stream.name in [stream.name for stream in streams]
 
-    datasets = db.get_datasets(stream_name)
+    datasets = example_stream.get_datasets()
     assert isinstance(datasets, marple.db.DatasetList)
 
 
@@ -202,10 +204,13 @@ def test_test_dataset(db: DB, example_dataset: Dataset) -> None:
     with pytest.raises(ValueError):
         db.get_dataset()
 
-    db.get_dataset(dataset_id=example_dataset.id, dataset_path="non.existent.path")
+    with pytest.raises(ValueError):
+        db.get_dataset(dataset_id=example_dataset.id, dataset_path="non.existent.path")
 
     with pytest.raises(HTTPError):
         db.get_dataset(dataset_id=-3)
+
+    assert db.get_dataset(dataset_id=example_dataset.id).id == example_dataset.id
 
 
 def test_get_signal(example_dataset: Dataset) -> None:
@@ -213,7 +218,7 @@ def test_get_signal(example_dataset: Dataset) -> None:
     assert signal.name == "car.speed"
     assert signal.count == 12500
 
-    with pytest.raises(HTTPError):
+    with pytest.raises(ValueError):
         example_dataset.get_signal("non.existent.signal")
 
     with pytest.raises(ValueError):
@@ -234,14 +239,9 @@ def test_db_get_original(example_dataset: Dataset) -> None:
 def test_db_get_parquet(example_dataset: Dataset) -> None:
     signals = example_dataset.get_signals()
     signal = random.choice(signals)
-    paths = signal.download()
-    assert len(paths) > 0
-    for path in paths:
-        table = pq.read_table(path, schema=SCHEMA)
-        assert table is not None
-        assert "time" in table.column_names
-        assert "value" in table.column_names
-        assert "value_text" in table.column_names
+    table = pq.ParquetDataset(signal.cache_parquet()).read()
+    assert table.column_names == ["dataset", "signal", "time", "value", "value_text"]
+    assert table.num_rows == 12500
 
 
 @pytest.fixture()
