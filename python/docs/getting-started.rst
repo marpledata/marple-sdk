@@ -31,7 +31,6 @@ Marple DB quickstart
    api_url = "https://db.marpledata.com/api/v1"
 
    db = DB(api_token, api_url)
-   db.check_connection()
 
    stream = db.get_stream(stream_name)
    dataset = stream.push_file("examples_race.csv", metadata={"driver": "Mbaerto"})
@@ -48,7 +47,6 @@ Marple Insight quickstart
    insight_url = "https://insight.marpledata.com/api/v1"
 
    insight = Insight(insight_token, insight_url)
-   insight.check_connection()
 
    # For more advanced dataset/signal searches/exports, use DB instead of Insight.
    datasets = insight.get_datasets()
