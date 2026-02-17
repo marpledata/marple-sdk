@@ -1,15 +1,20 @@
-import requests
+import re
+from pathlib import Path
+from typing import Iterable, Literal
+from urllib import parse, request
 
 import marple
-
 import pandas as pd
-from urllib import parse, request
-from pathlib import Path
-from marple.db.constants import COL_TIME, COL_VAL, COL_VAL_TEXT, COL_VAL_IDX, COL_VAL_TEXT_IDX
 import pyarrow as pa
-import re
-from typing import Iterable, Literal
 import pyarrow.parquet as pq
+import requests
+from marple.db.constants import (
+    COL_TIME,
+    COL_VAL,
+    COL_VAL_IDX,
+    COL_VAL_TEXT,
+    COL_VAL_TEXT_IDX,
+)
 
 
 def validate_response(response: requests.Response, failure_message: str) -> dict:
