@@ -3,9 +3,8 @@ from typing import Optional
 from urllib import request
 
 import requests
-from requests import Response
-
 from marple.utils import validate_response
+from requests import Response
 
 SAAS_URL = "https://insight.marpledata.com/api/v1"
 
@@ -43,24 +42,43 @@ class Insight:
         return self.session.delete(f"{self.api_url}{url}", *args, **kwargs)
 
     def check_connection(self) -> bool:
-        msg_fail_connect = "Could not connect to server at {}".format(self.api_url)
-        msg_fail_auth = "Could not authenticate with token"
-
+        """
+        Check if the connection to the Marple Insight API is working.
+         - If the connection is successful, returns True.
+         - If the connection fails, logs an error message and returns False.
+        """
+        default_error =   f"Could not find Marple Insight at {self.api_url}. Please check if the api_url parameter is correct and try again."
+        if not self.api_url.endswith("/api/v1"):
+            default_error += " The api_url parameter should end with /api/v1"
         try:
             # unauthenticated endpoints
             r = self.get("/version")
-            if r.status_code != 200:
-                raise Exception(msg_fail_connect)
+            message = r.json()["message"]
+            if not message:
+                raise Exception(default_error)
 
-            # authenticated endpoint
-            r = self.get("/")
-            if r.status_code != 200:
-                raise Exception(msg_fail_auth)
+        except (ConnectionError, requests.exceptions.RequestException):
+            raise Exception(default_error)
+        if r.status_code == 404:
+            raise Exception(default_error)
+        if r.status_code != 200:
+            error_text = f"Unknown error occurred while connecting to Marple Insight at {r.request.url}. Status code: {r.status_code}."
+            raise Exception(error_text)
+        try:
+            version = r.json()["message"]
+            assert version is not None
+        except Exception:
+            error_text = f"Received unexpected response from Marple Insight at {r.request.url}. Please check if the api_url parameter is correct and try again."
+            raise Exception(error_text)
 
-        except ConnectionError:
-            raise Exception(msg_fail_connect)
+        # authenticated endpoint
+        r = self.get("/")
+        if r.status_code != 200:
+            error_text = "Invalid API token. Please check if the api_token parameter is correct and not expired."
+            raise Exception(error_text)
 
         return True
+
 
     def get_datasets(self) -> list[dict]:
         """

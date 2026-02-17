@@ -42,24 +42,15 @@ Marple Insight quickstart
 
 .. code-block:: python
 
-   from marple import DB, Insight
+   from marple import Insight
 
    insight_token = "<your api token>"
    insight_url = "https://insight.marpledata.com/api/v1"
-   db_token = "<your api token>"
-   db_url = "https://db.marpledata.com/api/v1"
-   stream_name = "Car data"
 
    insight = Insight(insight_token, insight_url)
-   db = DB(db_token, db_url)
+   insight.check_connection()
 
-   dataset_id = db.get_datasets(stream_name)[0].id
-   insight_dataset = insight.get_dataset_mdb(dataset_id)
-
-   file_path = insight.export_data_mdb(
-       dataset_id,
-       format="h5",
-       signals=["car.speed"],
-       destination=".",
-   )
-   print("Wrote", file_path)
+   # For more advanced dataset/signal searches/exports, use DB instead of Insight.
+   datasets = insight.get_datasets()
+   dataset = datasets[0]
+   signals = insight.get_signals(dataset["dataset_filter"])
