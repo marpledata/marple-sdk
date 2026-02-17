@@ -45,7 +45,7 @@ class Insight:
         """
         Check if the connection to the Marple Insight API is working.
          - If the connection is successful, returns True.
-         - If the connection fails, logs an error message and returns False.
+         - If the connection fails, raise error message.
         """
         default_error =   f"Could not find Marple Insight at {self.api_url}. Please check if the api_url parameter is correct and try again."
         if not self.api_url.endswith("/api/v1"):
