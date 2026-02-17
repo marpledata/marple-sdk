@@ -26,6 +26,7 @@ class Insight:
         self.session = requests.Session()
         self.session.headers.update({"Authorization": bearer_token})
         self.session.headers.update({"X-Request-Source": "sdk/python"})
+        self.check_connection()
 
     # User functions #
 

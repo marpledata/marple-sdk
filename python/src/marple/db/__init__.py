@@ -9,10 +9,6 @@ import numpy as np
 import pandas as pd
 import pyarrow as pa
 import pyarrow.parquet as pq
-from pydantic import ValidationError
-from requests import Response
-from requests.exceptions import ConnectionError
-
 from marple.db.constants import (
     COL_SIG,
     COL_TIME,
@@ -25,6 +21,9 @@ from marple.db.dataset import Dataset, DatasetList
 from marple.db.datastream import DataStream
 from marple.db.signal import Signal
 from marple.utils import DBClient, validate_response
+from pydantic import ValidationError
+from requests import Response
+from requests.exceptions import ConnectionError
 
 __all__ = ["DB", "DataStream", "Dataset", "DatasetList", "Signal", "SCHEMA"]
 
@@ -66,6 +65,7 @@ class DB:
     ):
         self._streams: dict[int, DataStream] = {}
         self.client = DBClient(api_token, api_url, datapool, cache_folder)
+        self.check_connection()
 
     # Utility functions #
 
@@ -93,40 +93,34 @@ class DB:
         """
         Check if the connection to the Marple DB API is working.
          - If the connection is successful, returns True.
-         - If the connection fails, logs an error message and returns False.
+         - If the connection fails, raise an error.
         """
         try:
             r = self.client.get("/health")
         except ConnectionError:
             error_text = f"Could not connect to Marple DB at {self.client.api_url}. Please check if the api_url parameter is correct (ends with /api/v1) and try again."
-            logging.error(error_text)
-            return False
+            raise Exception(error_text)
         if r.status_code == 404:
             error_text = f"Could not find Marple DB at {r.request.url}. Please check if the api_url parameter is correct and try again."
             if not self.client.api_url.endswith("/api/v1"):
                 error_text += " The api_url parameter should end with /api/v1"
-            logging.error(error_text)
-            return False
+            raise Exception(error_text)
         if r.status_code != 200:
             error_text = f"Unknown error occurred while connecting to Marple DB at {r.request.url}. Status code: {r.status_code}."
-            logging.error(error_text)
-            return False
+            raise Exception(error_text)
         try:
             status = r.json()["status"]
         except Exception:
             error_text = f"Could not connect to Marple DB at {self.client.api_url}. Please check if the api_url parameter is correct (ends with /api/v1) and try again."
-            logging.error(error_text)
-            return False
+            raise Exception(error_text)
         if status != "healthy":
             error_text = f"Could not connect to Marple DB at {self.client.api_url}. Please check if the api_url parameter is correct (ends with /api/v1) and try again."
-            logging.error(error_text)
-            return False
+            raise Exception(error_text)
 
         r = self.client.get("/streams")
         if r.status_code == 403:
             error_text = "Invalid API token. Please check if the api_token parameter is correct and not expired."
-            logging.error(error_text)
-            return False
+            raise Exception(error_text)
 
         self._refresh_stream_cache(r)
         return True
