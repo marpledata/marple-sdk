@@ -9,8 +9,10 @@ from urllib import parse, request
 import pandas as pd
 from pandas._typing import AggFuncType, Frequency
 from pydantic import BaseModel, ConfigDict, Field, PrivateAttr
-
+from pydantic import ValidationError
+import pyarrow.parquet as pq
 from marple.db.constants import COL_TIME, COL_VAL
+
 from marple.db.signal import Signal
 from marple.utils import DBClient, validate_response
 
@@ -65,9 +67,7 @@ class Dataset(BaseModel):
         self._client = client
 
     @classmethod
-    def fetch(
-        cls, client: DBClient, dataset_id: int | None = None, dataset_path: str | None = None
-    ) -> "Dataset":
+    def fetch(cls, client: DBClient, dataset_id: int | None = None, dataset_path: str | None = None) -> "Dataset":
         """
         Fetch a dataset by its ID or path.
 
@@ -99,11 +99,11 @@ class Dataset(BaseModel):
         if id not in self._signals:
             r = self._client.get(f"/stream/{self.datastream_id}/dataset/{self.id}/signal/{id}")
             try:
-                result = validate_response(r, f"Get signal data for signal ID {id} failed")
-            except Exception:
-                warnings.warn(f"Failed to get signal with id {id} and name {name}.")
+                response = validate_response(r, f"Get signal data for signal ID {id} failed")
+                signal = Signal(self._client, self.datastream_id, self.id, **response)
+            except Exception as e:
+                warnings.warn(f"Failed to get signal with id {id} and name {name}: {e}")
                 return None
-            signal = Signal.from_dict(self._client, self.datastream_id, self.id, value=result)
             self._signals[signal.id] = signal
 
         return self._signals[id]
@@ -111,9 +111,14 @@ class Dataset(BaseModel):
     def _get_all_signals(self) -> list["Signal"]:
         if self.n_signals is None or len(self._signals) < self.n_signals:
             r = self._client.get(f"/stream/{self.datastream_id}/dataset/{self.id}/signals")
-            for signal in validate_response(r, "Failed to get signals"):
-                signal_obj = Signal.from_dict(self._client, self.datastream_id, self.id, value=signal)
-                self._signals[signal_obj.id] = signal_obj
+            self._signals.clear()
+            for response in validate_response(r, "Failed to get signals"):
+                try:
+                    signal = Signal(self._client, self.datastream_id, self.id, **response)
+                except ValidationError as e:
+                    warnings.warn(f"Failed to create signal {response['name']} (id {response['id']}): {e}")
+                    continue
+                self._signals[signal.id] = signal
         return list(self._signals.values())
 
     def get_signals(self, signal_names: Iterable[str | re.Pattern] | None = None) -> list["Signal"]:
@@ -125,40 +130,83 @@ class Dataset(BaseModel):
         """
         if signal_names is None:
             return self._get_all_signals()
-
-        all_signal_names = set(self._client.get_signal_map().keys())
-        matching_signals = find_matching_signals(all_signal_names, filters=signal_names)
+        signals = self._client.find_matching_signals(signal_names)
+        if len(signals) == 0:
+            return []
 
         r = self._client.get(
             f"/stream/{self.datastream_id}/dataset/{self.id}/signals",
-            params={"signal_names": list(matching_signals)},
+            params={"signal_ids": list(signals.values())},
         )
-        return [
-            Signal.from_dict(self._client, self.datastream_id, self.id, value=signal)
-            for signal in validate_response(r, "Failed to get signals by name")
-        ]
+        signals = []
+        for response in validate_response(r, "Failed to get signals by name"):
+            try:
+                signal = Signal(self._client, self.datastream_id, self.id, **response)
+                signals.append(signal)
+            except ValidationError as e:
+                warnings.warn(f"Failed to create signal {response['name']} (id {response['id']}): {e}")
+                continue
+            self._signals[signal.id] = signal
+        return signals
 
     def get_data(
         self,
         signals: Iterable[str | re.Pattern],
         resample_rule: Optional[Frequency] = None,
         resample_aggregate: AggFuncType = "mean",
+        dtype: Literal["numeric", "text"] | None = None,
         **kwargs,
     ) -> pd.DataFrame:
         """
-        Get the data for this dataset for the specified signals as a pandas DataFrame.
+        Build a single DataFrame for multiple signals in this dataset.
 
-        Each dataframe contains a time column and one column for each signal.
-        The dataframe is resampled according to the `resample_rule` parameter, which is passed to pandas `resample` function.
-        If `resample_rule` is None, the original data is returned.
-        The `resample_aggregate` parameter determines how to aggregate if there are multiple values for the same time period during resampling.
-        Extra keyword arguments are passed to the pandas `resample` function.
+        Args:
+            signals: Iterable of signal names or regular expression patterns to match.
+            resample_rule: Pandas resampling frequency (for example `"1s"`). If `None`,
+                data is returned at original resolution.
+            resample_aggregate: Aggregation used during resampling (for example `"mean"`,
+                `"max"`, or a callable).
+            dtype: Data type to read from the parquet files. If `None`, the data type is inferred from the signal data.
+            **kwargs: Extra keyword arguments forwarded to `DataFrame.resample()`.
+
+        Returns:
+            A pandas DataFrame containing one column per signal, aligned on time.
         """
-        signal_objs = self.get_signals(signal_names=signals)
+        return self._get_signals_dataframe(
+            self._client.find_matching_signals(signals).items(),
+            resample_rule,
+            resample_aggregate,
+            dtype,
+            **kwargs,
+        )
+
+    def _get_signals_dataframe(
+        self,
+        signals: Iterable[tuple[str, int]],
+        resample_rule: Optional[Frequency] = None,
+        resample_aggregate: AggFuncType = "mean",
+        dtype: Literal["numeric", "text"] | None = None,
+        **kwargs,
+    ) -> pd.DataFrame:
+        """
+        Build a single DataFrame for multiple signals in this dataset.
+
+        Args:
+            signals: Iterable of `(signal_name, signal_id)` pairs to load.
+            resample_rule: Pandas resampling frequency (for example `"1s"`). If `None`,
+                data is returned at original resolution.
+            resample_aggregate: Aggregation used during resampling (for example `"mean"`,
+                `"max"`, or a callable).
+            dtype: Data type to read from the parquet files. If `None`, the data type is inferred from the signal data.
+            **kwargs: Extra keyword arguments forwarded to `DataFrame.resample()`.
+
+        Returns:
+            A pandas DataFrame containing one column per signal, aligned on time.
+        """
         df = pd.DataFrame()
-        for signal_obj in signal_objs:
-            signal_df = signal_obj.get_data().rename(columns={COL_VAL: signal_obj.name}).set_index(COL_TIME)
-            df = df.join(signal_df, how="outer")
+        for signal_name, signal_id in signals:
+            signal = self._client.get_dataframe(self.id, signal_id, dtype).rename(columns={COL_VAL: signal_name})
+            df = df.join(signal, how="outer")
         if resample_rule is not None and not df.empty:
             df = df.resample(resample_rule, **kwargs).agg(resample_aggregate)  # type: ignore
         return df
@@ -219,15 +267,6 @@ class Dataset(BaseModel):
         validate_response(r, "Delete dataset failed")
 
 
-def find_matching_signals(existing_signals: set[str], filters: Iterable[str | re.Pattern]) -> set[str]:
-    literal_names = {signal for signal in filters if isinstance(signal, str) and signal in existing_signals}
-    regex_patterns = [signal for signal in filters if isinstance(signal, re.Pattern)]
-    regex_names = {
-        signal for signal in existing_signals if any(pattern.search(signal) for pattern in regex_patterns)
-    }
-    return literal_names | regex_names
-
-
 class DatasetList(UserList[Dataset]):
     """
     A list-like container for datasets with helper filtering methods.
@@ -245,10 +284,8 @@ class DatasetList(UserList[Dataset]):
         for value in values:
             try:
                 dataset = Dataset(client=client, **value)
-            except Exception as e:
-                warnings.warn(
-                    f"Skipping dataset with id {value.get('id')} and path {value.get('path')}. {e.__class__.__name__}"
-                )
+            except ValidationError as e:
+                warnings.warn(f"Failed to create dataset with id {value.get('id')} and path {value.get('path')}: {e}")
                 continue
             datasets.append(dataset)
         return cls(datasets)
@@ -259,9 +296,7 @@ class DatasetList(UserList[Dataset]):
         """
         return self.where(lambda d: d.import_status == "FINISHED")
 
-    def where_metadata(
-        self, metadata: dict[str, int | str | Iterable[int | str]] | None = None
-    ) -> "DatasetList":
+    def where_metadata(self, metadata: dict[str, int | str | Iterable[int | str]] | None = None) -> "DatasetList":
         """
         Filter datasets by their metadata fields.
 
@@ -399,23 +434,34 @@ class DatasetList(UserList[Dataset]):
         signals: Iterable[str | re.Pattern],
         resample_rule: None | Frequency = None,
         resample_aggregate: AggFuncType = "mean",
+        dtype: Literal["numeric", "text"] | None = None,
         **kwargs,
     ) -> Iterable[tuple[Dataset, pd.DataFrame]]:
         """
-        Get the data for all datasets in this list for the specified signals. Returns an iterable of (dataset, dataframe) tuples.
+        Build a single DataFrame for multiple signals for each dataset in the list.
 
-        Each dataframe contains the data for one dataset with a time column and one column for each signal.
-        The dataframe is resampled according to the `resampling` parameter, which is passed to pandas `resample` function.
-        If `resampling` is None, the original data is returned.
+        Args:
+            signals: Iterable of signal names or regular expression patterns to match.
+            resample_rule: Pandas resampling frequency (for example `"1s"`). If `None`,
+                data is returned at original resolution.
+            resample_aggregate: Aggregation used during resampling (for example `"mean"`,
+                `"max"`, or a callable).
+            dtype: Data type to read from the parquet files. If `None`, the data type is inferred from the signal data.
+            **kwargs: Extra keyword arguments forwarded to `DataFrame.resample()`.
+
+        Yields:
+            Tuples of `(Dataset, DataFrame)`, where the DataFrame contains one column per signal, aligned on time.
         """
-        # Avoid having to search the regexes for every individual dataset
-        existing_signals = set(self.data[0]._client.get_signal_map().keys()) if self.data else set()
-        matching_signals = find_matching_signals(existing_signals, signals)
+        if len(self.data) == 0:
+            return
+        # Avoid having to search signals for every individual dataset
+        signal_pairs = list(self.data[0]._client.find_matching_signals(signals).items())
         for dataset in self.data:
-            yield dataset, dataset.get_data(
-                signals=matching_signals,
+            yield dataset, dataset._get_signals_dataframe(
+                signals=signal_pairs,
                 resample_rule=resample_rule,
                 resample_aggregate=resample_aggregate,
+                dtype=dtype,
                 **kwargs,
             )
 

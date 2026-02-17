@@ -9,9 +9,6 @@ import numpy as np
 import pandas as pd
 import pyarrow as pa
 import pyarrow.parquet as pq
-from requests import Response
-from requests.exceptions import ConnectionError
-
 from marple.db.constants import (
     COL_SIG,
     COL_TIME,
@@ -24,6 +21,9 @@ from marple.db.dataset import Dataset, DatasetList
 from marple.db.datastream import DataStream
 from marple.db.signal import Signal
 from marple.utils import DBClient, validate_response
+from pydantic import ValidationError
+from requests import Response
+from requests.exceptions import ConnectionError
 
 __all__ = ["DB", "DataStream", "Dataset", "DatasetList", "Signal", "SCHEMA"]
 
@@ -65,6 +65,7 @@ class DB:
     ):
         self._streams: dict[int, DataStream] = {}
         self.client = DBClient(api_token, api_url, datapool, cache_folder)
+        self.check_connection()
 
     # Utility functions #
 
@@ -92,30 +93,34 @@ class DB:
         """
         Check if the connection to the Marple DB API is working.
          - If the connection is successful, returns True.
-         - If the connection fails, logs an error message and returns False.
+         - If the connection fails, raise an error.
         """
         try:
             r = self.client.get("/health")
         except ConnectionError:
             error_text = f"Could not connect to Marple DB at {self.client.api_url}. Please check if the api_url parameter is correct (ends with /api/v1) and try again."
-            logging.error(error_text)
-            return False
+            raise Exception(error_text)
         if r.status_code == 404:
             error_text = f"Could not find Marple DB at {r.request.url}. Please check if the api_url parameter is correct and try again."
             if not self.client.api_url.endswith("/api/v1"):
                 error_text += " The api_url parameter should end with /api/v1"
-            logging.error(error_text)
-            return False
+            raise Exception(error_text)
         if r.status_code != 200:
             error_text = f"Unknown error occurred while connecting to Marple DB at {r.request.url}. Status code: {r.status_code}."
-            logging.error(error_text)
-            return False
+            raise Exception(error_text)
+        try:
+            status = r.json()["status"]
+        except Exception:
+            error_text = f"Could not connect to Marple DB at {self.client.api_url}. Please check if the api_url parameter is correct (ends with /api/v1) and try again."
+            raise Exception(error_text)
+        if status != "healthy":
+            error_text = f"Could not connect to Marple DB at {self.client.api_url}. Please check if the api_url parameter is correct (ends with /api/v1) and try again."
+            raise Exception(error_text)
 
         r = self.client.get("/streams")
         if r.status_code == 403:
             error_text = "Invalid API token. Please check if the api_token parameter is correct and not expired."
-            logging.error(error_text)
-            return False
+            raise Exception(error_text)
 
         self._refresh_stream_cache(r)
         return True
@@ -134,7 +139,7 @@ class DB:
         signal_reduction: Optional[list] = None,
         insight_workspace: Optional[str] = None,
         insight_project: Optional[str] = None,
-    ) -> int:
+    ) -> DataStream:
         """
         Create a new datastream.
         """
@@ -187,11 +192,7 @@ class DB:
         if isinstance(stream_key, int):
             return self._streams.get(stream_key)
         return next(
-            (
-                s
-                for s in self._streams.values()
-                if s.name.lower() == stream_key.lower() or str(s.id) == stream_key
-            ),
+            (s for s in self._streams.values() if s.name.lower() == stream_key.lower() or str(s.id) == stream_key),
             None,
         )
 
@@ -211,10 +212,13 @@ class DB:
         if r is None:
             r = self.get("/streams")
 
-        self._streams = {
-            stream["id"]: DataStream(client=self.client, **stream)
-            for stream in validate_response(r, "Failed to fetch streams")["streams"]
-        }
+        self._streams.clear()
+        for stream in validate_response(r, "Failed to fetch streams")["streams"]:
+            try:
+                self._streams[stream["id"]] = DataStream(client=self.client, **stream)
+            except ValidationError as e:
+                warnings.warn(f"Failed to create stream {stream['name']} (id {stream['id']}): {e}")
+                continue
 
     def get_datasets(self, stream_key: str | int | None = None) -> DatasetList:
         """
@@ -435,9 +439,7 @@ class DB:
                 raise Exception(f"DataFrame must contain {COL_TIME} and {COL_SIG} columns")
             if not (COL_VAL in data.columns or COL_VAL_TEXT in data.columns):
                 raise Exception(f"DataFrame must contain at least one of {COL_VAL} or {COL_VAL_TEXT} columns")
-            value = (
-                pd.to_numeric(data[COL_VAL], errors="coerce") if COL_VAL in data.columns else pa.nulls(len(data))
-            )
+            value = pd.to_numeric(data[COL_VAL], errors="coerce") if COL_VAL in data.columns else pa.nulls(len(data))
             value_text = data[COL_VAL_TEXT] if COL_VAL_TEXT in data.columns else pa.nulls(len(data))
             table = pa.Table.from_arrays([data[COL_TIME], data[COL_SIG], value, value_text], schema=SCHEMA)
 

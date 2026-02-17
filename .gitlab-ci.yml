@@ -81,5 +81,5 @@ pages:
       - public
     expire_in: 30 days
   rules:
-    - when: manual
-
+    - if: $CI_COMMIT_BRANCH
+      when: manual
