@@ -191,7 +191,7 @@ classdef DB
       end
       dataset_id = obj.find_dataset_id(dataset_path);
       signal_id = obj.find_signal_id(dataset_id, signal_name);
-      cache = sprintf('_marplecache/%s/%s/dataset=%d/signal=%d', obj.workspace, obj.datapool, out.dataset_id, signal_id);
+      cache = sprintf('_marplecache/%s/%s/dataset=%d/signal=%d', obj.workspace, obj.datapool, dataset_id, signal_id);
 
       if ~isfolder(cache)
         mkdir(cache)
