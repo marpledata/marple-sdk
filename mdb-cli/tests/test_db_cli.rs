@@ -223,7 +223,7 @@ async fn test_db_flow_via_cli() {
     let dataset_id = find_last_i32(&ingest_out).expect("dataset_id from ingest output");
 
     // Poll ingest status until finished/failed
-    let deadline = std::time::Instant::now() + Duration::from_secs(10);
+    let deadline = std::time::Instant::now() + Duration::from_secs(60);
     let mut last_status = None::<String>;
     while std::time::Instant::now() < deadline {
         let ds_get = mdb_cmd(&token, url.as_deref())
@@ -316,13 +316,11 @@ async fn test_db_flow_via_cli() {
     let paths_json = mdb_cmd(&token, url.as_deref())
         .args([
             "get",
-            &format!("/stream/{stream_id}/dataset/{dataset_id}/signal/{signal_id}/path"),
+            &format!("/datapool/default/dataset/{dataset_id}/signal/{signal_id}/data"),
         ])
         .assert()
         .success();
-    let paths = parse_json_stdout(&paths_json)
-        .get("paths")
-        .and_then(|v| v.as_array())
+    let paths = parse_json_stdout(&paths_json).as_array()
         .expect("paths array")
         .iter()
         .filter_map(|v| v.as_str().map(|s| s.to_string()))

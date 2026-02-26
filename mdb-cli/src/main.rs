@@ -409,7 +409,7 @@ impl MarpleDB {
         form = form.part("dataset_name", Part::text(file_name.clone()));
         form = form.part(
             "file",
-            Part::stream(Body::wrap_stream(stream)).file_name(file_name.clone()),
+            Part::stream_with_length(Body::wrap_stream(stream), total_size).file_name(file_name.clone()),
         );
 
         let endpoint = format!("stream/{}/ingest", stream_id);

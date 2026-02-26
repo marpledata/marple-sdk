@@ -58,5 +58,5 @@ license = "Apache-2.0"
 name = "mdb-cli"
 readme = "README.md"
 repository = "https://github.com/marpledata/marple-sdk/tree/main/mdb-cli"
-version = "0.1.0"
+version = "0.1.1"
 exclude = ["target/", ".git/", ".gitignore"]
