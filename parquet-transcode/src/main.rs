@@ -64,15 +64,15 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
     let mut transcoded = 0u32;
     let mut skipped = 0u32;
 
-    for entry in fs::read_dir(dir)? {
+    for entry in walkdir::WalkDir::new(dir) {
         let entry = entry?;
         let path = entry.path();
         if path.extension().and_then(|e| e.to_str()) != Some("parquet") {
             continue;
         }
 
-        if needs_transcode(&path)? {
-            transcode(&path)?;
+        if needs_transcode(path)? {
+            transcode(path)?;
             transcoded += 1;
         } else {
             skipped += 1;
