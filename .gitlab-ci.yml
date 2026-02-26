@@ -99,7 +99,8 @@ build:parquet-transcode:
   variables:
     DOCKER_HOST: tcp://docker:2375
     DOCKER_TLS_CERTDIR: ""
-    CROSS_REMOTE: "true"
+    DOCKER_DRIVER: overlay2
+    CROSS_REMOTE: "1"
   cache:
     key:
       files:
@@ -114,18 +115,14 @@ build:parquet-transcode:
     - cargo --version
     - curl -fsSL https://download.docker.com/linux/static/stable/x86_64/docker-27.5.1.tgz | tar xz --strip-components=1 -C /usr/local/bin docker/docker
     - docker version
-    - cargo install cross --version 0.2.5
+    - cargo install cross --git https://github.com/cross-rs/cross
   script:
     - cd parquet-transcode
     - cross build --release --target x86_64-pc-windows-gnu
     - cross build --release --target x86_64-unknown-linux-gnu
-    - cross build --release --target x86_64-apple-darwin
-    - cross build --release --target aarch64-apple-darwin
     - mkdir -p artifacts
     - cp target/x86_64-pc-windows-gnu/release/parquet-transcode.exe artifacts/parquet-transcode-windows-x64.exe
     - cp target/x86_64-unknown-linux-gnu/release/parquet-transcode artifacts/parquet-transcode-linux-x64
-    - cp target/x86_64-apple-darwin/release/parquet-transcode artifacts/parquet-transcode-darwin-x64
-    - cp target/aarch64-apple-darwin/release/parquet-transcode artifacts/parquet-transcode-darwin-arm64
   artifacts:
     paths:
       - parquet-transcode/artifacts/
@@ -140,7 +137,8 @@ build:mdb-cli:
   variables:
     DOCKER_HOST: tcp://docker:2375
     DOCKER_TLS_CERTDIR: ""
-    CROSS_REMOTE: "true"
+    DOCKER_DRIVER: overlay2
+    CROSS_REMOTE: "1"
   cache:
     key:
       files:
@@ -155,18 +153,14 @@ build:mdb-cli:
     - cargo --version
     - curl -fsSL https://download.docker.com/linux/static/stable/x86_64/docker-27.5.1.tgz | tar xz --strip-components=1 -C /usr/local/bin docker/docker
     - docker version
-    - cargo install cross --version 0.2.5
+    - cargo install cross --git https://github.com/cross-rs/cross
   script:
     - cd mdb-cli
     - cross build --release --target x86_64-pc-windows-gnu
     - cross build --release --target x86_64-unknown-linux-gnu
-    - cross build --release --target x86_64-apple-darwin
-    - cross build --release --target aarch64-apple-darwin
     - mkdir -p artifacts
     - cp target/x86_64-pc-windows-gnu/release/mdb.exe artifacts/mdb-windows-x64.exe
     - cp target/x86_64-unknown-linux-gnu/release/mdb artifacts/mdb-linux-x64
-    - cp target/x86_64-apple-darwin/release/mdb artifacts/mdb-darwin-x64
-    - cp target/aarch64-apple-darwin/release/mdb artifacts/mdb-darwin-arm64
   artifacts:
     paths:
       - mdb-cli/artifacts/
