@@ -94,6 +94,11 @@ rust:parquet-transcode:
 build:parquet-transcode:
   image: rust:1.93
   stage: release
+  services:
+    - docker:dind
+  variables:
+    DOCKER_HOST: tcp://docker:2375
+    DOCKER_TLS_CERTDIR: ""
   cache:
     key:
       files:
@@ -121,6 +126,44 @@ build:parquet-transcode:
   artifacts:
     paths:
       - parquet-transcode/artifacts/
+  rules:
+    - when: manual
+
+build:mdb-cli:
+  image: rust:1.93
+  stage: release
+  services:
+    - docker:dind
+  variables:
+    DOCKER_HOST: tcp://docker:2375
+    DOCKER_TLS_CERTDIR: ""
+  cache:
+    key:
+      files:
+        - mdb-cli/Cargo.lock
+        - mdb-cli/Cargo.toml
+    paths:
+      - mdb-cli/target/
+      - .cargo/registry/
+      - .cargo/git/
+  before_script:
+    - rustc --version
+    - cargo --version
+    - cargo install cross --git https://github.com/cross-rs/cross
+  script:
+    - cd mdb-cli
+    - cross build --release --target x86_64-pc-windows-gnu
+    - cross build --release --target x86_64-unknown-linux-gnu
+    - cross build --release --target x86_64-apple-darwin
+    - cross build --release --target aarch64-apple-darwin
+    - mkdir -p artifacts
+    - cp target/x86_64-pc-windows-gnu/release/mdb.exe artifacts/mdb-windows-x64.exe
+    - cp target/x86_64-unknown-linux-gnu/release/mdb artifacts/mdb-linux-x64
+    - cp target/x86_64-apple-darwin/release/mdb artifacts/mdb-darwin-x64
+    - cp target/aarch64-apple-darwin/release/mdb artifacts/mdb-darwin-arm64
+  artifacts:
+    paths:
+      - mdb-cli/artifacts/
   rules:
     - when: manual
 

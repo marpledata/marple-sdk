@@ -29,17 +29,22 @@ classdef DB
       arch = computer('arch');
       switch arch
         case 'win64'
-          bin_name = 'parquet-transcode-windows-x64.exe';
+          platform = 'windows-x64';
+          ext = '.exe';
         case 'maca64'
-          bin_name = 'parquet-transcode-darwin-arm64';
+          platform = 'darwin-arm64';
+          ext = '';
         case 'maci64'
-          bin_name = 'parquet-transcode-darwin-x64';
+          platform = 'darwin-x64';
+          ext = '';
         case 'glnxa64'
-          bin_name = 'parquet-transcode-linux-x64';
+          platform = 'linux-x64';
+          ext = '';
         otherwise
           error('Unsupported platform: %s', arch);
       end
 
+      bin_name = sprintf('parquet-transcode-%s-%s%s', DB.TRANSCODE_VERSION, platform, ext);
       bin_dir = fullfile(fileparts(mfilename('fullpath')), 'bin');
       bin_path = fullfile(bin_dir, bin_name);
 
