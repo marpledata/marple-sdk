@@ -42,7 +42,7 @@ classdef DB
       end
 
       bin_name = sprintf('parquet-transcode-%s-%s%s', DB.TRANSCODE_VERSION, platform, ext);
-      bin_dir = fullfile(fileparts(mfilename('fullpath')), 'bin');
+      bin_dir = fullfile(fileparts(mfilename('fullpath')), '_marplecache/bin');
       bin_path = fullfile(bin_dir, bin_name);
 
       if isfile(bin_path)
