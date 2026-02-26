@@ -8,9 +8,13 @@ classdef DB
     streams % Cache for available streams
   end
 
+  properties (Constant, Access = private)
+    TRANSCODE_VERSION = 'v0.1.0'
+    TRANSCODE_BASE_URL = 'https://github.com/marpledata/marple-sdk/releases/download/parquet-transcode'
+  end
+
   methods (Static, Access = private)
     function cfg = read_config()
-      % Read JSON configuration file from same directory as this class
       json_path = fullfile(fileparts(mfilename('fullpath')), 'config.json');
       if ~isfile(json_path)
         error('Configuration file not found: %s', json_path);
@@ -19,6 +23,49 @@ classdef DB
       raw = fread(fid, '*char')';
       fclose(fid);
       cfg = jsondecode(raw);
+    end
+
+    function bin_path = ensure_binary()
+      arch = computer('arch');
+      switch arch
+        case 'win64'
+          bin_name = 'parquet-transcode-windows-x64.exe';
+        case 'maca64'
+          bin_name = 'parquet-transcode-darwin-arm64';
+        case 'maci64'
+          bin_name = 'parquet-transcode-darwin-x64';
+        case 'glnxa64'
+          bin_name = 'parquet-transcode-linux-x64';
+        otherwise
+          error('Unsupported platform: %s', arch);
+      end
+
+      bin_dir = fullfile(fileparts(mfilename('fullpath')), 'bin');
+      bin_path = fullfile(bin_dir, bin_name);
+
+      if isfile(bin_path)
+        return;
+      end
+
+      if ~isfolder(bin_dir)
+        mkdir(bin_dir);
+      end
+
+      url = sprintf('%s-%s/%s', DB.TRANSCODE_BASE_URL, DB.TRANSCODE_VERSION, bin_name);
+      fprintf('Downloading %s for %s...\n', bin_name, arch);
+      websave(bin_path, url);
+
+      if ~strcmp(arch, 'win64')
+        system(sprintf('chmod +x "%s"', bin_path));
+      end
+    end
+
+    function transcode_cache(cache_dir)
+      bin_path = DB.ensure_binary();
+      [status, msg] = system(sprintf('"%s" "%s"', bin_path, cache_dir));
+      if status ~= 0
+        error('Parquet transcode failed: %s', msg);
+      end
     end
   end
 
@@ -164,8 +211,14 @@ classdef DB
         end
       end
 
-      ds = parquetDatastore(cache);
-      T = readall(ds);
+      try
+        ds = parquetDatastore(cache);
+        T = readall(ds);
+      catch
+        DB.transcode_cache(cache);
+        ds = parquetDatastore(cache);
+        T = readall(ds);
+      end
 
       if is_text
         T = removevars(T, 'value');

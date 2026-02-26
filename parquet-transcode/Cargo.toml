@@ -1,0 +1,14 @@
+[package]
+name = "parquet-transcode"
+version = "0.1.0"
+edition = "2024"
+description = "Transcode zstd-compressed Parquet files to Snappy for older MATLAB compatibility"
+license = "Apache-2.0"
+
+[[bin]]
+name = "parquet-transcode"
+path = "src/main.rs"
+
+[dependencies]
+arrow = "57"
+parquet = { version = "57", features = ["snap", "zstd"] }
