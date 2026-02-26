@@ -1,4 +1,5 @@
 use std::fs;
+use std::path::Path;
 use std::process::Command;
 
 use parquet::basic::Compression;
@@ -22,6 +23,19 @@ fn copy_parquet_dir(src: &std::path::Path, dst: &std::path::Path) {
         let entry = entry.unwrap();
         if entry.path().extension().and_then(|e| e.to_str()) == Some("parquet") {
             fs::copy(entry.path(), dst.join(entry.file_name())).unwrap();
+        }
+    }
+}
+
+fn copy_tree(src: &std::path::Path, dst: &std::path::Path) {
+    for entry in walkdir::WalkDir::new(src) {
+        let entry = entry.unwrap();
+        let rel = entry.path().strip_prefix(src).unwrap();
+        let target = dst.join(rel);
+        if entry.file_type().is_dir() {
+            fs::create_dir_all(&target).unwrap();
+        } else if entry.path().extension().and_then(|e| e.to_str()) == Some("parquet") {
+            fs::copy(entry.path(), &target).unwrap();
         }
     }
 }
@@ -106,4 +120,49 @@ fn preserves_data_after_transcode() {
     assert_eq!(schema_before, schema_after, "schema should be preserved");
     assert_eq!(rows_before, rows_after, "row count should be preserved");
     assert!(rows_before > 0, "test fixture should have data");
+}
+
+#[test]
+fn recursive_traversal() {
+    let tmp = tempfile::tempdir().unwrap();
+    let src = Path::new("test_data");
+    let dst = tmp.path().join("test_data");
+    copy_tree(src, &dst);
+
+    // dataset=1/signal=5 is already snappy, capture its bytes to verify it's untouched
+    let snappy_file = dst.join("dataset=1/signal=5/mdb_m.speed.parquet");
+    let snappy_hash = file_hash(&snappy_file);
+
+    // zstd files that should be transcoded
+    let zstd_files = [
+        dst.join("dataset=1/signal=2/mdb_m.engineRate.parquet"),
+        dst.join("dataset=7/signal=2/mdb_m.engineRate.parquet"),
+        dst.join("dataset=7/signal=5/mdb_m.speed.parquet"),
+    ];
+    for f in &zstd_files {
+        assert!(
+            matches!(get_compression(f), Compression::ZSTD(_)),
+            "{} should be zstd before transcode",
+            f.display()
+        );
+    }
+
+    let output = Command::new(bin()).arg(&dst).output().unwrap();
+    assert!(output.status.success(), "failed: {}", String::from_utf8_lossy(&output.stderr));
+
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(stderr.contains("transcoded 3"), "expected 3 transcoded, got: {stderr}");
+    assert!(stderr.contains("skipped 1"), "expected 1 skipped, got: {stderr}");
+
+    for f in &zstd_files {
+        assert_eq!(
+            get_compression(f),
+            Compression::SNAPPY,
+            "{} should be snappy after transcode",
+            f.display()
+        );
+    }
+
+    // Snappy file should be byte-identical
+    assert_eq!(file_hash(&snappy_file), snappy_hash, "already-snappy file should be untouched");
 }
