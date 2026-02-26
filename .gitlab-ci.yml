@@ -99,6 +99,7 @@ build:parquet-transcode:
   variables:
     DOCKER_HOST: tcp://docker:2375
     DOCKER_TLS_CERTDIR: ""
+    CROSS_REMOTE: "true"
   cache:
     key:
       files:
@@ -139,6 +140,7 @@ build:mdb-cli:
   variables:
     DOCKER_HOST: tcp://docker:2375
     DOCKER_TLS_CERTDIR: ""
+    CROSS_REMOTE: "true"
   cache:
     key:
       files:
