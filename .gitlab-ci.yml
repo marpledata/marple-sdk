@@ -113,7 +113,7 @@ build:parquet-transcode:
     - cargo --version
     - curl -fsSL https://download.docker.com/linux/static/stable/x86_64/docker-27.5.1.tgz | tar xz --strip-components=1 -C /usr/local/bin docker/docker
     - docker version
-    - cargo install cross --git https://github.com/cross-rs/cross
+    - cargo install cross --version 0.2.5
   script:
     - cd parquet-transcode
     - cross build --release --target x86_64-pc-windows-gnu
@@ -153,7 +153,7 @@ build:mdb-cli:
     - cargo --version
     - curl -fsSL https://download.docker.com/linux/static/stable/x86_64/docker-27.5.1.tgz | tar xz --strip-components=1 -C /usr/local/bin docker/docker
     - docker version
-    - cargo install cross --git https://github.com/cross-rs/cross
+    - cargo install cross --version 0.2.5
   script:
     - cd mdb-cli
     - cross build --release --target x86_64-pc-windows-gnu
