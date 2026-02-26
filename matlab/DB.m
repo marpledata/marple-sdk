@@ -93,11 +93,14 @@ classdef DB
   end
 
   methods (Access = private)
-    function response = make_request(obj, method, endpoint, data)
-      % Make HTTP request to API
-      % method: 'GET' or 'POST'
-      % endpoint: API endpoint starting with /
-      % data: struct for POST body (optional)
+    function response = make_request(obj, method, endpoint, data, query_params)
+      arguments
+        obj
+        method
+        endpoint
+        data = []
+        query_params = struct()
+      end
 
       headers = {
         'Authorization', ['Bearer ' obj.api_key];
@@ -106,23 +109,17 @@ classdef DB
       options = weboptions('HeaderFields', headers, ...
                          'ContentType', 'json', ...
                          'RequestMethod', method);
-                        % Combine base URL and endpoint
-                        url = [obj.api_url endpoint];
+      url = [obj.api_url endpoint];
       try
           if strcmp(method, 'GET')
-              response = webread(url, options);
+              qp_args = namedargs2cell(query_params);
+              response = webread(url, qp_args{:}, options);
           else
               response = webwrite(url, data, options);
           end
       catch ME
           error('API request failed: %s', ME.message);
       end
-    end
-
-    function data = query(obj, query_string)
-      endpoint = '/query';
-      body = struct('query', query_string, 'hot', true);
-      data = obj.make_request('POST', endpoint, body);
     end
 
     function stream_id = find_stream_id(obj, stream_name)
@@ -138,23 +135,16 @@ classdef DB
       error('Stream "%s" not found. Available streams are: %s', stream_name, available_names);
     end
 
-    function out = find_stream_and_dataset_id(obj, dataset_path)
-      query_string = sprintf('select id, stream_id from mdb_%s_dataset where path = ''%s''', obj.datapool, dataset_path);
-      res = obj.query(query_string);
-      if numel(res.data) ~= 2 
-        error('Dataset "%s" not found', dataset_path);
-      end
-      out.stream_id = res.data(2);
-      out.dataset_id = res.data(1);
+    function dataset_id = find_dataset_id(obj, dataset_path)
+      endpoint = sprintf('/datapool/%s/dataset', obj.datapool);
+      res = obj.make_request('GET', endpoint, [], struct('path', dataset_path));
+      dataset_id = res.id;
     end
 
-    function signal_id = find_signal_id(obj, signal_name)
-      query_string = sprintf('select id from mdb_%s_signal_enum where name = ''%s''', obj.datapool, signal_name);
-      res = obj.query(query_string);
-      if numel(res.data) ~= 1
-        error('Signal "%s" not found', signal_name);
-      end
-      signal_id = res.data;
+    function signal_id = find_signal_id(obj, dataset_id, signal_name)
+      endpoint = sprintf('/datapool/%s/dataset/%d/signal', obj.datapool, dataset_id);
+      res = obj.make_request('GET', endpoint, [], struct('name', signal_name));
+      signal_id = res.id;
     end
   end
 
@@ -199,16 +189,16 @@ classdef DB
         signal_name
         is_text logical = false
       end
-      out = obj.find_stream_and_dataset_id(dataset_path);
-      signal_id = obj.find_signal_id(signal_name);
+      dataset_id = obj.find_dataset_id(dataset_path);
+      signal_id = obj.find_signal_id(dataset_id, signal_name);
       cache = sprintf('_marplecache/%s/%s/dataset=%d/signal=%d', obj.workspace, obj.datapool, out.dataset_id, signal_id);
 
       if ~isfolder(cache)
         mkdir(cache)
-        endpoint = sprintf('/stream/%d/dataset/%d/signal/%d/path', out.stream_id, out.dataset_id, signal_id);
-        res = obj.make_request('GET', endpoint);
-        for i = 1:length(res.paths)
-          url = res.paths{i};
+        endpoint = sprintf('/datapool/%s/dataset/%d/signal/%d/data', obj.datapool, dataset_id, signal_id);
+        paths = obj.make_request('GET', endpoint);
+        for i = 1:length(paths)
+          url = paths{i};
           [~, name, ext] = fileparts(extractBefore(url, '?'));
           parquet_name = [name ext];
           cache_path = sprintf('%s/%s', cache, parquet_name);
@@ -241,5 +231,5 @@ classdef DB
       end
     end
   end
-  
+
 end
