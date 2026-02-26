@@ -101,15 +101,6 @@ build:parquet-transcode:
     DOCKER_TLS_CERTDIR: ""
     DOCKER_DRIVER: overlay2
     CROSS_REMOTE: "1"
-  cache:
-    key:
-      files:
-        - parquet-transcode/Cargo.lock
-        - parquet-transcode/Cargo.toml
-    paths:
-      - parquet-transcode/target/
-      - .cargo/registry/
-      - .cargo/git/
   before_script:
     - rustc --version
     - cargo --version
@@ -139,15 +130,6 @@ build:mdb-cli:
     DOCKER_TLS_CERTDIR: ""
     DOCKER_DRIVER: overlay2
     CROSS_REMOTE: "1"
-  cache:
-    key:
-      files:
-        - mdb-cli/Cargo.lock
-        - mdb-cli/Cargo.toml
-    paths:
-      - mdb-cli/target/
-      - .cargo/registry/
-      - .cargo/git/
   before_script:
     - rustc --version
     - cargo --version
