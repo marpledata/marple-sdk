@@ -64,6 +64,29 @@ rust:mdb-cli:
       changes:
         - mdb-cli/**/*
 
+rust:parquet-transcode:
+  image: rust:1.93
+  stage: test
+  cache:
+    key:
+      files:
+        - parquet-transcode/Cargo.lock
+        - parquet-transcode/Cargo.toml
+    paths:
+      - parquet-transcode/target/
+      - .cargo/registry/
+      - .cargo/git/
+  before_script:
+    - rustc --version
+    - cargo --version
+  script:
+    - cd parquet-transcode
+    - cargo test
+  rules:
+    - if: $CI_COMMIT_BRANCH
+      changes:
+        - parquet-transcode/**/*
+
 build:parquet-transcode:
   image: rust:1.93
   stage: release
