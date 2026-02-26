@@ -34,9 +34,6 @@ classdef DB
         case 'maca64'
           platform = 'darwin-arm64';
           ext = '';
-        case 'maci64'
-          platform = 'darwin-x64';
-          ext = '';
         case 'glnxa64'
           platform = 'linux-x64';
           ext = '';
