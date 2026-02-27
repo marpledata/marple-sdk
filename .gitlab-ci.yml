@@ -1,6 +1,10 @@
+workflow:
+  rules:
+    - if: $CI_COMMIT_BRANCH
+
 stages:
   - test
-  - docs
+  - release
 
 variables:
   UV_CACHE_DIR: "$CI_PROJECT_DIR/.cache/uv"
@@ -41,7 +45,7 @@ pytest:
         - python/**/*
 
 rust:mdb-cli:
-  image: rust:1.85
+  image: rust:1.93
   stage: test
   cache:
     key:
@@ -64,9 +68,90 @@ rust:mdb-cli:
       changes:
         - mdb-cli/**/*
 
+rust:parquet-transcode:
+  image: rust:1.93
+  stage: test
+  cache:
+    key:
+      files:
+        - parquet-transcode/Cargo.lock
+        - parquet-transcode/Cargo.toml
+    paths:
+      - parquet-transcode/target/
+      - .cargo/registry/
+      - .cargo/git/
+  before_script:
+    - rustc --version
+    - cargo --version
+  script:
+    - cd parquet-transcode
+    - cargo test
+  rules:
+    - if: $CI_COMMIT_BRANCH
+      changes:
+        - parquet-transcode/**/*
+
+build:parquet-transcode:
+  image: rust:1.93
+  stage: release
+  services:
+    - docker:dind
+  variables:
+    DOCKER_HOST: tcp://docker:2375
+    DOCKER_TLS_CERTDIR: ""
+    DOCKER_DRIVER: overlay2
+    CROSS_REMOTE: "1"
+  before_script:
+    - rustc --version
+    - cargo --version
+    - curl -fsSL https://download.docker.com/linux/static/stable/x86_64/docker-27.5.1.tgz | tar xz --strip-components=1 -C /usr/local/bin docker/docker
+    - docker version
+    - cargo install cross --git https://github.com/cross-rs/cross
+  script:
+    - cd parquet-transcode
+    - cross build --release --target x86_64-pc-windows-gnu
+    - cross build --release --target x86_64-unknown-linux-gnu
+    - mkdir -p artifacts
+    - cp target/x86_64-pc-windows-gnu/release/parquet-transcode.exe artifacts/parquet-transcode-windows-x64.exe
+    - cp target/x86_64-unknown-linux-gnu/release/parquet-transcode artifacts/parquet-transcode-linux-x64
+  artifacts:
+    paths:
+      - parquet-transcode/artifacts/
+  rules:
+    - when: manual
+
+build:mdb-cli:
+  image: rust:1.93
+  stage: release
+  services:
+    - docker:dind
+  variables:
+    DOCKER_HOST: tcp://docker:2375
+    DOCKER_TLS_CERTDIR: ""
+    DOCKER_DRIVER: overlay2
+    CROSS_REMOTE: "1"
+  before_script:
+    - rustc --version
+    - cargo --version
+    - curl -fsSL https://download.docker.com/linux/static/stable/x86_64/docker-27.5.1.tgz | tar xz --strip-components=1 -C /usr/local/bin docker/docker
+    - docker version
+    - cargo install cross --git https://github.com/cross-rs/cross
+  script:
+    - cd mdb-cli
+    - cross build --release --target x86_64-pc-windows-gnu
+    - cross build --release --target x86_64-unknown-linux-gnu
+    - mkdir -p artifacts
+    - cp target/x86_64-pc-windows-gnu/release/mdb.exe artifacts/mdb-windows-x64.exe
+    - cp target/x86_64-unknown-linux-gnu/release/mdb artifacts/mdb-linux-x64
+  artifacts:
+    paths:
+      - mdb-cli/artifacts/
+  rules:
+    - when: manual
+
 pages:
   image: python:3.11
-  stage: docs
+  stage: release
   before_script:
     - python --version
     - curl -LsSf https://astral.sh/uv/install.sh | sh

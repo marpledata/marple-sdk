@@ -1,5 +1,6 @@
 lol.py
 .mdb_cache/
+matlab/bin/
 
 python/docs/_build/
 python/docs/api/marple.*.rst
