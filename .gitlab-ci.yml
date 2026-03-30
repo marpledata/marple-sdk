@@ -133,13 +133,14 @@ build:mdb-cli:
   before_script:
     - rustc --version
     - cargo --version
+    - apt-get update && apt-get install -y --no-install-recommends pkg-config libssl-dev ca-certificates
     - curl -fsSL https://download.docker.com/linux/static/stable/x86_64/docker-27.5.1.tgz | tar xz --strip-components=1 -C /usr/local/bin docker/docker
     - docker version
     - cargo install cross --git https://github.com/cross-rs/cross
   script:
     - cd mdb-cli
     - cross build --release --target x86_64-pc-windows-gnu
-    - cross build --release --target x86_64-unknown-linux-gnu
+    - cargo build --release --locked --target x86_64-unknown-linux-gnu
     - mkdir -p artifacts
     - cp target/x86_64-pc-windows-gnu/release/mdb.exe artifacts/mdb-windows-x64.exe
     - cp target/x86_64-unknown-linux-gnu/release/mdb artifacts/mdb-linux-x64
