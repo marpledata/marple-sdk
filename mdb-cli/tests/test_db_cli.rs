@@ -187,6 +187,8 @@ async fn test_db_flow_via_cli() {
     let csv_path = example_csv_path();
     assert!(csv_path.exists(), "example CSV missing at {:?}", csv_path);
     let csv_size = fs::metadata(&csv_path).expect("csv metadata").len();
+    let metadata_deployment = "integration-test";
+    let metadata_foo = "Bar";
 
     // Create stream
     let stream_json = mdb_cmd(&token, url.as_deref())
@@ -215,7 +217,14 @@ async fn test_db_flow_via_cli() {
 
     // Ingest CSV -> parse dataset_id from stdout
     let ingest = mdb_cmd(&token, url.as_deref())
-        .args(["ingest", &stream_name])
+        .args([
+            "ingest",
+            &stream_name,
+            "-m",
+            &format!("Deployment={metadata_deployment}"),
+            "-m",
+            &format!("Foo={metadata_foo}"),
+        ])
         .arg(&csv_path)
         .assert()
         .success();
@@ -246,6 +255,28 @@ async fn test_db_flow_via_cli() {
         last_status.as_deref(),
         Some("FINISHED"),
         "ingest did not finish"
+    );
+
+    let ds_get = mdb_cmd(&token, url.as_deref())
+        .args(["dataset", &stream_name, "get", &dataset_id.to_string()])
+        .assert()
+        .success();
+    let ds_obj = parse_json_stdout(&ds_get);
+    assert_eq!(
+        ds_obj
+            .get("metadata")
+            .and_then(|v| v.get("Deployment"))
+            .and_then(|v| v.as_str()),
+        Some(metadata_deployment),
+        "dataset metadata missing Deployment value"
+    );
+    assert_eq!(
+        ds_obj
+            .get("metadata")
+            .and_then(|v| v.get("Foo"))
+            .and_then(|v| v.as_str()),
+        Some(metadata_foo),
+        "dataset metadata missing Foo value"
     );
 
     // List datasets

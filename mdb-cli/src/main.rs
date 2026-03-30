@@ -54,6 +54,10 @@ enum Commands {
         /// Stream name
         stream_name: String,
 
+        /// Metadata key=value pairs
+        #[arg(short, long, value_parser = parse_key_val)]
+        metadata: Vec<(String, Value)>,
+
         /// Files or directories to ingest
         files: Vec<PathBuf>,
 
@@ -366,6 +370,7 @@ impl MarpleDB {
         &self,
         stream_id: i32,
         datasets: &[Dataset],
+        metadata: &HashMap<String, Value>,
         file_path: &Path,
     ) -> Result<IngestResponse> {
         let file_name = file_path.file_name().unwrap().to_string_lossy().to_string();
@@ -407,6 +412,7 @@ impl MarpleDB {
 
         let mut form = Form::new();
         form = form.part("dataset_name", Part::text(file_name.clone()));
+        form = form.part("metadata", Part::text(serde_json::to_string(metadata)?));
         form = form.part(
             "file",
             Part::stream_with_length(Body::wrap_stream(stream), total_size).file_name(file_name.clone()),
@@ -562,6 +568,7 @@ async fn handle_dataset_commands(
 async fn handle_ingest(
     marpledb: &MarpleDB,
     stream_name: &str,
+    metadata: &HashMap<String, Value>,
     files: &[PathBuf],
     recursive: bool,
     extension: Option<&str>,
@@ -584,7 +591,9 @@ async fn handle_ingest(
     };
     for path in files {
         if should_ingest(path) {
-            marpledb.ingest_file(stream.id, &existing, path).await?;
+            marpledb
+                .ingest_file(stream.id, &existing, metadata, path)
+                .await?;
         } else if recursive && path.is_dir() {
             for entry in WalkDir::new(path)
                 .into_iter()
@@ -594,7 +603,7 @@ async fn handle_ingest(
                 let file_path = entry.path();
                 if should_ingest(file_path) {
                     marpledb
-                        .ingest_file(stream.id, &existing, file_path)
+                        .ingest_file(stream.id, &existing, metadata, file_path)
                         .await?;
                 }
             }
@@ -671,14 +680,17 @@ async fn main() -> Result<()> {
         } => handle_dataset_commands(&marpledb, &stream_name, &command).await?,
         Commands::Ingest {
             stream_name,
+            metadata,
             files,
             recursive,
             extension,
             skip_existing,
         } => {
+            let metadata = to_record(metadata);
             handle_ingest(
                 &marpledb,
                 &stream_name,
+                &metadata,
                 &files,
                 recursive,
                 extension.as_deref(),

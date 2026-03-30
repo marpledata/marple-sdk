@@ -24,6 +24,9 @@ mdb stream new "Test Stream" plugin=csv
 # Ingest a CSV file
 mdb ingest "Test Stream" data.csv
 
+# Ingest a CSV file with dataset metadata
+mdb ingest "Test Stream" -m Deployment=prod -m Foo=Bar data.csv
+
 # List datasets in the stream
 mdb dataset "Test Stream" list
 
@@ -45,6 +48,9 @@ mdb ingest "Data Stream" --recursive --extension csv ./data_directory/
 
 # Ingest MDF files, skipping already uploaded ones
 mdb ingest "MDF Stream" --recursive --extension mf4 --skip-existing ./mdf_files/
+
+# Ingest recursively with shared metadata applied to each uploaded file
+mdb ingest "Metrics" -m Deployment=value -m Foo=Bar --recursive --skip-existing ./data_directory/
 ```
 
 ## Getting Help

@@ -32,14 +32,14 @@ def _required_env(name: str) -> str:
 
 @pytest.fixture()
 def db() -> DB:
-    url = os.getenv("MDB_API_URL", marple.db.SAAS_URL)
+    url = os.getenv("MDB_URL", marple.db.SAAS_URL)
     assert url is not None
     return DB(_required_env("MDB_TOKEN"), url)
 
 
 @pytest.fixture(scope="session")
 def insight() -> Insight:
-    url = os.getenv("INSIGHT_API_URL", marple.insight.SAAS_URL)
+    url = os.getenv("INSIGHT_URL", marple.insight.SAAS_URL)
     assert url is not None
     return Insight(_required_env("INSIGHT_TOKEN"), api_url=url)
 
@@ -59,7 +59,7 @@ def _ingest_dataset(stream: DataStream, metadata: dict | None = None) -> Dataset
 
 @pytest.fixture(scope="session")
 def example_stream() -> DataStream:
-    url = os.getenv("MDB_API_URL", marple.db.SAAS_URL)
+    url = os.getenv("MDB_URL", marple.db.SAAS_URL)
     assert url is not None
     session_db = DB(_required_env("MDB_TOKEN"), url)
 
@@ -78,7 +78,6 @@ def test_db_check_connection(db: DB) -> None:
     assert db.check_connection() is True
     with pytest.raises(Exception, match="Invalid API token"):
         DB("invalid_token", marple.db.SAAS_URL).check_connection()
-
 
 
 def test_db_get_streams_and_datasets(db: DB, example_stream: DataStream) -> None:

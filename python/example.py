@@ -9,7 +9,7 @@ api_token = os.getenv("MDB_TOKEN")
 if api_token is None:
     raise ValueError("MDB_TOKEN environment variable not set")
 
-url = os.getenv("MDB_API_URL")
+url = os.getenv("MDB_URL")
 db = DB(api_token, url)
 db.check_connection()
 
@@ -28,7 +28,7 @@ stream.push_file("examples_race.csv", metadata={"car_id": 2, "track": "track_2",
 datasets = db.get_datasets()  # Get all datasets across all streams
 datasets = datasets.where_metadata({"car_id": [1, 2], "track": "track_1"})
 datasets = datasets.wait_for_import()
-datasets = datasets.where_imported() # Only keep datasets that have been imported
+datasets = datasets.where_imported()  # Only keep datasets that have been imported
 datasets = datasets.where_signal("car.speed", "max", greater_than=75)  # max(speed) > 75
 datasets = datasets.where_signal("car.engine.temp", "mean", greater_than=30)  # avg(temp) > 30
 datasets = datasets.where_dataset("n_datapoints", greater_than=100000)  # Many datapoints
