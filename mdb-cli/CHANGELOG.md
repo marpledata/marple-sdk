@@ -5,6 +5,12 @@ All notable changes to `mdb` will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.1.3] - 2026-05-06
+
+### Changed
+
+- `mdb ingest` now uses the MarpleDB pre-signed upload flow: create the dataset ingestion, upload the file directly to object storage, then start ingestion
+
 ## [0.1.2] - 2026-03-30
 
 ### Added
@@ -32,6 +38,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Environment variable and `.env` file support
 - Cross-platform support (macOS, Linux, Windows)
 
+[0.1.3]: https://github.com/marpledata/marple-sdk/releases/tag/mdb-cli-v0.1.3
 [0.1.2]: https://github.com/marpledata/marple-sdk/releases/tag/mdb-cli-v0.1.2
 [0.1.1]: https://github.com/marpledata/marple-sdk/releases/tag/mdb-cli-v0.1.1
 [0.1.0]: https://github.com/marpledata/marple-sdk/releases/tag/mdb-cli-v0.1.0
