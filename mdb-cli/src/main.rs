@@ -4,17 +4,17 @@ use colored::*;
 use futures_util::StreamExt;
 use indicatif::{ProgressBar, ProgressStyle};
 use reqwest::{
-    Body, Client, Response,
+    Client, Response,
     header::{AUTHORIZATION, CONTENT_LENGTH, HeaderMap, HeaderValue},
     multipart::{Form, Part},
 };
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use std::collections::HashMap;
+use std::io::{Read, Result as IoResult};
 use std::path::{Path, PathBuf};
 use std::time::Duration;
 use tokio::io::AsyncWriteExt;
-use tokio_util::io::ReaderStream;
 use walkdir::WalkDir;
 
 #[derive(Parser)]
@@ -241,6 +241,19 @@ struct IngestResponse {
     presigned_url: Option<String>,
 }
 
+struct ProgressReader<R> {
+    inner: R,
+    bar: ProgressBar,
+}
+
+impl<R: Read> Read for ProgressReader<R> {
+    fn read(&mut self, buf: &mut [u8]) -> IoResult<usize> {
+        let bytes_read = self.inner.read(buf)?;
+        self.bar.inc(bytes_read as u64);
+        Ok(bytes_read)
+    }
+}
+
 struct MarpleDB {
     client: Client,
     base_url: String,
@@ -415,43 +428,41 @@ impl MarpleDB {
                     .ok_or(anyhow!("Ingest response missing presigned_url"))?
                     .clone();
 
-                let file = tokio::fs::File::open(file_path).await?;
-                let total_size = file.metadata().await?.len();
-                let mut uploaded = 0;
-                let bar = ProgressBar::new(total_size);
-                bar.set_style(ProgressStyle::default_bar().template(
-                    "- {msg} [{wide_bar}] ({binary_bytes_per_sec}, eta {eta}) {binary_bytes}/{binary_total_bytes}",
-                )?.progress_chars("=> "));
-                bar.set_message(file_name.clone());
+                let file_path = file_path.to_path_buf();
+                let upload_message = file_name.clone();
+                tokio::task::spawn_blocking(move || -> Result<()> {
+                    let file = std::fs::File::open(&file_path)?;
+                    let total_size = file.metadata()?.len();
+                    let bar = ProgressBar::new(total_size);
+                    bar.set_style(ProgressStyle::default_bar().template(
+                        "- {msg} [{wide_bar}] ({binary_bytes_per_sec}, eta {eta}) {binary_bytes}/{binary_total_bytes}",
+                    )?.progress_chars("=> "));
+                    bar.set_message(upload_message);
 
-                let mut reader = ReaderStream::new(file);
-                let stream = async_stream::stream! {
-                    while let Some(chunk) = reader.next().await {
-                        if let Ok(chunk) = &chunk {
-                            uploaded += chunk.len() as u64;
-                            bar.set_position(uploaded);
-                        }
-                        yield chunk;
-                    }
+                    let reader = ProgressReader {
+                        inner: file,
+                        bar: bar.clone(),
+                    };
+                    let upload_response = reqwest::blocking::Client::new()
+                        .put(&presigned_url)
+                        .header(CONTENT_LENGTH, total_size.to_string())
+                        .body(reqwest::blocking::Body::sized(reader, total_size))
+                        .timeout(Duration::from_secs(60 * 60))
+                        .send();
                     bar.finish_and_clear();
-                };
 
-                let upload_response = Client::new()
-                    .put(&presigned_url)
-                    .header(CONTENT_LENGTH, total_size.to_string())
-                    .body(Body::wrap_stream(stream))
-                    .timeout(Duration::from_secs(60 * 60))
-                    .send()
-                    .await?;
-
-                if !upload_response.status().is_success() {
-                    return Err(anyhow!(
-                        "PUT {} failed with status {}: {}",
-                        "presigned_url",
-                        upload_response.status(),
-                        upload_response.text().await?
-                    ));
-                }
+                    let upload_response = upload_response?;
+                    if !upload_response.status().is_success() {
+                        return Err(anyhow!(
+                            "PUT {} failed with status {}: {}",
+                            "presigned_url",
+                            upload_response.status(),
+                            upload_response.text()?
+                        ));
+                    }
+                    Ok(())
+                })
+                .await??;
 
                 self.post(&format!("ingestion/{ingestion_id}/start"), None)
                     .await?;

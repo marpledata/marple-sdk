@@ -20,7 +20,7 @@ features = ["tokio"]
 version = "0.18.3"
 
 [dependencies.reqwest]
-features = ["json", "multipart", "stream"]
+features = ["blocking", "json", "multipart", "stream"]
 version = "0.12.28"
 
 [dependencies.serde]
