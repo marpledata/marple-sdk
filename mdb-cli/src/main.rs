@@ -5,7 +5,7 @@ use futures_util::StreamExt;
 use indicatif::{ProgressBar, ProgressStyle};
 use reqwest::{
     Body, Client, Response,
-    header::{AUTHORIZATION, HeaderMap, HeaderValue},
+    header::{AUTHORIZATION, CONTENT_LENGTH, HeaderMap, HeaderValue},
     multipart::{Form, Part},
 };
 use serde::{Deserialize, Serialize};
@@ -438,6 +438,7 @@ impl MarpleDB {
 
                 let upload_response = Client::new()
                     .put(&presigned_url)
+                    .header(CONTENT_LENGTH, total_size.to_string())
                     .body(Body::wrap_stream(stream))
                     .timeout(Duration::from_secs(60 * 60))
                     .send()
