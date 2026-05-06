@@ -12,6 +12,7 @@ use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
+use std::time::Duration;
 use tokio::io::AsyncWriteExt;
 use tokio_util::io::ReaderStream;
 use walkdir::WalkDir;
@@ -236,6 +237,8 @@ struct StreamsResponse {
 #[derive(Debug, Serialize, Deserialize)]
 struct IngestResponse {
     dataset_id: i32,
+    ingestion_id: Option<i32>,
+    presigned_url: Option<String>,
 }
 
 struct MarpleDB {
@@ -384,41 +387,17 @@ impl MarpleDB {
                 );
                 return Ok(IngestResponse {
                     dataset_id: dataset.id,
+                    ingestion_id: None,
+                    presigned_url: None,
                 });
             }
         }
 
-        let file = tokio::fs::File::open(file_path).await?;
-        let total_size = file.metadata().await?.len();
-
-        let mut uploaded = 0;
-        let bar = ProgressBar::new(total_size);
-        bar.set_style(ProgressStyle::default_bar().template(
-            "- {msg} [{wide_bar}] ({binary_bytes_per_sec}, eta {eta}) {binary_bytes}/{binary_total_bytes}",
-        )?.progress_chars("=> "));
-        bar.set_message(file_name.clone());
-
-        let mut reader = ReaderStream::new(file);
-        let stream = async_stream::stream! {
-            while let Some(chunk) = reader.next().await {
-                if let Ok(chunk) = &chunk {
-                    uploaded += chunk.len() as u64;
-                    bar.set_position(uploaded);
-                }
-                yield chunk;
-            }
-            bar.finish_and_clear();
-        };
-
         let mut form = Form::new();
         form = form.part("dataset_name", Part::text(file_name.clone()));
         form = form.part("metadata", Part::text(serde_json::to_string(metadata)?));
-        form = form.part(
-            "file",
-            Part::stream_with_length(Body::wrap_stream(stream), total_size).file_name(file_name.clone()),
-        );
 
-        let endpoint = format!("stream/{}/ingest", stream_id);
+        let endpoint = format!("stream/{}/dataset/ingest", stream_id);
         let mut request = self.client.post(self.base_url.clone() + &endpoint);
         request = request.multipart(form);
         let response = self
@@ -427,6 +406,54 @@ impl MarpleDB {
         match response {
             Ok(result) => {
                 let result: IngestResponse = serde_json::from_value(result)?;
+                let ingestion_id = result
+                    .ingestion_id
+                    .ok_or(anyhow!("Ingest response missing ingestion_id"))?;
+                let presigned_url = result
+                    .presigned_url
+                    .as_ref()
+                    .ok_or(anyhow!("Ingest response missing presigned_url"))?
+                    .clone();
+
+                let file = tokio::fs::File::open(file_path).await?;
+                let total_size = file.metadata().await?.len();
+                let mut uploaded = 0;
+                let bar = ProgressBar::new(total_size);
+                bar.set_style(ProgressStyle::default_bar().template(
+                    "- {msg} [{wide_bar}] ({binary_bytes_per_sec}, eta {eta}) {binary_bytes}/{binary_total_bytes}",
+                )?.progress_chars("=> "));
+                bar.set_message(file_name.clone());
+
+                let mut reader = ReaderStream::new(file);
+                let stream = async_stream::stream! {
+                    while let Some(chunk) = reader.next().await {
+                        if let Ok(chunk) = &chunk {
+                            uploaded += chunk.len() as u64;
+                            bar.set_position(uploaded);
+                        }
+                        yield chunk;
+                    }
+                    bar.finish_and_clear();
+                };
+
+                let upload_response = Client::new()
+                    .put(&presigned_url)
+                    .body(Body::wrap_stream(stream))
+                    .timeout(Duration::from_secs(60 * 60))
+                    .send()
+                    .await?;
+
+                if !upload_response.status().is_success() {
+                    return Err(anyhow!(
+                        "PUT {} failed with status {}: {}",
+                        "presigned_url",
+                        upload_response.status(),
+                        upload_response.text().await?
+                    ));
+                }
+
+                self.post(&format!("ingestion/{ingestion_id}/start"), None)
+                    .await?;
                 println!("{} {} {}", "✓".green(), file_name, result.dataset_id);
                 Ok(result)
             }
