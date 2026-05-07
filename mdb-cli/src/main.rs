@@ -476,7 +476,7 @@ impl MarpleDB {
     }
 
     async fn abort_upload(&self, ingestion_id: i32) {
-        let endpoint = format!("ingestion/{}/upload/abort", ingestion_id);
+        let endpoint = format!("ingestion/{}/abort", ingestion_id);
         let url = self.base_url.clone() + &endpoint;
         match self.client.post(url).send().await {
             Ok(response) => {
