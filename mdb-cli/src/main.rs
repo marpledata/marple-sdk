@@ -546,7 +546,20 @@ impl MarpleDB {
 
         let mut file = tokio::fs::File::open(&context.file_path).await?;
         file.seek(SeekFrom::Start(offset)).await?;
-        let body = Body::wrap_stream(ReaderStream::new(file.take(part_len)));
+        let uploaded = Arc::clone(&context.uploaded);
+        let bar = context.bar.clone();
+        let mut reader = ReaderStream::new(file.take(part_len));
+        let stream = async_stream::stream! {
+            while let Some(chunk) = reader.next().await {
+                if let Ok(chunk) = &chunk {
+                    let chunk_len = chunk.len() as u64;
+                    let new_uploaded = uploaded.fetch_add(chunk_len, Ordering::Relaxed) + chunk_len;
+                    bar.set_position(new_uploaded);
+                }
+                yield chunk;
+            }
+        };
+        let body = Body::wrap_stream(stream);
 
         let response = context
             .storage_client
@@ -570,9 +583,6 @@ impl MarpleDB {
             .ok_or_else(|| anyhow!("part {} upload response missing ETag", part.part_number))?
             .to_str()?
             .to_string();
-        let new_uploaded = context.uploaded.fetch_add(part_len, Ordering::Relaxed) + part_len;
-        context.bar.set_position(new_uploaded);
-
         Ok(CompletedPart {
             part_number: part.part_number,
             etag,
