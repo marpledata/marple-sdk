@@ -5,6 +5,14 @@ All notable changes to `mdb` will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.1.4] - 2026-05-08
+
+### Changed
+
+- Updated ingestion to use the new Marple DB upload contract with `POST /ingestion`, signed object-storage uploads, and upload completion/abort lifecycle calls
+- Added support for multipart uploads with signed part URLs, ETag capture, and bounded concurrent part uploads
+- Added `--concurrency` to `mdb ingest` to control multipart upload parallelism
+
 ## [0.1.1] - 2026-02-19
 
 ### Fixed
@@ -26,6 +34,6 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Environment variable and `.env` file support
 - Cross-platform support (macOS, Linux, Windows)
 
+[0.1.4]: https://github.com/marpledata/marple-sdk/releases/tag/v0.1.4
 [0.1.1]: https://github.com/marpledata/marple-sdk/releases/tag/v0.1.1
 [0.1.0]: https://github.com/marpledata/marple-sdk/releases/tag/v0.1.0
-
