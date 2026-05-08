@@ -20,9 +20,9 @@ features = ["tokio"]
 version = "0.18.3"
 
 [dependencies.reqwest]
-features = ["json", "multipart", "query", "rustls", "stream"]
-version = "0.13.3"
+version = "0.12.28"
 default-features = false
+features = ["json", "multipart", "stream", "rustls-tls"]
 
 [dependencies.serde]
 features = ["derive"]
