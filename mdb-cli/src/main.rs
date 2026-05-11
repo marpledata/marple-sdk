@@ -330,25 +330,6 @@ impl MarpleDB {
         }
     }
 
-    async fn handle_status_response(
-        &self,
-        endpoint: &str,
-        method: &str,
-        response: Response,
-    ) -> Result<()> {
-        if response.status().is_success() {
-            Ok(())
-        } else {
-            Err(anyhow!(
-                "{} {} failed with status {}: {}",
-                method,
-                endpoint,
-                response.status(),
-                response.text().await?
-            ))
-        }
-    }
-
     async fn get(&self, endpoint: &str, params: Option<Vec<(String, Value)>>) -> Result<Value> {
         let url = self.base_url.clone() + endpoint.trim_start_matches('/');
         let mut request = self.client.get(&url);
@@ -479,8 +460,8 @@ impl MarpleDB {
         let endpoint = format!("ingestion/{}/upload/complete", ingestion_id);
         let url = self.base_url.clone() + &endpoint;
         let response = self.client.post(url).send().await?;
-        self.handle_status_response(&endpoint, "POST", response)
-            .await
+        self.handle_response(&endpoint, "POST", response).await?;
+        Ok(())
     }
 
     async fn abort_upload(&self, ingestion_id: i32) {
@@ -488,11 +469,9 @@ impl MarpleDB {
         let url = self.base_url.clone() + &endpoint;
         let result = async {
             let response = self.client.post(url).send().await?;
-            self.handle_status_response(&endpoint, "POST", response)
-                .await
-        }
-        .await;
-        if let Err(e) = result {
+            self.handle_response(&endpoint, "POST", response).await
+        };
+        if let Err(e) = result.await {
             eprintln!(
                 "{} failed to abort ingestion {}: {}",
                 "✗".red(),
