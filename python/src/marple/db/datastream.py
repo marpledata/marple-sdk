@@ -10,6 +10,15 @@ from marple.db.dataset import Dataset, DatasetList
 from marple.utils import DBClient, validate_response
 
 
+class IngestionInit(BaseModel):
+    dataset_id: int
+    ingestion_id: int
+    mode: Literal["single", "multipart"]
+    presigned_url: str | None
+    part_size: int | None
+    expires_in: int
+
+
 class DataStream(BaseModel):
     """
     Represents a Marple DB datastream.
@@ -77,29 +86,29 @@ class DataStream(BaseModel):
         dataset_name = file_name or path.name
 
         init = self._init_ingestion(dataset_name, file_size, metadata or {})
-        ingestion_id = init["ingestion_id"]
+        ingestion_id = init.ingestion_id
         try:
-            if init["mode"] == "single":
-                presigned_url = init.get("presigned_url")
+            if init.mode == "single":
+                presigned_url = init.presigned_url
                 if presigned_url is None:
                     raise ValueError("Single upload mode without presigned_url")
                 self._put_single(presigned_url, path, file_size)
-            elif init["mode"] == "multipart":
-                part_size = init.get("part_size")
+            elif init.mode == "multipart":
+                part_size = init.part_size
                 if part_size is None:
                     raise ValueError("Multipart upload mode without part_size")
                 self._upload_multipart(ingestion_id, path, file_size, part_size, max(concurrency, 1))
             else:
-                raise ValueError(f"Unknown upload mode: {init['mode']}")
+                raise ValueError(f"Unknown upload mode: {init.mode}")
 
             self._complete_upload(ingestion_id)
         except BaseException:
             self._abort_upload(ingestion_id)
             raise
 
-        return self.get_dataset(init["dataset_id"])
+        return self.get_dataset(init.dataset_id)
 
-    def _init_ingestion(self, dataset_name: str, file_size: int, metadata: dict) -> dict:
+    def _init_ingestion(self, dataset_name: str, file_size: int, metadata: dict) -> IngestionInit:
         r = self._client.post(
             "/ingestion",
             json={
@@ -109,7 +118,7 @@ class DataStream(BaseModel):
                 "metadata": metadata,
             },
         )
-        return validate_response(r, "Initialize ingestion failed")
+        return IngestionInit.model_validate(validate_response(r, "Initialize ingestion failed"))
 
     def _get_part_urls(self, ingestion_id: int, start_part: int, count: int) -> dict:
         r = self._client.get(
@@ -133,12 +142,9 @@ class DataStream(BaseModel):
     def _put_single(url: str, path: Path, file_size: int) -> None:
         with path.open("rb") as file:
             response = requests.put(url, data=file, headers={"Content-Length": str(file_size)})
-        DataStream._validate_storage_response(response, "Storage PUT failed")
+        _validate_response(response, "Storage PUT failed")
 
     def _upload_multipart(self, ingestion_id: int, path: Path, total_size: int, part_size: int, concurrency: int) -> None:
-        if part_size <= 0:
-            raise ValueError("Multipart upload part_size must be positive")
-
         total_parts = (total_size + part_size - 1) // part_size
         next_part = 1
         batch_size = max(concurrency, 32)
@@ -169,21 +175,13 @@ class DataStream(BaseModel):
     @staticmethod
     def _put_part(path: Path, part_size: int, total_size: int, part_number: int, url: str) -> None:
         offset = (part_number - 1) * part_size
-        if offset >= total_size:
-            raise ValueError(f"Part {part_number} offset is outside the file")
-
         part_len = min(part_size, total_size - offset)
         with path.open("rb") as file:
             file.seek(offset)
             chunk = file.read(part_len)
 
         response = requests.put(url, data=chunk, headers={"Content-Length": str(part_len)})
-        DataStream._validate_storage_response(response, f"Part {part_number} storage PUT failed")
-
-    @staticmethod
-    def _validate_storage_response(response: requests.Response, failure_message: str) -> None:
-        if not response.ok:
-            raise RuntimeError(f"{failure_message}: status {response.status_code}: {response.text}")
+        _validate_response(response, f"Part {part_number} storage PUT failed")
 
     def delete(self) -> None:
         """
@@ -194,3 +192,7 @@ class DataStream(BaseModel):
         """
         r = self._client.post(f"/stream/{self.id}/delete")
         validate_response(r, "Delete stream failed")
+
+ def _validate_response(response: requests.Response, failure_message: str) -> None:
+        if not response.ok:
+            raise RuntimeError(f"{failure_message}: status {response.status_code}: {response.text}")
