@@ -351,7 +351,8 @@ async fn test_db_flow_via_cli() {
         ])
         .assert()
         .success();
-    let paths = parse_json_stdout(&paths_json).as_array()
+    let paths = parse_json_stdout(&paths_json)
+        .as_array()
         .expect("paths array")
         .iter()
         .filter_map(|v| v.as_str().map(|s| s.to_string()))

@@ -479,21 +479,26 @@ impl MarpleDB {
         let endpoint = format!("ingestion/{}/upload/complete", ingestion_id);
         let url = self.base_url.clone() + &endpoint;
         let response = self.client.post(url).send().await?;
-        self.handle_status_response(&endpoint, "POST", response).await
+        self.handle_status_response(&endpoint, "POST", response)
+            .await
     }
 
     async fn abort_upload(&self, ingestion_id: i32) {
         let endpoint = format!("ingestion/{}/abort", ingestion_id);
         let url = self.base_url.clone() + &endpoint;
-        match self.client.post(url).send().await {
-            Ok(response) => {
-                if let Err(e) = self.handle_status_response(&endpoint, "POST", response).await {
-                    eprintln!("{} failed to abort ingestion {}: {}", "✗".red(), ingestion_id, e);
-                }
-            }
-            Err(e) => {
-                eprintln!("{} failed to abort ingestion {}: {}", "✗".red(), ingestion_id, e);
-            }
+        let result = async {
+            let response = self.client.post(url).send().await?;
+            self.handle_status_response(&endpoint, "POST", response)
+                .await
+        }
+        .await;
+        if let Err(e) = result {
+            eprintln!(
+                "{} failed to abort ingestion {}: {}",
+                "✗".red(),
+                ingestion_id,
+                e
+            );
         }
     }
 
@@ -595,15 +600,8 @@ impl MarpleDB {
         part_size: u64,
         concurrency: usize,
     ) -> Result<()> {
-        if part_size == 0 {
-            return Err(anyhow!("multipart mode returned part_size 0"));
-        }
         let concurrency = concurrency.max(1);
-        let total_parts = total_size.div_ceil(part_size);
-        if total_parts > u64::from(u32::MAX) {
-            return Err(anyhow!("file requires too many multipart upload parts"));
-        }
-        let total_parts = total_parts as u32;
+        let total_parts = total_size.div_ceil(part_size) as u32;
 
         let bar = ProgressBar::new(total_size);
         bar.set_style(ProgressStyle::default_bar().template(
@@ -635,9 +633,11 @@ impl MarpleDB {
                 uploaded: Arc::clone(&uploaded),
                 bar: bar.clone(),
             };
-            let mut uploads = futures_util::stream::iter(urls.parts.into_iter().map(|part| {
-                Self::put_part(context.clone(), part)
-            }))
+            let mut uploads = futures_util::stream::iter(
+                urls.parts
+                    .into_iter()
+                    .map(|part| Self::put_part(context.clone(), part)),
+            )
             .buffer_unordered(concurrency);
 
             while let Some(part) = uploads.next().await {
@@ -675,11 +675,24 @@ impl MarpleDB {
         }
 
         let total_size = tokio::fs::metadata(file_path).await?.len();
-        let init = self
-            .init_ingestion(stream_id, &file_name, total_size, metadata)
-            .await?;
 
-        let upload_result = async {
+        let init = match self
+            .init_ingestion(stream_id, &file_name, total_size, metadata)
+            .await
+        {
+            Err(e) => {
+                eprintln!(
+                    "{} {} failed to initialize ingestion: {}",
+                    "✗".red(),
+                    file_name,
+                    e
+                );
+                return Err(e);
+            }
+            Ok(init) => init,
+        };
+
+        let upload_result = {
             match init.mode {
                 UploadMode::Single => {
                     let url = init
@@ -688,7 +701,6 @@ impl MarpleDB {
                         .ok_or_else(|| anyhow!("single upload mode without presigned_url"))?;
                     self.put_single_file(url, file_path, &file_name, total_size)
                         .await?;
-                    self.complete_upload(init.ingestion_id).await?;
                 }
                 UploadMode::Multipart => {
                     let part_size = init
@@ -703,24 +715,25 @@ impl MarpleDB {
                         concurrency,
                     )
                     .await?;
-                    self.complete_upload(init.ingestion_id).await?;
                 }
             }
-            Ok::<(), anyhow::Error>(())
-        }
-        .await;
-
-        if let Err(e) = upload_result {
-            self.abort_upload(init.ingestion_id).await;
-            eprintln!("{} {} failed: {}", "✗".red(), file_name, e);
-            return Err(e);
-        }
-
-        let result = IngestResponse {
-            dataset_id: init.dataset_id,
+            self.complete_upload(init.ingestion_id).await?;
+            Ok(IngestResponse {
+                dataset_id: init.dataset_id,
+            })
         };
-        println!("{} {} {}", "✓".green(), file_name, result.dataset_id);
-        Ok(result)
+
+        match upload_result {
+            Ok(result) => {
+                println!("{} {} {}", "✓".green(), file_name, result.dataset_id);
+                Ok(result)
+            }
+            Err(e) => {
+                self.abort_upload(init.ingestion_id).await;
+                eprintln!("{} {} failed: {}", "✗".red(), file_name, e);
+                Err(e)
+            }
+        }
     }
 
     async fn download_dataset(
