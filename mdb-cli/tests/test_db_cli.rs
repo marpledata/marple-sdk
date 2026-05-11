@@ -351,7 +351,8 @@ async fn test_db_flow_via_cli() {
         ])
         .assert()
         .success();
-    let paths = parse_json_stdout(&paths_json).as_array()
+    let paths = parse_json_stdout(&paths_json)
+        .as_array()
         .expect("paths array")
         .iter()
         .filter_map(|v| v.as_str().map(|s| s.to_string()))
@@ -371,9 +372,25 @@ async fn test_db_flow_via_cli() {
         verify_parquet_columns(&p);
     }
 
-    // Cleanup: delete stream (and datasets)
-    mdb_cmd(&token, url.as_deref())
-        .args(["post", &format!("/stream/{stream_id}/delete")])
+    // Cleanup leftovers: delete any stream whose name starts with "Salty Compulsory"
+    // (covers stale streams from previously failed runs).
+    let streams_json = mdb_cmd(&token, url.as_deref())
+        .args(["stream", "list"])
         .assert()
         .success();
+    let streams = parse_json_stdout(&streams_json);
+    let streams = streams.as_array().expect("streams should be array");
+    for s in streams {
+        let name = s.get("name").and_then(|n| n.as_str()).unwrap_or("");
+        if !name.to_lowercase().starts_with("salty compulsory rusttest") {
+            continue;
+        }
+        let Some(id) = s.get("id").and_then(|v| v.as_i64()) else {
+            continue;
+        };
+        let _ = mdb_cmd(&token, url.as_deref())
+            .args(["post", &format!("/stream/{id}/delete")])
+            .assert()
+            .success();
+    }
 }
