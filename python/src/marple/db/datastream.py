@@ -144,7 +144,9 @@ class DataStream(BaseModel):
             response = requests.put(url, data=file, headers={"Content-Length": str(file_size)})
         _validate_response(response, "Storage PUT failed")
 
-    def _upload_multipart(self, ingestion_id: int, path: Path, total_size: int, part_size: int, concurrency: int) -> None:
+    def _upload_multipart(
+        self, ingestion_id: int, path: Path, total_size: int, part_size: int, concurrency: int
+    ) -> None:
         total_parts = (total_size + part_size - 1) // part_size
         next_part = 1
         batch_size = max(concurrency, 32)
@@ -193,6 +195,7 @@ class DataStream(BaseModel):
         r = self._client.post(f"/stream/{self.id}/delete")
         validate_response(r, "Delete stream failed")
 
- def _validate_response(response: requests.Response, failure_message: str) -> None:
-        if not response.ok:
-            raise RuntimeError(f"{failure_message}: status {response.status_code}: {response.text}")
+
+def _validate_response(response: requests.Response, failure_message: str) -> None:
+    if not response.ok:
+        raise RuntimeError(f"{failure_message}: status {response.status_code}: {response.text}")
