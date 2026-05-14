@@ -67,7 +67,6 @@ To ensure pip correctly updates our package, correct versioning is important. Us
 ⚠ **Impacts users, be careful**
 
 - check version: `pyproject.toml:version`, `__init__.py:__version__`
-- `uv config pypi-token.pypi pypi-XXXXXXXXXXXXXXXXXXXXXXXXXXXX`
 - `uv build`
-- `uv publish`
+- `uv publish --token pypi-XXXXXXXXXXXXXXXXXXXXXXXXXXXX` (see 1Password)
 - Run the GitLab pipeline `pages` to build & release the docs
