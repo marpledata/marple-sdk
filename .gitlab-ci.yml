@@ -50,10 +50,10 @@ rust:mdb-cli:
   cache:
     key:
       files:
-        - mdb-cli/Cargo.lock
-        - mdb-cli/Cargo.toml
+        - rust/mdb-cli/Cargo.lock
+        - rust/mdb-cli/Cargo.toml
     paths:
-      - mdb-cli/target/
+      - rust/mdb-cli/target/
       - .cargo/registry/
       - .cargo/git/
   before_script:
@@ -61,12 +61,12 @@ rust:mdb-cli:
     - cargo --version
     - apt-get update && apt-get install -y --no-install-recommends pkg-config libssl-dev ca-certificates
   script:
-    - cd mdb-cli
+    - cd rust/mdb-cli
     - cargo test --locked
   rules:
     - if: $CI_COMMIT_BRANCH
       changes:
-        - mdb-cli/**/*
+        - rust/mdb-cli/**/*
 
 rust:parquet-transcode:
   image: rust:1.93
@@ -74,22 +74,22 @@ rust:parquet-transcode:
   cache:
     key:
       files:
-        - parquet-transcode/Cargo.lock
-        - parquet-transcode/Cargo.toml
+        - rust/parquet-transcode/Cargo.lock
+        - rust/parquet-transcode/Cargo.toml
     paths:
-      - parquet-transcode/target/
+      - rust/parquet-transcode/target/
       - .cargo/registry/
       - .cargo/git/
   before_script:
     - rustc --version
     - cargo --version
   script:
-    - cd parquet-transcode
+    - cd rust/parquet-transcode
     - cargo test
   rules:
     - if: $CI_COMMIT_BRANCH
       changes:
-        - parquet-transcode/**/*
+        - rust/parquet-transcode/**/*
 
 build:parquet-transcode:
   image: rust:1.93
@@ -108,7 +108,7 @@ build:parquet-transcode:
     - docker version
     - cargo install cross --git https://github.com/cross-rs/cross
   script:
-    - cd parquet-transcode
+    - cd rust/parquet-transcode
     - cross build --release --target x86_64-pc-windows-gnu
     - cross build --release --target x86_64-unknown-linux-gnu
     - mkdir -p artifacts
@@ -116,7 +116,7 @@ build:parquet-transcode:
     - cp target/x86_64-unknown-linux-gnu/release/parquet-transcode artifacts/parquet-transcode-linux-x64
   artifacts:
     paths:
-      - parquet-transcode/artifacts/
+      - rust/parquet-transcode/artifacts/
   rules:
     - when: manual
 
@@ -137,7 +137,7 @@ build:mdb-cli:
     - docker version
     - cargo install cross --git https://github.com/cross-rs/cross
   script:
-    - cd mdb-cli
+    - cd rust/mdb-cli
     - cross build --release --target x86_64-pc-windows-gnu
     - cross build --release --target x86_64-unknown-linux-gnu
     - mkdir -p artifacts
@@ -145,7 +145,7 @@ build:mdb-cli:
     - cp target/x86_64-unknown-linux-gnu/release/mdb artifacts/mdb-linux-x64
   artifacts:
     paths:
-      - mdb-cli/artifacts/
+      - rust/mdb-cli/artifacts/
   rules:
     - when: manual
 
