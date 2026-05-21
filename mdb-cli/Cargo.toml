@@ -5,6 +5,7 @@ path = "src/main.rs"
 [dependencies]
 anyhow = "1.0.100"
 async-stream = "0.3.6"
+azure_storage_blobs = { version = "0.21.0", default-features = false, features = ["enable_reqwest_rustls"] }
 colored = "3.0.0"
 dotenvy = "0.15.7"
 futures-util = "0.3.31"

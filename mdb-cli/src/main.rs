@@ -1,7 +1,7 @@
 use anyhow::{Result, anyhow};
-use clap::{CommandFactory, Parser, Subcommand};
+use clap::{CommandFactory, Parser, Subcommand, ValueEnum};
 use colored::*;
-use futures_util::StreamExt;
+use futures_util::{StreamExt, lock::Mutex};
 use indicatif::{ProgressBar, ProgressStyle};
 use reqwest::{
     Body, Client, Response,
@@ -80,6 +80,10 @@ enum Commands {
         /// Max concurrent multipart part uploads
         #[arg(long, default_value_t = 4)]
         concurrency: usize,
+
+        /// Upload mode override
+        #[arg(long, value_enum, default_value_t = UploadModeOverride::Auto)]
+        upload_mode: UploadModeOverride,
     },
 
     /// Dataset commands
@@ -249,8 +253,17 @@ struct IngestResponse {
 #[derive(Debug, Deserialize)]
 #[serde(rename_all = "lowercase")]
 enum UploadMode {
+    Server,
+    Azure,
     Single,
     Multipart,
+}
+
+#[derive(Clone, Copy, Debug, ValueEnum)]
+#[clap(rename_all = "lowercase")]
+enum UploadModeOverride {
+    Auto,
+    Server,
 }
 
 #[derive(Debug, Deserialize)]
@@ -464,11 +477,16 @@ impl MarpleDB {
         Ok(())
     }
 
-    async fn abort_upload(&self, ingestion_id: i32) {
+    async fn abort_upload(&self, ingestion_id: i32, reason: &str) {
         let endpoint = format!("ingestion/{}/abort", ingestion_id);
         let url = self.base_url.clone() + &endpoint;
         let result = async {
-            let response = self.client.post(url).send().await?;
+            let response = self
+                .client
+                .post(url)
+                .json(&serde_json::json!({ "reason": reason }))
+                .send()
+                .await?;
             self.handle_response(&endpoint, "POST", response).await
         };
         if let Err(e) = result.await {
@@ -481,20 +499,29 @@ impl MarpleDB {
         }
     }
 
-    async fn put_single_file(
-        &self,
-        url: &str,
-        file_path: &Path,
-        file_name: &str,
-        total_size: u64,
-    ) -> Result<()> {
-        let file = tokio::fs::File::open(file_path).await?;
-        let mut uploaded = 0;
+    fn upload_progress_bar(file_name: &str, total_size: u64) -> Result<ProgressBar> {
         let bar = ProgressBar::new(total_size);
         bar.set_style(ProgressStyle::default_bar().template(
             "- {msg} [{wide_bar}] ({binary_bytes_per_sec}, eta {eta}) {binary_bytes}/{binary_total_bytes}",
         )?.progress_chars("=> "));
         bar.set_message(file_name.to_string());
+        Ok(bar)
+    }
+
+    async fn upload_via_single(
+        &self,
+        init: &IngestionInit,
+        file_path: &Path,
+        file_name: &str,
+        total_size: u64,
+    ) -> Result<()> {
+        let url = init
+            .presigned_url
+            .as_deref()
+            .ok_or_else(|| anyhow!("single upload mode without presigned_url"))?;
+        let file = tokio::fs::File::open(file_path).await?;
+        let mut uploaded = 0;
+        let bar = Self::upload_progress_bar(file_name, total_size)?;
 
         let mut reader = ReaderStream::new(file);
         let stream = async_stream::stream! {
@@ -522,6 +549,65 @@ impl MarpleDB {
                 response.text().await?
             ));
         }
+        Ok(())
+    }
+
+    async fn upload_via_server(
+        &self,
+        init: &IngestionInit,
+        file_path: &Path,
+        file_name: &str,
+        total_size: u64,
+    ) -> Result<()> {
+        let file = tokio::fs::File::open(file_path).await?;
+        let mut uploaded = 0;
+        let bar = Self::upload_progress_bar(file_name, total_size)?;
+
+        let mut reader = ReaderStream::new(file);
+        let stream = async_stream::stream! {
+            while let Some(chunk) = reader.next().await {
+                if let Ok(chunk) = &chunk {
+                    uploaded += chunk.len() as u64;
+                    bar.set_position(uploaded);
+                }
+                yield chunk;
+            }
+            bar.finish_and_clear();
+        };
+
+        let body = Body::wrap_stream(stream);
+        let part = reqwest::multipart::Part::stream_with_length(body, total_size)
+            .file_name(file_name.to_string())
+            .mime_str("application/octet-stream")?;
+        let form = reqwest::multipart::Form::new().part("file", part);
+        let endpoint = format!("ingestion/{}/upload/server", init.ingestion_id);
+        let url = self.base_url.clone() + &endpoint;
+        let response = self.client.post(url).multipart(form).send().await?;
+        self.handle_response(&endpoint, "POST", response).await?;
+        Ok(())
+    }
+
+    async fn upload_via_azure(
+        &self,
+        init: &IngestionInit,
+        file_path: &Path,
+        file_name: &str,
+        total_size: u64,
+    ) -> Result<()> {
+        use azure_storage_blobs::prelude::BlobClient;
+
+        let url = init
+            .presigned_url
+            .as_deref()
+            .ok_or_else(|| anyhow!("azure upload mode without presigned_url"))?;
+        let sas_url = url.parse()?;
+        let blob_client = BlobClient::from_sas_url(&sas_url)?;
+
+        let bar = Self::upload_progress_bar(file_name, total_size)?;
+        let bytes = tokio::fs::read(file_path).await?;
+        blob_client.put_block_blob(bytes).await?;
+        bar.set_position(total_size);
+        bar.finish_and_clear();
         Ok(())
     }
 
@@ -570,61 +656,78 @@ impl MarpleDB {
         Ok(())
     }
 
-    async fn upload_multipart_file(
+    fn signed_parts_stream(
         &self,
         ingestion_id: i32,
+        batch_size: usize,
+    ) -> impl futures_util::Stream<Item = Result<PartUrl>> + '_ {
+        async_stream::try_stream! {
+            let mut next_part = Some(1);
+
+            while let Some(start_part) = next_part {
+                let urls = self.get_part_urls(ingestion_id, start_part, batch_size).await?;
+                if urls.parts.is_empty() {
+                    Err(anyhow!("server returned no multipart upload URLs"))?;
+                }
+
+                for part in urls.parts {
+                    yield part;
+                }
+
+                next_part = urls.next_part;
+            }
+        }
+    }
+
+    async fn upload_via_multipart(
+        &self,
+        init: &IngestionInit,
         file_path: &Path,
         file_name: &str,
         total_size: u64,
-        part_size: u64,
         concurrency: usize,
     ) -> Result<()> {
+        let part_size = init
+            .part_size
+            .ok_or_else(|| anyhow!("multipart upload mode without part_size"))?;
+        if part_size == 0 {
+            return Err(anyhow!("multipart upload part_size must be positive"));
+        }
         let concurrency = concurrency.max(1);
-        let total_parts = total_size.div_ceil(part_size) as u32;
 
-        let bar = ProgressBar::new(total_size);
-        bar.set_style(ProgressStyle::default_bar().template(
-            "- {msg} [{wide_bar}] ({binary_bytes_per_sec}, eta {eta}) {binary_bytes}/{binary_total_bytes}",
-        )?.progress_chars("=> "));
-        bar.set_message(file_name.to_string());
+        let bar = Self::upload_progress_bar(file_name, total_size)?;
 
         let uploaded = Arc::new(AtomicU64::new(0));
-        let mut next_part = Some(1);
         let batch_size = concurrency.max(32);
+        let context = MultipartUploadContext {
+            storage_client: self.storage_client.clone(),
+            file_path: file_path.to_path_buf(),
+            part_size,
+            total_size,
+            uploaded,
+            bar: bar.clone(),
+        };
+        let parts = self.signed_parts_stream(init.ingestion_id, batch_size);
+        let parts = Arc::new(Mutex::new(Box::pin(parts)));
 
-        while let Some(start_part) = next_part {
-            if start_part > total_parts {
-                break;
+        let workers = (0..concurrency).map(|_| {
+            let context = context.clone();
+            let parts = Arc::clone(&parts);
+            async move {
+                loop {
+                    let part = {
+                        let mut parts = parts.lock().await;
+                        parts.next().await.transpose()?
+                    };
+                    let Some(part) = part else {
+                        return Ok::<_, anyhow::Error>(());
+                    };
+
+                    Self::put_part(context.clone(), part).await?;
+                }
             }
-
-            let urls = self
-                .get_part_urls(ingestion_id, start_part, batch_size)
-                .await?;
-            if urls.parts.is_empty() {
-                return Err(anyhow!("server returned no multipart upload URLs"));
-            }
-
-            let context = MultipartUploadContext {
-                storage_client: self.storage_client.clone(),
-                file_path: file_path.to_path_buf(),
-                part_size,
-                total_size,
-                uploaded: Arc::clone(&uploaded),
-                bar: bar.clone(),
-            };
-            let mut uploads = futures_util::stream::iter(
-                urls.parts
-                    .into_iter()
-                    .map(|part| Self::put_part(context.clone(), part)),
-            )
-            .buffer_unordered(concurrency);
-
-            while let Some(part) = uploads.next().await {
-                part?;
-            }
-
-            next_part = urls.next_part;
-        }
+        });
+        futures_util::future::try_join_all(workers).await?;
 
         bar.finish_and_clear();
         Ok(())
@@ -637,6 +740,7 @@ impl MarpleDB {
         metadata: &HashMap<String, Value>,
         file_path: &Path,
         concurrency: usize,
+        upload_mode: UploadModeOverride,
     ) -> Result<IngestResponse> {
         let file_name = file_path.file_name().unwrap().to_string_lossy().to_string();
         for dataset in datasets {
@@ -671,36 +775,37 @@ impl MarpleDB {
             Ok(init) => init,
         };
 
-        let upload_result = {
-            match init.mode {
-                UploadMode::Single => {
-                    let url = init
-                        .presigned_url
-                        .as_deref()
-                        .ok_or_else(|| anyhow!("single upload mode without presigned_url"))?;
-                    self.put_single_file(url, file_path, &file_name, total_size)
+        let upload_result = async {
+            match (upload_mode, &init.mode) {
+                (UploadModeOverride::Server, _) | (_, UploadMode::Server) => {
+                    self.upload_via_server(&init, file_path, &file_name, total_size)
                         .await?;
                 }
-                UploadMode::Multipart => {
-                    let part_size = init
-                        .part_size
-                        .ok_or_else(|| anyhow!("multipart upload mode without part_size"))?;
-                    self.upload_multipart_file(
-                        init.ingestion_id,
+                (_, UploadMode::Azure) => {
+                    self.upload_via_azure(&init, file_path, &file_name, total_size)
+                        .await?;
+                }
+                (_, UploadMode::Single) => {
+                    self.upload_via_single(&init, file_path, &file_name, total_size)
+                        .await?;
+                }
+                (_, UploadMode::Multipart) => {
+                    self.upload_via_multipart(
+                        &init,
                         file_path,
                         &file_name,
                         total_size,
-                        part_size,
                         concurrency,
                     )
                     .await?;
                 }
             }
             self.complete_upload(init.ingestion_id).await?;
-            Ok(IngestResponse {
+            Ok::<_, anyhow::Error>(IngestResponse {
                 dataset_id: init.dataset_id,
             })
-        };
+        }
+        .await;
 
         match upload_result {
             Ok(result) => {
@@ -708,7 +813,7 @@ impl MarpleDB {
                 Ok(result)
             }
             Err(e) => {
-                self.abort_upload(init.ingestion_id).await;
+                self.abort_upload(init.ingestion_id, &e.to_string()).await;
                 eprintln!("{} {} failed: {}", "✗".red(), file_name, e);
                 Err(e)
             }
@@ -848,6 +953,7 @@ struct IngestOptions<'a> {
     extension: Option<&'a str>,
     skip_existing: bool,
     concurrency: usize,
+    upload_mode: UploadModeOverride,
 }
 
 async fn handle_ingest(
@@ -875,7 +981,14 @@ async fn handle_ingest(
     for path in files {
         if should_ingest(path) {
             marpledb
-                .ingest_file(stream.id, &existing, metadata, path, options.concurrency)
+                .ingest_file(
+                    stream.id,
+                    &existing,
+                    metadata,
+                    path,
+                    options.concurrency,
+                    options.upload_mode,
+                )
                 .await?;
         } else if options.recursive && path.is_dir() {
             for entry in WalkDir::new(path)
@@ -892,6 +1005,7 @@ async fn handle_ingest(
                             metadata,
                             file_path,
                             options.concurrency,
+                            options.upload_mode,
                         )
                         .await?;
                 }
@@ -975,6 +1089,7 @@ async fn main() -> Result<()> {
             extension,
             skip_existing,
             concurrency,
+            upload_mode,
         } => {
             let metadata = to_record(metadata);
             handle_ingest(
@@ -987,6 +1102,7 @@ async fn main() -> Result<()> {
                     extension: extension.as_deref(),
                     skip_existing,
                     concurrency,
+                    upload_mode,
                 },
             )
             .await?
