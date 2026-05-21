@@ -54,6 +54,8 @@ pytest:
 rust:workspace:
   image: rust:1.93
   stage: test
+  variables:
+    CARGO_HOME: "$CI_PROJECT_DIR/.cargo"
   cache:
     key:
       files:
@@ -66,6 +68,7 @@ rust:workspace:
   before_script:
     - rustc --version
     - cargo --version
+    - mkdir -p "$CARGO_HOME/registry" "$CARGO_HOME/git"
     - apt-get update && apt-get install -y --no-install-recommends pkg-config libssl-dev ca-certificates
   script:
     - cd rust
@@ -92,6 +95,8 @@ rust:workspace:
 rust:parquet-transcode:
   image: rust:1.93
   stage: test
+  variables:
+    CARGO_HOME: "$CI_PROJECT_DIR/.cargo"
   cache:
     key:
       files:
@@ -104,6 +109,7 @@ rust:parquet-transcode:
   before_script:
     - rustc --version
     - cargo --version
+    - mkdir -p "$CARGO_HOME/registry" "$CARGO_HOME/git"
   script:
     - cd rust/parquet-transcode
     - cargo test

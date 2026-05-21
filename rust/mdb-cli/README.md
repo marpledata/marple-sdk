@@ -27,6 +27,15 @@ export MDB_URL="https://db.marpledata.com/api/v1"
 
 `MDB_URL` is optional and defaults to `https://db.marpledata.com/api/v1`. For VPC or self-hosted deployments, set `MDB_URL` or pass `--mdb-url`; the value should usually end in `/api/v1`.
 
+The CLI automatically loads `.env` from the current directory when present. Use `--env-file` to choose another dotenv file before credentials are read:
+
+```sh
+mdb --env-file .env.staging stream list
+mdb --env-file .env.production datapool datasets
+```
+
+Exported shell variables take precedence over values in dotenv files, and explicit CLI flags such as `--mdb-token` and `--mdb-url` take precedence over both.
+
 ## Command Overview
 
 - `mdb ping` checks API health and token validity.

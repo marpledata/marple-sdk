@@ -1,4 +1,4 @@
-use anyhow::{Result, anyhow};
+use anyhow::{Context, Result, anyhow};
 use clap::{CommandFactory, Parser, Subcommand, ValueEnum};
 use colored::*;
 use futures_util::StreamExt;
@@ -12,6 +12,7 @@ use mdb_cli::{
 };
 use serde_json::Value;
 use std::collections::HashSet;
+use std::ffi::OsString;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use tokio::io::AsyncWriteExt;
@@ -22,6 +23,14 @@ use walkdir::WalkDir;
 #[command(about = "MarpleDB CLI - Interact with MarpleDB API")]
 #[command()]
 struct Cli {
+    #[arg(
+        long,
+        global = true,
+        value_name = "PATH",
+        help = "Load environment variables from a dotenv file before reading MDB_TOKEN and MDB_URL"
+    )]
+    env_file: Option<PathBuf>,
+
     #[arg(
         long,
         default_value = "https://db.marpledata.com/api/v1",
@@ -228,6 +237,40 @@ fn parse_key_val(s: &str) -> Result<(String, Value)> {
 
 fn to_record(pairs: Vec<(String, Value)>) -> Metadata {
     pairs.into_iter().collect()
+}
+
+fn env_file_from_args<I>(args: I) -> Result<Option<PathBuf>>
+where
+    I: IntoIterator<Item = OsString>,
+{
+    let mut args = args.into_iter().skip(1);
+    while let Some(arg) = args.next() {
+        if arg == "--" {
+            return Ok(None);
+        }
+        if arg == "--env-file" {
+            let Some(path) = args.next() else {
+                return Err(anyhow!("--env-file requires a path"));
+            };
+            return Ok(Some(PathBuf::from(path)));
+        }
+        if let Some(arg) = arg.to_str()
+            && let Some(path) = arg.strip_prefix("--env-file=")
+        {
+            return Ok(Some(PathBuf::from(path)));
+        }
+    }
+    Ok(None)
+}
+
+fn load_env() -> Result<()> {
+    if let Some(path) = env_file_from_args(std::env::args_os())? {
+        dotenvy::from_path(&path)
+            .with_context(|| format!("failed to load env file {}", path.display()))?;
+    } else {
+        dotenvy::dotenv().ok();
+    }
+    Ok(())
 }
 
 #[derive(Clone, Copy, Debug, ValueEnum)]
@@ -589,7 +632,7 @@ async fn handle_delete(
 
 #[tokio::main]
 async fn main() -> Result<()> {
-    dotenvy::dotenv().ok();
+    load_env()?;
     let cli = Cli::parse();
     let marpledb = MarpleDB::new(&cli.mdb_url, &cli.mdb_token)?;
 

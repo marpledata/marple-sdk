@@ -29,6 +29,14 @@ fn mdb_cmd(token: &str, url: Option<&str>) -> Command {
     cmd
 }
 
+fn mdb_cmd_without_auth() -> Command {
+    let mut cmd = cargo_bin_cmd!("mdb");
+    cmd.env("NO_COLOR", "1");
+    cmd.env_remove("MDB_TOKEN");
+    cmd.env_remove("MDB_URL");
+    cmd
+}
+
 fn parse_json_stdout(output: &assert_cmd::assert::Assert) -> Value {
     let out = output.get_output();
     let s = String::from_utf8_lossy(&out.stdout);
@@ -163,6 +171,69 @@ fn test_version() {
         "minor version should be numeric, got: {}",
         parts[1]
     );
+}
+
+#[test]
+fn test_env_file_appears_in_help() {
+    let mut cmd = cargo_bin_cmd!("mdb");
+    cmd.env("NO_COLOR", "1");
+    let output = cmd.arg("--help").assert().success();
+    let stdout = String::from_utf8_lossy(&output.get_output().stdout);
+
+    assert!(
+        stdout.contains("--env-file <PATH>"),
+        "help should mention --env-file, got: {stdout}"
+    );
+}
+
+#[test]
+fn test_missing_env_file_fails() {
+    let output = mdb_cmd_without_auth()
+        .args(["--env-file", "does-not-exist.env", "--version"])
+        .assert()
+        .failure();
+    let stderr = String::from_utf8_lossy(&output.get_output().stderr);
+    assert!(
+        stderr.contains("does-not-exist.env"),
+        "stderr should mention missing env file, got: {stderr}"
+    );
+}
+
+#[tokio::test]
+async fn test_env_file_loads_credentials() {
+    let Some((token, url)) = maybe_skip_integration() else {
+        eprintln!("Skipping Rust CLI env-file integration test: missing env var MDB_TOKEN");
+        return;
+    };
+    let tmp = tempfile::tempdir().expect("tempdir");
+    let env_path = tmp.path().join(".env.staging");
+    let url = url.unwrap_or_else(|| "https://db.marpledata.com/api/v1".to_string());
+    fs::write(&env_path, format!("MDB_TOKEN={token}\nMDB_URL={url}\n")).expect("write env file");
+
+    mdb_cmd_without_auth()
+        .args(["--env-file", env_path.to_str().unwrap(), "ping"])
+        .assert()
+        .success();
+}
+
+#[tokio::test]
+async fn test_shell_env_wins_over_env_file() {
+    let Some((token, url)) = maybe_skip_integration() else {
+        eprintln!("Skipping Rust CLI env-file precedence test: missing env var MDB_TOKEN");
+        return;
+    };
+    let tmp = tempfile::tempdir().expect("tempdir");
+    let env_path = tmp.path().join(".env.production");
+    fs::write(
+        &env_path,
+        "MDB_TOKEN=mdb_invalid\nMDB_URL=https://invalid.marpledata.example/api/v1\n",
+    )
+    .expect("write env file");
+
+    mdb_cmd(&token, url.as_deref())
+        .args(["--env-file", env_path.to_str().unwrap(), "ping"])
+        .assert()
+        .success();
 }
 
 #[tokio::test]
