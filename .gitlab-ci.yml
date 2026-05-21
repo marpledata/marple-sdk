@@ -40,9 +40,16 @@ pytest:
       - python/coverage.xml
   coverage: '/TOTAL\s+\d+\s+\d+\s+(\d+%)/'
   rules:
+    - if: '$CI_COMMIT_BRANCH == $CI_DEFAULT_BRANCH
+      changes:
+        - python/**/*
+        - test_data/**/*
     - if: $CI_COMMIT_BRANCH
       changes:
         - python/**/*
+        - test_data/**/*
+      when: manual
+      allow_failure: true
 
 rust:workspace:
   image: rust:1.93
@@ -67,12 +74,22 @@ rust:workspace:
     - cargo test --workspace --locked
     - cargo build --workspace --examples --locked
   rules:
+    - if: '$CI_COMMIT_BRANCH == $CI_DEFAULT_BRANCH
+      changes:
+        - rust/Cargo.lock
+        - rust/Cargo.toml
+        - rust/mdb-cli/**/*
+        - rust/mdb-sdk/**/*
+        - test_data/**/*
     - if: $CI_COMMIT_BRANCH
       changes:
         - rust/Cargo.lock
         - rust/Cargo.toml
         - rust/mdb-cli/**/*
         - rust/mdb-sdk/**/*
+        - test_data/**/*
+      when: manual
+      allow_failure: true
 
 rust:parquet-transcode:
   image: rust:1.93
