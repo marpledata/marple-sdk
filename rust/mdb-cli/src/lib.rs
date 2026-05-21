@@ -62,6 +62,25 @@ pub fn format_dataset_table_row(dataset: &Dataset) -> String {
     .join("\t")
 }
 
+pub fn dataset_queue_table_header() -> &'static str {
+    "ID\tpath\tstatus\tprogress\tdatapoints\tsignals\tbackup\tcreated_by\tmessage"
+}
+
+pub fn format_dataset_queue_table_row(dataset: &Dataset) -> String {
+    [
+        dataset.id.to_string(),
+        dataset.path.clone(),
+        format_import_status(dataset.import_status),
+        format_progress(dataset.import_progress),
+        format_compact_count(dataset.n_datapoints),
+        format_count(dataset.n_signals),
+        format_bytes(dataset.backup_size),
+        dataset.created_by.clone().unwrap_or_default(),
+        dataset.import_message.clone().unwrap_or_default(),
+    ]
+    .join("\t")
+}
+
 pub fn progress_bar(message: &str, total_size: u64) -> Result<ProgressBar> {
     let bar = ProgressBar::new(total_size);
     bar.set_style(ProgressStyle::default_bar().template(
@@ -107,6 +126,14 @@ fn format_import_status(status: ImportStatus) -> String {
         _ => "?",
     }
     .to_string()
+}
+
+fn format_progress(value: Option<f64>) -> String {
+    let Some(value) = value else {
+        return "?".to_string();
+    };
+    let percent = if value <= 1.0 { value * 100.0 } else { value };
+    format!("{percent:.0}%")
 }
 
 fn format_compact_count(value: Option<u64>) -> String {

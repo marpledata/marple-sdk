@@ -6,8 +6,9 @@ use marple_db::{
     Dataset, MarpleDB, Metadata, ProgressReporter, PushFileOptions, UploadModeOverride,
 };
 use mdb_cli::{
-    DatasetListFormat, IndicatifProgress, StreamListFormat, dataset_table_header,
-    format_dataset_table_row, format_stream_table_row, progress_bar, progress_bar_or_hidden,
+    DatasetListFormat, IndicatifProgress, StreamListFormat, dataset_queue_table_header,
+    dataset_table_header, format_dataset_queue_table_row, format_dataset_table_row,
+    format_stream_table_row, progress_bar, progress_bar_or_hidden,
 };
 use serde_json::Value;
 use std::collections::HashSet;
@@ -359,7 +360,11 @@ async fn handle_datapool_commands(marpledb: &MarpleDB, command: &DatapoolCommand
             } else {
                 marpledb.get_datapool_datasets(pool).await?
             };
-            print_datasets(&datasets, *format)?;
+            if *queue {
+                print_dataset_queue(&datasets, *format)?;
+            } else {
+                print_datasets(&datasets, *format)?;
+            }
         }
     }
     Ok(())
@@ -371,6 +376,19 @@ fn print_datasets(datasets: &[Dataset], format: DatasetListFormat) -> Result<()>
             println!("{}", dataset_table_header());
             for dataset in datasets {
                 println!("{}", format_dataset_table_row(dataset));
+            }
+        }
+        DatasetListFormat::Long => println!("{}", serde_json::to_string_pretty(datasets)?),
+    }
+    Ok(())
+}
+
+fn print_dataset_queue(datasets: &[Dataset], format: DatasetListFormat) -> Result<()> {
+    match format {
+        DatasetListFormat::Short => {
+            println!("{}", dataset_queue_table_header());
+            for dataset in datasets {
+                println!("{}", format_dataset_queue_table_row(dataset));
             }
         }
         DatasetListFormat::Long => println!("{}", serde_json::to_string_pretty(datasets)?),

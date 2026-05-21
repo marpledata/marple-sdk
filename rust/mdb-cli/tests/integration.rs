@@ -344,6 +344,18 @@ async fn test_db_flow_via_cli() {
         "dataset id not found in datapool dataset list"
     );
 
+    let queue_short_list = mdb_cmd(&token, url.as_deref())
+        .args(["datapool", "datasets", "--queue"])
+        .assert()
+        .success();
+    let queue_short_stdout = String::from_utf8_lossy(&queue_short_list.get_output().stdout);
+    assert!(
+        queue_short_stdout.starts_with(
+            "ID\tpath\tstatus\tprogress\tdatapoints\tsignals\tbackup\tcreated_by\tmessage"
+        ),
+        "datapool queue short list missing header"
+    );
+
     // Query endpoint
     let query = "select path, stream_id, metadata from mdb_default_dataset limit 1;";
     mdb_cmd(&token, url.as_deref())

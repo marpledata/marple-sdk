@@ -157,6 +157,12 @@ mdb datapool datasets --pool default --queue
 mdb datapool datasets --pool default --format long
 ```
 
+Regular dataset tables show stored-data columns such as cold, hot, and backup bytes. Queue tables replace cold and hot bytes with import progress:
+
+```sh
+mdb datapool datasets --pool default --queue
+```
+
 ### Generic Endpoints
 
 Use `get`, `post`, and `delete` for endpoints not yet covered by first-class commands:
