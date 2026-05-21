@@ -40,7 +40,7 @@ pytest:
       - python/coverage.xml
   coverage: '/TOTAL\s+\d+\s+\d+\s+(\d+%)/'
   rules:
-    - if: '$CI_COMMIT_BRANCH == $CI_DEFAULT_BRANCH
+    - if: '$CI_COMMIT_BRANCH == $CI_DEFAULT_BRANCH'
       changes:
         - python/**/*
         - test_data/**/*
@@ -74,7 +74,7 @@ rust:workspace:
     - cargo test --workspace --locked
     - cargo build --workspace --examples --locked
   rules:
-    - if: '$CI_COMMIT_BRANCH == $CI_DEFAULT_BRANCH
+    - if: '$CI_COMMIT_BRANCH == $CI_DEFAULT_BRANCH'
       changes:
         - rust/Cargo.lock
         - rust/Cargo.toml
