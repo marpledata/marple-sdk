@@ -6,7 +6,7 @@ use serde_json::json;
 fn formats_stream_table_header() {
     assert_eq!(
         stream_table_header(),
-        "Stream\tdatasets\tdatapoints\tcold\thot\tplugin"
+        "Stream\tdatasets\tdatapoints\tcold\thot\tplugin\tdescription"
     );
 }
 
@@ -15,6 +15,9 @@ fn formats_stream_table_row() {
     let stream: Stream = serde_json::from_value(json!({
         "id": 3,
         "name": "IMC",
+        "type": "files",
+        "datapool": "default",
+        "description": "Race telemetry",
         "n_datasets": 4,
         "n_datapoints": 9_481_422_904_u64,
         "cold_bytes": 63_331_968_278_u64,
@@ -26,6 +29,6 @@ fn formats_stream_table_row() {
 
     assert_eq!(
         format_stream_table_row(&stream),
-        "IMC\t4\t9.5G\t59.0 GiB\t340.5 MiB\timc --unzip"
+        "IMC\t4\t9.5G\t59.0 GiB\t340.5 MiB\timc --unzip\tRace telemetry"
     );
 }

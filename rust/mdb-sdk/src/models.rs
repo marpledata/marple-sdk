@@ -25,9 +25,51 @@ pub struct Stream {
     pub id: i32,
     /// Stream name.
     pub name: String,
+    /// Stream type.
+    #[serde(rename = "type")]
+    pub stream_type: StreamType,
+    /// Owning datapool.
+    pub datapool: String,
+    /// Stream description.
+    #[serde(default, deserialize_with = "deserialize_default_string")]
+    pub description: String,
+    /// Number of datasets, if known.
+    #[serde(default)]
+    pub n_datasets: Option<u64>,
+    /// Number of datapoints, if known.
+    #[serde(default)]
+    pub n_datapoints: Option<u64>,
+    /// Cold-storage byte size, if known.
+    #[serde(default)]
+    pub cold_bytes: Option<u64>,
+    /// Hot-storage byte size, if known.
+    #[serde(default)]
+    pub hot_bytes: Option<u64>,
+    /// Import plugin name for file streams.
+    #[serde(default)]
+    pub plugin: Option<String>,
+    /// Import plugin arguments for file streams.
+    #[serde(default)]
+    pub plugin_args: Option<String>,
     /// Additional stream fields returned by the API.
     #[serde(flatten)]
     pub extra: Value,
+}
+
+/// MarpleDB stream type.
+#[non_exhaustive]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum StreamType {
+    Files,
+    Realtime,
+}
+
+fn deserialize_default_string<'de, D>(deserializer: D) -> std::result::Result<String, D::Error>
+where
+    D: serde::Deserializer<'de>,
+{
+    Ok(Option::<String>::deserialize(deserializer)?.unwrap_or_default())
 }
 
 /// Dataset import lifecycle status.

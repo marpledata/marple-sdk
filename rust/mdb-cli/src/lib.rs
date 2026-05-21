@@ -2,7 +2,6 @@ use anyhow::Result;
 use clap::ValueEnum;
 use indicatif::{ProgressBar, ProgressStyle};
 use marple_db::{ProgressReporter, Stream};
-use serde_json::Value;
 
 #[derive(Clone, Copy, Debug, Default, ValueEnum)]
 #[clap(rename_all = "lowercase")]
@@ -13,17 +12,11 @@ pub enum StreamListFormat {
 }
 
 pub fn stream_table_header() -> &'static str {
-    "Stream\tdatasets\tdatapoints\tcold\thot\tplugin"
+    "Stream\tdatasets\tdatapoints\tcold\thot\tplugin\tdescription"
 }
 
 pub fn format_stream_table_row(stream: &Stream) -> String {
-    let dataset_count = value_u64(&stream.extra, "n_datasets");
-    let datapoints = value_u64(&stream.extra, "n_datapoints");
-    let cold_bytes = value_u64(&stream.extra, "cold_bytes");
-    let hot_bytes = value_u64(&stream.extra, "hot_bytes");
-    let plugin = value_str(&stream.extra, "plugin");
-    let plugin_args = value_str(&stream.extra, "plugin_args");
-    let plugin = match (plugin, plugin_args) {
+    let plugin = match (stream.plugin.as_deref(), stream.plugin_args.as_deref()) {
         (Some(plugin), Some(args)) => format!("{plugin} {args}"),
         (Some(plugin), None) => plugin.to_string(),
         _ => String::new(),
@@ -31,11 +24,12 @@ pub fn format_stream_table_row(stream: &Stream) -> String {
 
     [
         stream.name.clone(),
-        format_count(dataset_count),
-        format_compact_count(datapoints),
-        format_bytes(cold_bytes),
-        format_bytes(hot_bytes),
+        format_count(stream.n_datasets),
+        format_compact_count(stream.n_datapoints),
+        format_bytes(stream.cold_bytes),
+        format_bytes(stream.hot_bytes),
         plugin,
+        stream.description.clone(),
     ]
     .join("\t")
 }
@@ -66,19 +60,6 @@ impl ProgressReporter for IndicatifProgress {
     fn finish(&self) {
         self.0.finish_and_clear();
     }
-}
-
-fn value_u64(value: &Value, key: &str) -> Option<u64> {
-    value
-        .get(key)
-        .and_then(|v| v.as_u64().or_else(|| v.as_i64()?.try_into().ok()))
-}
-
-fn value_str<'a>(value: &'a Value, key: &str) -> Option<&'a str> {
-    value
-        .get(key)
-        .and_then(Value::as_str)
-        .filter(|s| !s.is_empty())
 }
 
 fn format_count(value: Option<u64>) -> String {

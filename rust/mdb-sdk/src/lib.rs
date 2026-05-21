@@ -70,6 +70,6 @@ pub use client::{MarpleDB, MarpleDBBuilder};
 pub use errors::{Error, Result};
 pub use models::{
     Dataset, HealthResponse, ImportStatus, Metadata, PushFileOptions, PushFileOptionsBuilder,
-    Stream, UploadModeOverride,
+    Stream, StreamType, UploadModeOverride,
 };
 pub use progress::{NoopProgress, ProgressReporter};
