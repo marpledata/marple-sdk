@@ -17,7 +17,7 @@ from marple.db import Dataset, DataStream
 from marple.db.constants import SCHEMA
 from requests import HTTPError
 
-EXAMPLE_CSV = Path(__file__).parent / "examples_race.csv"
+EXAMPLE_CSV = Path(__file__).parents[2] / "test_data" / "examples_race.csv"
 
 
 dotenv.load_dotenv()
