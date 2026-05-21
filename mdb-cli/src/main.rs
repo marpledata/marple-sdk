@@ -1,4 +1,5 @@
 use anyhow::{Result, anyhow};
+use base64::Engine;
 use clap::{CommandFactory, Parser, Subcommand, ValueEnum};
 use colored::*;
 use futures_util::{StreamExt, lock::Mutex};
@@ -20,6 +21,49 @@ use std::sync::{
 use tokio::io::{AsyncReadExt, AsyncSeekExt, AsyncWriteExt};
 use tokio_util::io::ReaderStream;
 use walkdir::WalkDir;
+
+const PROGRESS_STREAM_CHUNK: usize = 256 * 1024;
+
+fn progress_bar(message: &str, total_size: u64) -> Result<ProgressBar> {
+    let bar = ProgressBar::new(total_size);
+    bar.set_style(ProgressStyle::default_bar().template(
+        "- {msg} [{wide_bar}] ({binary_bytes_per_sec}, eta {eta}) {binary_bytes}/{binary_total_bytes}",
+    )?.progress_chars("=> "));
+    bar.set_message(message.to_string());
+    Ok(bar)
+}
+
+fn progress_reporting_stream(
+    data: Vec<u8>,
+    uploaded: Arc<AtomicU64>,
+    bar: ProgressBar,
+) -> impl futures_util::Stream<Item = std::io::Result<Vec<u8>>> + 'static {
+    async_stream::stream! {
+        let mut pos = 0;
+        while pos < data.len() {
+            let end = (pos + PROGRESS_STREAM_CHUNK).min(data.len());
+            let chunk = data[pos..end].to_vec();
+            let chunk_len = chunk.len() as u64;
+            let new_uploaded = uploaded.fetch_add(chunk_len, Ordering::Relaxed) + chunk_len;
+            bar.set_position(new_uploaded);
+            yield Ok(chunk);
+            pos = end;
+        }
+    }
+}
+
+async fn ensure_success(response: Response, failure_message: impl Into<String>) -> Result<()> {
+    if response.status().is_success() {
+        Ok(())
+    } else {
+        Err(anyhow!(
+            "{} with status {}: {}",
+            failure_message.into(),
+            response.status(),
+            response.text().await?
+        ))
+    }
+}
 
 #[derive(Parser)]
 #[command(name = "mdb")]
@@ -307,7 +351,7 @@ struct BlockDescriptor {
 #[derive(Clone)]
 struct AzureBlockUploadContext {
     storage_client: Client,
-    sas_url: reqwest::Url,
+    sas_url: Arc<reqwest::Url>,
     file_path: PathBuf,
     uploaded: Arc<AtomicU64>,
     bar: ProgressBar,
@@ -332,32 +376,6 @@ fn azure_block_descriptors(total_size: u64, block_size: u64) -> Vec<BlockDescrip
         .collect()
 }
 
-fn base64_encode(input: &[u8]) -> String {
-    const TABLE: &[u8; 64] = b"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
-    let mut output = String::with_capacity(input.len().div_ceil(3) * 4);
-
-    for chunk in input.chunks(3) {
-        let first = chunk[0];
-        let second = chunk.get(1).copied().unwrap_or(0);
-        let third = chunk.get(2).copied().unwrap_or(0);
-
-        output.push(TABLE[(first >> 2) as usize] as char);
-        output.push(TABLE[(((first & 0b0000_0011) << 4) | (second >> 4)) as usize] as char);
-        if chunk.len() > 1 {
-            output.push(TABLE[(((second & 0b0000_1111) << 2) | (third >> 6)) as usize] as char);
-        } else {
-            output.push('=');
-        }
-        if chunk.len() > 2 {
-            output.push(TABLE[(third & 0b0011_1111) as usize] as char);
-        } else {
-            output.push('=');
-        }
-    }
-
-    output
-}
-
 struct MarpleDB {
     client: Client,
     storage_client: Client,
@@ -371,6 +389,7 @@ impl MarpleDB {
         bearer.set_sensitive(true);
         headers.insert(AUTHORIZATION, bearer);
         let client = Client::builder().default_headers(headers).build()?;
+        // Direct storage URLs are pre-signed/SAS-authenticated, so do not send Marple DB headers.
         let storage_client = Client::new();
 
         Ok(Self {
@@ -444,6 +463,16 @@ impl MarpleDB {
         Ok(serde_json::from_value(response)?)
     }
 
+    async fn post_multipart(
+        &self,
+        endpoint: &str,
+        form: reqwest::multipart::Form,
+    ) -> Result<Value> {
+        let url = self.base_url.clone() + endpoint.trim_start_matches('/');
+        let response = self.client.post(url).multipart(form).send().await?;
+        self.handle_response(endpoint, "POST", response).await
+    }
+
     async fn get_json<Q, R>(&self, endpoint: &str, query: &Q) -> Result<R>
     where
         Q: Serialize + ?Sized,
@@ -494,8 +523,8 @@ impl MarpleDB {
             .as_array()
             .ok_or(anyhow!("Expected an array of datasets"))?
             .iter()
-            .map(|d| serde_json::from_value(d.clone()).unwrap())
-            .collect();
+            .map(|d| serde_json::from_value(d.clone()))
+            .collect::<std::result::Result<_, _>>()?;
         Ok(datasets)
     }
 
@@ -555,12 +584,7 @@ impl MarpleDB {
     }
 
     fn upload_progress_bar(file_name: &str, total_size: u64) -> Result<ProgressBar> {
-        let bar = ProgressBar::new(total_size);
-        bar.set_style(ProgressStyle::default_bar().template(
-            "- {msg} [{wide_bar}] ({binary_bytes_per_sec}, eta {eta}) {binary_bytes}/{binary_total_bytes}",
-        )?.progress_chars("=> "));
-        bar.set_message(file_name.to_string());
-        Ok(bar)
+        progress_bar(file_name, total_size)
     }
 
     async fn upload_via_single(
@@ -597,13 +621,7 @@ impl MarpleDB {
             .body(Body::wrap_stream(stream))
             .send()
             .await?;
-        if !response.status().is_success() {
-            return Err(anyhow!(
-                "storage PUT failed with status {}: {}",
-                response.status(),
-                response.text().await?
-            ));
-        }
+        ensure_success(response, "storage PUT failed").await?;
         Ok(())
     }
 
@@ -636,9 +654,7 @@ impl MarpleDB {
             .mime_str("application/octet-stream")?;
         let form = reqwest::multipart::Form::new().part("file", part);
         let endpoint = format!("ingestion/{}/upload/server", init.ingestion_id);
-        let url = self.base_url.clone() + &endpoint;
-        let response = self.client.post(url).multipart(form).send().await?;
-        self.handle_response(&endpoint, "POST", response).await?;
+        self.post_multipart(&endpoint, form).await?;
         Ok(())
     }
 
@@ -647,32 +663,21 @@ impl MarpleDB {
         context: &AzureBlockUploadContext,
         descriptor: BlockDescriptor,
     ) -> Result<()> {
-        const BLOCK_STREAM_CHUNK: usize = 256 * 1024;
-
         file.seek(SeekFrom::Start(descriptor.offset)).await?;
         let mut data = vec![0; usize::try_from(descriptor.length)?];
         file.read_exact(&mut data).await?;
 
-        let uploaded = Arc::clone(&context.uploaded);
-        let bar = context.bar.clone();
-        let stream = async_stream::stream! {
-            let mut pos = 0;
-            while pos < data.len() {
-                let end = (pos + BLOCK_STREAM_CHUNK).min(data.len());
-                let chunk = data[pos..end].to_vec();
-                let chunk_len = chunk.len() as u64;
-                let new_uploaded = uploaded.fetch_add(chunk_len, Ordering::Relaxed) + chunk_len;
-                bar.set_position(new_uploaded);
-                yield Ok::<_, std::io::Error>(chunk);
-                pos = end;
-            }
-        };
+        let stream =
+            progress_reporting_stream(data, Arc::clone(&context.uploaded), context.bar.clone());
 
-        let mut block_url = context.sas_url.clone();
+        let mut block_url = (*context.sas_url).clone();
         block_url
             .query_pairs_mut()
             .append_pair("comp", "block")
-            .append_pair("blockid", &base64_encode(descriptor.block_id.as_bytes()));
+            .append_pair(
+                "blockid",
+                &base64::engine::general_purpose::STANDARD.encode(descriptor.block_id.as_bytes()),
+            );
 
         let response = context
             .storage_client
@@ -681,14 +686,11 @@ impl MarpleDB {
             .body(Body::wrap_stream(stream))
             .send()
             .await?;
-        if !response.status().is_success() {
-            return Err(anyhow!(
-                "Azure block {} upload failed with status {}: {}",
-                descriptor.block_id,
-                response.status(),
-                response.text().await?
-            ));
-        }
+        ensure_success(
+            response,
+            format!("Azure block {} upload failed", descriptor.block_id),
+        )
+        .await?;
         Ok(())
     }
 
@@ -702,7 +704,7 @@ impl MarpleDB {
     ) -> Result<()> {
         use azure_storage_blobs::prelude::{BlobBlockType, BlobClient, BlockList};
 
-        const AZURE_BLOCK_SIZE: u64 = 8 * 1024 * 1024;
+        const AZURE_BLOCK_SIZE: u64 = 64 * 1024 * 1024;
 
         let url = init
             .presigned_url
@@ -716,7 +718,7 @@ impl MarpleDB {
         let bar = Self::upload_progress_bar(file_name, total_size)?;
         let context = AzureBlockUploadContext {
             storage_client: self.storage_client.clone(),
-            sas_url: sas_url.clone(),
+            sas_url: Arc::new(sas_url.clone()),
             file_path: file_path.to_path_buf(),
             uploaded: Arc::new(AtomicU64::new(0)),
             bar: bar.clone(),
@@ -759,8 +761,6 @@ impl MarpleDB {
         context: &MultipartUploadContext,
         part: PartUrl,
     ) -> Result<()> {
-        const PART_STREAM_CHUNK: usize = 256 * 1024;
-
         let offset = u64::from(part.part_number - 1) * context.part_size;
         if offset >= context.total_size {
             return Err(anyhow!(
@@ -774,20 +774,8 @@ impl MarpleDB {
         let mut data = vec![0; usize::try_from(part_len)?];
         file.read_exact(&mut data).await?;
 
-        let uploaded = Arc::clone(&context.uploaded);
-        let bar = context.bar.clone();
-        let stream = async_stream::stream! {
-            let mut pos = 0;
-            while pos < data.len() {
-                let end = (pos + PART_STREAM_CHUNK).min(data.len());
-                let chunk = data[pos..end].to_vec();
-                let chunk_len = chunk.len() as u64;
-                let new_uploaded = uploaded.fetch_add(chunk_len, Ordering::Relaxed) + chunk_len;
-                bar.set_position(new_uploaded);
-                yield Ok::<_, std::io::Error>(chunk);
-                pos = end;
-            }
-        };
+        let stream =
+            progress_reporting_stream(data, Arc::clone(&context.uploaded), context.bar.clone());
 
         let response = context
             .storage_client
@@ -796,14 +784,11 @@ impl MarpleDB {
             .body(Body::wrap_stream(stream))
             .send()
             .await?;
-        if !response.status().is_success() {
-            return Err(anyhow!(
-                "part {} storage PUT failed with status {}: {}",
-                part.part_number,
-                response.status(),
-                response.text().await?
-            ));
-        }
+        ensure_success(
+            response,
+            format!("part {} storage PUT failed", part.part_number),
+        )
+        .await?;
         Ok(())
     }
 
@@ -953,17 +938,12 @@ impl MarpleDB {
             "stream/{}/dataset/{}/backup",
             dataset.datastream_id, dataset.id
         );
-        let BackupResponse { path }: BackupResponse =
-            serde_json::from_value(self.get(&endpoint, None).await?)?;
+        let BackupResponse { path } = self.get_json(&endpoint, &()).await?;
         let local_path =
             Path::new(&output_dir.clone().unwrap_or(".".to_string())).join(dataset.path.clone());
         let mut file = tokio::fs::File::create(local_path.clone()).await?;
         let mut bytes_stream = reqwest::get(path).await?.bytes_stream();
-        let bar = ProgressBar::new(backup_size);
-        bar.set_style(ProgressStyle::default_bar().template(
-            "- {msg} [{wide_bar}] ({binary_bytes_per_sec}, eta {eta}) {binary_bytes}/{binary_total_bytes}",
-        )?.progress_chars("=> "));
-        bar.set_message(dataset.path.clone());
+        let bar = progress_bar(&dataset.path, backup_size)?;
         let mut downloaded = 0;
         while let Some(chunk) = bytes_stream.next().await {
             if let Ok(chunk) = &chunk {

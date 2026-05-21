@@ -1435,6 +1435,7 @@ dependencies = [
  "assert_cmd",
  "async-stream",
  "azure_storage_blobs",
+ "base64 0.22.1",
  "clap",
  "colored",
  "dotenvy",
