@@ -62,7 +62,7 @@ fn find_last_i32(s: &str) -> Option<i32> {
 
 fn example_csv_path() -> PathBuf {
     let root = Path::new(env!("CARGO_MANIFEST_DIR"));
-    root.join("../python/tests/examples_race.csv")
+    root.join("../../python/tests/examples_race.csv")
 }
 
 async fn download_to_file(url: &str, dest: &Path) {
