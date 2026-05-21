@@ -3,6 +3,24 @@ use std::num::TryFromIntError;
 use thiserror::Error;
 
 /// Error type returned by the MarpleDB SDK.
+///
+/// `Transport` means no usable HTTP response was received, `Api` means the
+/// MarpleDB API returned a non-success status, and `Storage` covers direct
+/// pre-signed storage uploads/downloads.
+///
+/// ```
+/// # fn handle(error: marple_db::Error) {
+/// match error {
+///     marple_db::Error::Api { status, body, .. } => {
+///         eprintln!("API returned {status}: {body}");
+///     }
+///     error if error.status().is_some() => {
+///         eprintln!("HTTP-like error: {:?}", error.status());
+///     }
+///     error => eprintln!("{error}"),
+/// }
+/// # }
+/// ```
 #[non_exhaustive]
 #[derive(Debug, Error)]
 pub enum Error {

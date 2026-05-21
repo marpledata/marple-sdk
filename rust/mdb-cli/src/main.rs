@@ -42,11 +42,17 @@ struct Cli {
     #[arg(
         long,
         default_value = "https://db.marpledata.com/api/v1",
-        env = "MDB_URL"
+        env = "MDB_URL",
+        help = "MarpleDB API URL; defaults to SaaS and usually ends in /api/v1"
     )]
     mdb_url: String,
 
-    #[arg(long, default_value = "", env = "MDB_TOKEN")]
+    #[arg(
+        long,
+        default_value = "",
+        env = "MDB_TOKEN",
+        help = "MarpleDB API token; can also be provided through MDB_TOKEN"
+    )]
     mdb_token: String,
 
     #[arg(long)]
@@ -72,7 +78,7 @@ enum Commands {
         /// Stream name
         stream_name: String,
 
-        /// Metadata key=value pairs
+        /// Dataset metadata as key=value pairs; values are parsed as JSON when possible
         #[arg(short, long, value_parser = parse_key_val)]
         metadata: Vec<(String, Value)>,
 
@@ -91,11 +97,11 @@ enum Commands {
         #[arg(short, long)]
         skip_existing: bool,
 
-        /// Max concurrent multipart part uploads
+        /// Max concurrent direct-storage part uploads
         #[arg(long, default_value_t = 4)]
         concurrency: usize,
 
-        /// Upload mode override
+        /// Upload mode override; server forces upload through the API server
         #[arg(long, value_enum, default_value_t = CliUploadModeOverride::Auto)]
         upload_mode: CliUploadModeOverride,
     },
@@ -114,7 +120,7 @@ enum Commands {
         /// API endpoint
         endpoint: String,
 
-        /// Query parameters (key=value)
+        /// Query parameters as key=value pairs; values are parsed as JSON when possible
         #[arg(num_args = 0.., value_parser = parse_key_val)]
         params: Vec<(String, Value)>,
     },
@@ -124,7 +130,7 @@ enum Commands {
         /// API endpoint
         endpoint: String,
 
-        /// Data parameters (key=value)
+        /// JSON body fields as key=value pairs; values are parsed as JSON when possible
         #[arg(num_args = 0.., value_parser = parse_key_val)]
         data: Vec<(String, Value)>,
     },
@@ -134,7 +140,7 @@ enum Commands {
         /// API endpoint
         endpoint: String,
 
-        /// Data parameters (key=value)
+        /// JSON body fields as key=value pairs; values are parsed as JSON when possible
         #[arg(num_args = 0.., value_parser = parse_key_val)]
         data: Vec<(String, Value)>,
     },
@@ -156,7 +162,7 @@ enum StreamCommands {
         /// Stream name
         stream_name: String,
 
-        /// Stream properties (key=value)
+        /// Stream properties as key=value pairs; values are parsed as JSON when possible
         #[arg(num_args = 0.., value_parser = parse_key_val)]
         properties: Vec<(String, Value)>,
     },
@@ -166,7 +172,7 @@ enum StreamCommands {
         /// Stream name
         stream_name: String,
 
-        /// Stream properties (key=value)
+        /// Stream properties as key=value pairs; values are parsed as JSON when possible
         #[arg(num_args = 0.., value_parser = parse_key_val)]
         properties: Vec<(String, Value)>,
     },
@@ -183,13 +189,13 @@ enum DatasetCommands {
         dataset_id: i32,
     },
 
-    /// Download a dataset
+    /// Download one dataset, or all datasets when no dataset id is provided
     Download {
         /// Output directory
         #[arg(short, long)]
         output_dir: Option<String>,
 
-        /// Dataset ID
+        /// Dataset ID; omit to download all datasets in the stream
         dataset_id: Option<i32>,
     },
 }

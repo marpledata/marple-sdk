@@ -5,6 +5,8 @@ use std::fmt;
 use std::sync::Arc;
 
 /// JSON object used for user-defined stream or dataset metadata.
+///
+/// This is an insertion-preserving `serde_json::Map<String, Value>`.
 pub type Metadata = Map<String, Value>;
 
 /// Health response returned by the MarpleDB API.
@@ -29,6 +31,8 @@ pub struct Stream {
 }
 
 /// Dataset import lifecycle status.
+///
+/// Serialized values match the MarpleDB API and Python SDK enum names.
 #[non_exhaustive]
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "SCREAMING_SNAKE_CASE")]
@@ -184,6 +188,18 @@ impl Default for PushFileOptionsBuilder {
 
 impl PushFileOptionsBuilder {
     /// Sets dataset metadata for the upload.
+    ///
+    /// ```
+    /// use marple_db::PushFileOptions;
+    /// use serde_json::json;
+    ///
+    /// let options = PushFileOptions::builder()
+    ///     .metadata([
+    ///         ("driver", json!("Mbaerto")),
+    ///         ("run", json!(42)),
+    ///     ])
+    ///     .build();
+    /// ```
     pub fn metadata<I, K, V>(mut self, entries: I) -> Self
     where
         I: IntoIterator<Item = (K, V)>,
@@ -198,6 +214,9 @@ impl PushFileOptionsBuilder {
     }
 
     /// Sets max concurrent part uploads for multipart modes.
+    ///
+    /// Higher values can improve throughput for large direct-storage uploads,
+    /// but also increase memory use and the number of active storage requests.
     pub fn concurrency(mut self, concurrency: usize) -> Self {
         self.concurrency = concurrency;
         self

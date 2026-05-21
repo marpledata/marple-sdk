@@ -21,16 +21,25 @@ pub struct MarpleDB {
 
 impl MarpleDB {
     /// Creates a new client for `url` using a bearer API token.
+    ///
+    /// The URL should point at the MarpleDB API root and usually ends in
+    /// `/api/v1`, for example `https://db.marpledata.com/api/v1`.
     pub fn new(url: &str, token: &str) -> Result<Self> {
         Self::builder().url(url).token(token).build()
     }
 
     /// Creates a builder for configuring a client.
+    ///
+    /// Use the builder when you need custom timeouts, a user agent, or
+    /// preconfigured `reqwest::Client` instances.
     pub fn builder() -> MarpleDBBuilder {
         MarpleDBBuilder::default()
     }
 
     /// Returns the header-free storage client used for pre-signed download and upload URLs.
+    ///
+    /// Direct storage URLs are already authenticated by the URL itself. This
+    /// client intentionally does not include MarpleDB authorization headers.
     pub fn storage_client(&self) -> &Client {
         &self.storage_client
     }
@@ -87,6 +96,9 @@ impl MarpleDB {
     }
 
     /// Sends a GET request and deserializes the JSON response.
+    ///
+    /// Use `&()` for endpoints without query parameters. The response type is
+    /// inferred from assignment or turbofish annotations.
     #[tracing::instrument(skip_all, fields(endpoint = %endpoint))]
     pub async fn get<Q, R>(&self, endpoint: &str, query: &Q) -> Result<R>
     where
@@ -98,6 +110,9 @@ impl MarpleDB {
     }
 
     /// Sends a POST request with a JSON body and deserializes the JSON response.
+    ///
+    /// The body may be any serializable value. Use `serde_json::Value` as the
+    /// response type when calling untyped endpoints.
     #[tracing::instrument(skip_all, fields(endpoint = %endpoint))]
     pub async fn post<B, R>(&self, endpoint: &str, body: &B) -> Result<R>
     where
@@ -109,6 +124,9 @@ impl MarpleDB {
     }
 
     /// Sends a DELETE request with a JSON body and deserializes the JSON response.
+    ///
+    /// The body may be any serializable value. Pass `&serde_json::json!({})`
+    /// when the endpoint expects an empty JSON object.
     #[tracing::instrument(skip_all, fields(endpoint = %endpoint))]
     pub async fn delete<B, R>(&self, endpoint: &str, body: &B) -> Result<R>
     where
@@ -168,6 +186,9 @@ impl MarpleDB {
     }
 
     /// Creates a stream with a name and serializable options object.
+    ///
+    /// `options` must serialize to a JSON object. The SDK adds the `name`
+    /// field before sending the request.
     pub async fn create_stream<S: Serialize + ?Sized>(
         &self,
         stream_name: &str,
@@ -187,6 +208,9 @@ impl MarpleDB {
     }
 
     /// Updates a stream with a serializable options object.
+    ///
+    /// `options` must serialize to the JSON object expected by the MarpleDB
+    /// stream update endpoint.
     pub async fn update_stream<S: Serialize + ?Sized>(
         &self,
         stream_id: i32,
@@ -214,6 +238,9 @@ impl MarpleDB {
     }
 
     /// Returns a pre-signed URL for downloading a dataset's original uploaded file.
+    ///
+    /// The returned URL is already authenticated and may expire. Use
+    /// [`MarpleDB::storage_client`] or another header-free HTTP client to fetch it.
     pub async fn get_download_link(&self, dataset: &Dataset) -> Result<Url> {
         if dataset.backup_size.is_none() {
             return Err(Error::NoBackup { id: dataset.id });
@@ -231,6 +258,9 @@ impl MarpleDB {
     }
 
     /// Waits until an import reaches a terminal status or times out.
+    ///
+    /// Polls every 500ms. `Finished` and `Live` return the dataset, while
+    /// `Failed` and `PostprocessingFailed` return [`Error::ImportFailed`].
     pub async fn wait_for_import(
         &self,
         stream_id: i32,
@@ -293,18 +323,25 @@ impl Default for MarpleDBBuilder {
 
 impl MarpleDBBuilder {
     /// Sets the MarpleDB API base URL.
+    ///
+    /// The URL should usually end in `/api/v1`.
     pub fn url(mut self, url: impl Into<String>) -> Self {
         self.url = Some(url.into());
         self
     }
 
     /// Sets the bearer API token.
+    ///
+    /// The token is sent as `Authorization: Bearer <token>` on API requests.
     pub fn token(mut self, token: impl Into<String>) -> Self {
         self.token = Some(token.into());
         self
     }
 
     /// Sets the timeout for the API and storage HTTP clients built by the SDK.
+    ///
+    /// This only affects clients created by the builder. Caller-provided
+    /// clients keep their own timeout configuration.
     pub fn timeout(mut self, timeout: Duration) -> Self {
         self.timeout = Some(timeout);
         self
@@ -317,12 +354,17 @@ impl MarpleDBBuilder {
     }
 
     /// Uses a caller-provided API HTTP client.
+    ///
+    /// The SDK still attaches the MarpleDB authorization header per request.
     pub fn client(mut self, client: Client) -> Self {
         self.client = Some(client);
         self
     }
 
     /// Uses a caller-provided storage HTTP client.
+    ///
+    /// This client is used for pre-signed direct storage URLs and should not
+    /// include MarpleDB authorization headers by default.
     pub fn storage_client(mut self, client: Client) -> Self {
         self.storage_client = Some(client);
         self
