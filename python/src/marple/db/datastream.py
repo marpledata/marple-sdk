@@ -105,7 +105,7 @@ class DataStream(BaseModel):
 
         try:
             if upload_mode == "server" or init.mode == "server":
-                self._upload_server(init.ingestion_id, path)
+                self._upload_server(init, path)
             elif init.mode == "azure":
                 self._upload_azure(init, path, max(concurrency, 1))
             elif init.mode == "single":
@@ -134,10 +134,10 @@ class DataStream(BaseModel):
         )
         return IngestionInit(**validate_response(r, "Initialize ingestion failed"))
 
-    def _upload_server(self, ingestion_id: int, path: Path) -> None:
+    def _upload_server(self, init: IngestionInit, path: Path) -> None:
         with path.open("rb") as file:
             files = {"file": (path.name, file, "application/octet-stream")}
-            r = self._client.post(f"/ingestion/{ingestion_id}/upload/server", files=files)
+            r = self._client.post(f"/ingestion/{init.ingestion_id}/upload/server", files=files)
         validate_response(r, "Server upload failed")
 
     def _upload_azure(self, init: IngestionInit, path: Path, concurrency: int) -> None:
@@ -160,11 +160,12 @@ class DataStream(BaseModel):
         self,
         init: IngestionInit,
         path: Path,
-        total_size: int,
+        file_size: int,
         concurrency: int,
     ) -> None:
         if init.part_size is None:
             raise ValueError("Multipart upload mode without part_size")
+        part_size = init.part_size
 
         batch_size = max(concurrency, 32)
         parts = self._iter_part_urls(init.ingestion_id, batch_size)
@@ -175,15 +176,15 @@ class DataStream(BaseModel):
                 return next(parts, None)
 
         def upload_worker() -> None:
-            while (part := next_part()) is not None:
-                offset = (part.part_number - 1) * init.part_size
-                part_len = min(init.part_size, total_size - offset)
-                with path.open("rb") as file:
+            with path.open("rb") as file:
+                while (part := next_part()) is not None:
+                    offset = (part.part_number - 1) * part_size
+                    part_len = min(part_size, file_size - offset)
                     file.seek(offset)
                     chunk = file.read(part_len)
 
-                response = requests.put(part.url, data=chunk, headers={"Content-Length": str(part_len)})
-                _validate_storage_response(response, f"Part {part.part_number} storage PUT failed")
+                    response = requests.put(part.url, data=chunk, headers={"Content-Length": str(part_len)})
+                    _validate_storage_response(response, f"Part {part.part_number} storage PUT failed")
 
         with ThreadPoolExecutor(max_workers=concurrency) as executor:
             futures = [executor.submit(upload_worker) for _ in range(concurrency)]
