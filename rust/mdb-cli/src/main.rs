@@ -2,9 +2,12 @@ use anyhow::{Result, anyhow};
 use clap::{CommandFactory, Parser, Subcommand, ValueEnum};
 use colored::*;
 use futures_util::StreamExt;
-use indicatif::{ProgressBar, ProgressStyle};
 use marple_db::{
     Dataset, MarpleDB, Metadata, ProgressReporter, PushFileOptions, UploadModeOverride,
+};
+use mdb_cli::{
+    IndicatifProgress, StreamListFormat, format_stream_table_row, progress_bar,
+    progress_bar_or_hidden,
 };
 use serde_json::Value;
 use std::collections::HashSet;
@@ -12,27 +15,6 @@ use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use tokio::io::AsyncWriteExt;
 use walkdir::WalkDir;
-
-fn progress_bar(message: &str, total_size: u64) -> Result<ProgressBar> {
-    let bar = ProgressBar::new(total_size);
-    bar.set_style(ProgressStyle::default_bar().template(
-        "- {msg} [{wide_bar}] ({binary_bytes_per_sec}, eta {eta}) {binary_bytes}/{binary_total_bytes}",
-    )?.progress_chars("=> "));
-    bar.set_message(message.to_string());
-    Ok(bar)
-}
-
-struct IndicatifProgress(ProgressBar);
-
-impl ProgressReporter for IndicatifProgress {
-    fn set_position(&self, position: u64) {
-        self.0.set_position(position);
-    }
-
-    fn finish(&self) {
-        self.0.finish_and_clear();
-    }
-}
 
 #[derive(Parser)]
 #[command(name = "mdb")]
@@ -149,7 +131,11 @@ enum Commands {
 #[derive(Subcommand)]
 enum StreamCommands {
     /// List all streams
-    List,
+    List {
+        /// Output format
+        #[arg(long, value_enum, default_value_t = StreamListFormat::Short)]
+        format: StreamListFormat,
+    },
 
     /// Get a stream
     Get {
@@ -254,9 +240,17 @@ fn handle_version() {
 
 async fn handle_stream_commands(marpledb: &MarpleDB, command: &StreamCommands) -> Result<()> {
     match command {
-        StreamCommands::List => {
+        StreamCommands::List { format } => {
             let streams = marpledb.get_streams().await?;
-            println!("{}", serde_json::to_string_pretty(&streams)?);
+            match format {
+                StreamListFormat::Short => {
+                    println!("{}", mdb_cli::stream_table_header());
+                    for stream in streams {
+                        println!("{}", format_stream_table_row(&stream));
+                    }
+                }
+                StreamListFormat::Long => println!("{}", serde_json::to_string_pretty(&streams)?),
+            }
         }
         StreamCommands::Get { stream_name } => {
             let stream = marpledb.get_stream(stream_name).await?;
@@ -325,13 +319,8 @@ async fn handle_dataset_commands(
     Ok(())
 }
 
-fn download_progress(dataset: &marple_db::Dataset) -> Result<IndicatifProgress> {
-    let bar = dataset
-        .backup_size
-        .map_or_else(ProgressBar::hidden, |size| {
-            progress_bar(&dataset.path, size).unwrap_or_else(|_| ProgressBar::hidden())
-        });
-    Ok(IndicatifProgress(bar))
+fn download_progress(dataset: &marple_db::Dataset) -> IndicatifProgress {
+    progress_bar_or_hidden(&dataset.path, dataset.backup_size)
 }
 
 async fn download_dataset(
@@ -339,7 +328,7 @@ async fn download_dataset(
     dataset: &Dataset,
     output_dir: Option<&str>,
 ) -> Result<String> {
-    let progress = download_progress(dataset)?;
+    let progress = download_progress(dataset);
     let url = marpledb.get_download_link(dataset).await?;
     let local_path = output_dir
         .map_or_else(|| PathBuf::from("."), PathBuf::from)

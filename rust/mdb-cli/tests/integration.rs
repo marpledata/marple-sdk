@@ -205,7 +205,7 @@ async fn test_db_flow_via_cli() {
 
     // Ensure stream appears in list
     let streams_json = mdb_cmd(&token, url.as_deref())
-        .args(["stream", "list"])
+        .args(["stream", "list", "--format", "long"])
         .assert()
         .success();
     let streams = parse_json_stdout(&streams_json);
@@ -377,7 +377,7 @@ async fn test_db_flow_via_cli() {
     // Cleanup leftovers: delete any stream whose name starts with "Salty Compulsory"
     // (covers stale streams from previously failed runs).
     let streams_json = mdb_cmd(&token, url.as_deref())
-        .args(["stream", "list"])
+        .args(["stream", "list", "--format", "long"])
         .assert()
         .success();
     let streams = parse_json_stdout(&streams_json);
