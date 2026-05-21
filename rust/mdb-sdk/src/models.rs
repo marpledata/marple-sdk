@@ -1,62 +1,142 @@
 use crate::{NoopProgress, ProgressReporter};
 use serde::{Deserialize, Serialize};
-use serde_json::Value;
-use std::collections::HashMap;
+use serde_json::{Map, Value};
+use std::fmt;
 use std::sync::Arc;
 
-pub type Metadata = HashMap<String, Value>;
+/// JSON object used for user-defined stream or dataset metadata.
+pub type Metadata = Map<String, Value>;
 
-#[derive(Debug, Serialize, Deserialize)]
+/// Health response returned by the MarpleDB API.
+#[non_exhaustive]
+#[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct HealthResponse {
+    /// Service health status.
     pub status: String,
 }
 
-#[derive(Debug, Serialize, Deserialize)]
+/// MarpleDB stream metadata.
+#[non_exhaustive]
+#[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct Stream {
+    /// Stream id.
     pub id: i32,
+    /// Stream name.
     pub name: String,
+    /// Additional stream fields returned by the API.
     #[serde(flatten)]
     pub extra: Value,
 }
 
-#[derive(Debug, Serialize, Deserialize)]
+/// Dataset import lifecycle status.
+#[non_exhaustive]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "SCREAMING_SNAKE_CASE")]
+pub enum ImportStatus {
+    /// File upload is still in progress.
+    Uploading,
+    /// Dataset is waiting to be imported.
+    Waiting,
+    /// Dataset import is running.
+    Importing,
+    /// Dataset post-processing is running.
+    Postprocessing,
+    /// Dataset post-processing failed.
+    PostprocessingFailed,
+    /// Dataset import finished successfully.
+    Finished,
+    /// Dataset is a live dataset.
+    Live,
+    /// Dataset import failed.
+    Failed,
+}
+
+/// Dataset metadata returned by the MarpleDB API.
+#[non_exhaustive]
+#[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct Dataset {
+    /// Dataset id.
     pub id: i32,
+    /// Owning stream id.
     pub datastream_id: i32,
+    /// Owning stream version.
     pub datastream_version: i32,
+    /// Creation timestamp as epoch seconds.
     pub created_at: f64,
+    /// User that created the dataset, if available.
     pub created_by: Option<String>,
-    pub import_status: String,
+    /// Current import status.
+    pub import_status: ImportStatus,
+    /// Current import progress, if available.
     pub import_progress: Option<f64>,
+    /// Import status message, if available.
     pub import_message: Option<String>,
+    /// Import duration, if available.
     pub import_time: Option<f64>,
+    /// Original dataset path or filename.
     pub path: String,
+    /// User-defined dataset metadata.
     pub metadata: Metadata,
+    /// Cold-storage path.
     pub cold_path: String,
+    /// Cold-storage byte size.
     pub cold_bytes: Option<u64>,
+    /// Hot-storage byte size.
     pub hot_bytes: Option<u64>,
+    /// Backup path, if available.
     pub backup_path: Option<String>,
+    /// Backup byte size, if available.
     pub backup_size: Option<u64>,
+    /// Import plugin name.
     pub plugin: String,
+    /// Import plugin arguments.
     pub plugin_args: String,
+    /// Number of datapoints, if known.
     pub n_datapoints: Option<u64>,
+    /// Number of signals, if known.
     pub n_signals: Option<u64>,
+    /// Dataset start timestamp, if known.
     pub timestamp_start: Option<f64>,
+    /// Dataset stop timestamp, if known.
     pub timestamp_stop: Option<f64>,
+    /// Import speed, if known.
     pub import_speed: Option<f64>,
 }
 
+/// Upload mode preference for `MarpleDB::push_file`.
+#[non_exhaustive]
 #[derive(Clone, Copy, Debug)]
 pub enum UploadModeOverride {
+    /// Let the server choose the upload mode.
     Auto,
+    /// Force upload through the API server.
     Server,
 }
 
+/// Options for uploading a file.
+#[non_exhaustive]
 pub struct PushFileOptions {
-    pub metadata: Metadata,
-    pub concurrency: usize,
-    pub upload_mode: UploadModeOverride,
-    pub progress: Arc<dyn ProgressReporter>,
+    pub(crate) metadata: Metadata,
+    pub(crate) concurrency: usize,
+    pub(crate) upload_mode: UploadModeOverride,
+    pub(crate) progress: Arc<dyn ProgressReporter>,
+}
+
+impl fmt::Debug for PushFileOptions {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.debug_struct("PushFileOptions")
+            .field("metadata", &self.metadata)
+            .field("concurrency", &self.concurrency)
+            .field("upload_mode", &self.upload_mode)
+            .finish_non_exhaustive()
+    }
+}
+
+impl PushFileOptions {
+    /// Creates a builder for upload options.
+    pub fn builder() -> PushFileOptionsBuilder {
+        PushFileOptionsBuilder::default()
+    }
 }
 
 impl Default for PushFileOptions {
@@ -70,9 +150,80 @@ impl Default for PushFileOptions {
     }
 }
 
-#[derive(Debug, Serialize, Deserialize)]
-pub(crate) struct BackupResponse {
-    pub(crate) path: String,
+/// Builder for `PushFileOptions`.
+#[non_exhaustive]
+#[derive(Clone)]
+pub struct PushFileOptionsBuilder {
+    metadata: Metadata,
+    concurrency: usize,
+    upload_mode: UploadModeOverride,
+    progress: Arc<dyn ProgressReporter>,
+}
+
+impl fmt::Debug for PushFileOptionsBuilder {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.debug_struct("PushFileOptionsBuilder")
+            .field("metadata", &self.metadata)
+            .field("concurrency", &self.concurrency)
+            .field("upload_mode", &self.upload_mode)
+            .finish_non_exhaustive()
+    }
+}
+
+impl Default for PushFileOptionsBuilder {
+    fn default() -> Self {
+        let options = PushFileOptions::default();
+        Self {
+            metadata: options.metadata,
+            concurrency: options.concurrency,
+            upload_mode: options.upload_mode,
+            progress: options.progress,
+        }
+    }
+}
+
+impl PushFileOptionsBuilder {
+    /// Sets dataset metadata for the upload.
+    pub fn metadata<I, K, V>(mut self, entries: I) -> Self
+    where
+        I: IntoIterator<Item = (K, V)>,
+        K: Into<String>,
+        V: Into<Value>,
+    {
+        self.metadata = entries
+            .into_iter()
+            .map(|(key, value)| (key.into(), value.into()))
+            .collect();
+        self
+    }
+
+    /// Sets max concurrent part uploads for multipart modes.
+    pub fn concurrency(mut self, concurrency: usize) -> Self {
+        self.concurrency = concurrency;
+        self
+    }
+
+    /// Sets the upload mode preference.
+    pub fn upload_mode(mut self, upload_mode: UploadModeOverride) -> Self {
+        self.upload_mode = upload_mode;
+        self
+    }
+
+    /// Sets the progress reporter.
+    pub fn progress(mut self, progress: Arc<dyn ProgressReporter>) -> Self {
+        self.progress = progress;
+        self
+    }
+
+    /// Builds upload options.
+    pub fn build(self) -> PushFileOptions {
+        PushFileOptions {
+            metadata: self.metadata,
+            concurrency: self.concurrency,
+            upload_mode: self.upload_mode,
+            progress: self.progress,
+        }
+    }
 }
 
 #[derive(Debug, Serialize, Deserialize)]

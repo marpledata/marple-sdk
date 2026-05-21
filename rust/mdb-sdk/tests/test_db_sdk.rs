@@ -1,4 +1,4 @@
-use marple_db::{Dataset, MarpleDB, Metadata, NoopProgress, PushFileOptions, UploadModeOverride};
+use marple_db::{Dataset, ImportStatus, MarpleDB, Metadata, PushFileOptions, UploadModeOverride};
 use serde_json::{Value, json};
 use std::env;
 use std::fs;
@@ -31,7 +31,7 @@ fn maybe_skip_integration() -> Option<(String, String)> {
 }
 
 fn db(token: &str, url: &str) -> anyhow::Result<MarpleDB> {
-    MarpleDB::new(url, token)
+    Ok(MarpleDB::new(url, token)?)
 }
 
 async fn integration_test_guard() -> tokio::sync::MutexGuard<'static, ()> {
@@ -56,46 +56,25 @@ fn example_csv_path() -> PathBuf {
         .expect("example CSV path")
 }
 
-async fn wait_for_import(
-    db: &MarpleDB,
-    stream_id: i32,
-    dataset_id: i32,
-) -> anyhow::Result<Dataset> {
-    let deadline = std::time::Instant::now() + Duration::from_secs(180);
-    let mut last_dataset = None;
-
-    while std::time::Instant::now() < deadline {
-        let dataset = db.get_dataset(stream_id, dataset_id).await?;
-        if dataset.import_status == "FINISHED" || dataset.import_status == "FAILED" {
-            return Ok(dataset);
-        }
-        last_dataset = Some(dataset);
-        tokio::time::sleep(Duration::from_millis(500)).await;
-    }
-
-    let status = last_dataset
-        .as_ref()
-        .map(|dataset| dataset.import_status.as_str())
-        .unwrap_or("unknown");
-    anyhow::bail!("ingest did not finish before timeout, last status: {status}")
-}
-
 async fn cleanup_streams(db: &MarpleDB) -> anyhow::Result<()> {
     for stream in db.get_streams().await? {
         if !stream.name.starts_with(TEST_STREAM_PREFIX) {
             continue;
         }
         let _ = db
-            .post(&format!("/stream/{}/delete", stream.id), None)
+            .post::<_, Value>(&format!("/stream/{}/delete", stream.id), &json!({}))
             .await;
     }
     Ok(())
 }
 
 async fn create_test_stream(db: &MarpleDB, suffix: &str) -> anyhow::Result<marple_db::Stream> {
-    let options: Metadata = [("plugin_args".to_string(), json!("--use-index"))].into();
-    db.create_stream(&unique_stream_name(suffix), &options)
-        .await
+    let options: Metadata = [("plugin_args".to_string(), json!("--use-index"))]
+        .into_iter()
+        .collect();
+    Ok(db
+        .create_stream(&unique_stream_name(suffix), &options)
+        .await?)
 }
 
 async fn run_with_cleanup<F, Fut>(db: &MarpleDB, flow: F) -> anyhow::Result<()>
@@ -132,8 +111,13 @@ async fn upload_and_assert_dataset(
     anyhow::ensure!(expected_size > 0, "test CSV is empty");
 
     let dataset = db.push_file(stream_id, file_path, options).await?;
-    let dataset = wait_for_import(db, stream_id, dataset.id).await?;
-    anyhow::ensure!(dataset.import_status == "FINISHED", "ingest failed");
+    let dataset = db
+        .wait_for_import(stream_id, dataset.id, Duration::from_secs(180))
+        .await?;
+    anyhow::ensure!(
+        dataset.import_status == ImportStatus::Finished,
+        "ingest failed"
+    );
 
     for (key, value) in expected_metadata {
         anyhow::ensure!(
@@ -160,13 +144,13 @@ async fn upload_and_assert_dataset(
 
     if exercise_generic_endpoints {
         let query = "select path, stream_id, metadata from mdb_default_dataset limit 1;";
-        db.post("/query", Some(vec![("query".to_string(), json!(query))]))
+        db.post::<_, Value>("/query", &json!({ "query": query }))
             .await?;
 
-        let signals = db
+        let signals: Value = db
             .get(
                 &format!("/stream/{}/dataset/{}/signals", stream_id, dataset.id),
-                None,
+                &(),
             )
             .await?;
         anyhow::ensure!(
@@ -177,11 +161,15 @@ async fn upload_and_assert_dataset(
         );
     }
 
-    let tmp = tempfile::tempdir()?;
-    let downloaded = db
-        .download_dataset(&dataset, Some(tmp.path()), &NoopProgress)
-        .await?;
-    let downloaded_size = fs::metadata(downloaded)?.len();
+    let download_url = db.get_download_link(&dataset).await?;
+    let response = db.storage_client().get(download_url).send().await?;
+    anyhow::ensure!(
+        response.status().is_success(),
+        "download URL returned status {}",
+        response.status()
+    );
+    let downloaded = response.bytes().await?;
+    let downloaded_size = downloaded.len() as u64;
     anyhow::ensure!(
         downloaded_size == expected_size,
         "downloaded file size mismatch: source csv is {expected_size} bytes, downloaded file is {downloaded_size} bytes"
@@ -280,12 +268,10 @@ async fn run_auto_upload_flow(db: &MarpleDB) -> anyhow::Result<()> {
         "created stream not found in stream list"
     );
 
-    let updated = db
-        .update_stream(
-            stream.id,
-            &[("name".to_string(), json!(stream.name.clone()))].into(),
-        )
-        .await?;
+    let update_options: Metadata = [("name".to_string(), json!(stream.name.clone()))]
+        .into_iter()
+        .collect();
+    let updated = db.update_stream(stream.id, &update_options).await?;
     anyhow::ensure!(updated.id == stream.id, "updated stream id mismatch");
 
     let metadata_deployment = "integration-test";
@@ -294,14 +280,12 @@ async fn run_auto_upload_flow(db: &MarpleDB) -> anyhow::Result<()> {
         db,
         stream.id,
         &csv_path,
-        PushFileOptions {
-            metadata: [
+        PushFileOptions::builder()
+            .metadata([
                 ("Deployment".to_string(), json!(metadata_deployment)),
                 ("Foo".to_string(), json!(metadata_foo)),
-            ]
-            .into(),
-            ..Default::default()
-        },
+            ])
+            .build(),
         &[("Deployment", metadata_deployment), ("Foo", metadata_foo)],
         true,
     )
@@ -319,11 +303,10 @@ async fn run_server_upload_flow(db: &MarpleDB) -> anyhow::Result<()> {
         db,
         stream.id,
         &csv_path,
-        PushFileOptions {
-            metadata: [("upload_mode".to_string(), json!(upload_mode))].into(),
-            upload_mode: UploadModeOverride::Server,
-            ..Default::default()
-        },
+        PushFileOptions::builder()
+            .metadata([("upload_mode".to_string(), json!(upload_mode))])
+            .upload_mode(UploadModeOverride::Server)
+            .build(),
         &[("upload_mode", upload_mode)],
         false,
     )
@@ -342,10 +325,9 @@ async fn run_multipart_upload_flow(db: &MarpleDB) -> anyhow::Result<()> {
         db,
         stream.id,
         &csv_path,
-        PushFileOptions {
-            metadata: [("upload_mode".to_string(), json!(upload_mode))].into(),
-            ..Default::default()
-        },
+        PushFileOptions::builder()
+            .metadata([("upload_mode".to_string(), json!(upload_mode))])
+            .build(),
         &[("upload_mode", upload_mode)],
         false,
     )

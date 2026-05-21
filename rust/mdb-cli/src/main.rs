@@ -1,12 +1,16 @@
 use anyhow::{Result, anyhow};
 use clap::{CommandFactory, Parser, Subcommand, ValueEnum};
 use colored::*;
+use futures_util::StreamExt;
 use indicatif::{ProgressBar, ProgressStyle};
-use marple_db::{MarpleDB, Metadata, ProgressReporter, PushFileOptions, UploadModeOverride};
+use marple_db::{
+    Dataset, MarpleDB, Metadata, ProgressReporter, PushFileOptions, UploadModeOverride,
+};
 use serde_json::Value;
 use std::collections::HashSet;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
+use tokio::io::AsyncWriteExt;
 use walkdir::WalkDir;
 
 fn progress_bar(message: &str, total_size: u64) -> Result<ProgressBar> {
@@ -297,22 +301,14 @@ async fn handle_dataset_commands(
         } => {
             if let Some(dataset_id) = dataset_id {
                 let dataset = marpledb.get_dataset(stream.id, *dataset_id).await?;
-                let progress = download_progress(&dataset)?;
-                match marpledb
-                    .download_dataset(&dataset, output_dir.as_deref().map(Path::new), &progress)
-                    .await
-                {
+                match download_dataset(marpledb, &dataset, output_dir.as_deref()).await {
                     Ok(path) => println!("{} {} -> {}", "✓".green(), dataset.path, path),
                     Err(e) => eprintln!("{} {} failed: {}", "✗".red(), dataset.id, e),
                 }
             } else {
                 let datasets = marpledb.get_datasets(stream.id).await?;
                 for dataset in datasets {
-                    let progress = download_progress(&dataset)?;
-                    match marpledb
-                        .download_dataset(&dataset, output_dir.as_deref().map(Path::new), &progress)
-                        .await
-                    {
+                    match download_dataset(marpledb, &dataset, output_dir.as_deref()).await {
                         Ok(path) => println!("{} {} -> {}", "✓".green(), dataset.path, path),
                         Err(e) => eprintln!("{} {} failed: {}", "✗".red(), dataset.id, e),
                     }
@@ -330,6 +326,41 @@ fn download_progress(dataset: &marple_db::Dataset) -> Result<IndicatifProgress> 
             progress_bar(&dataset.path, size).unwrap_or_else(|_| ProgressBar::hidden())
         });
     Ok(IndicatifProgress(bar))
+}
+
+async fn download_dataset(
+    marpledb: &MarpleDB,
+    dataset: &Dataset,
+    output_dir: Option<&str>,
+) -> Result<String> {
+    let progress = download_progress(dataset)?;
+    let url = marpledb.get_download_link(dataset).await?;
+    let local_path = output_dir
+        .map_or_else(|| PathBuf::from("."), PathBuf::from)
+        .join(&dataset.path);
+    let mut file = tokio::fs::File::create(&local_path).await?;
+    let response = marpledb.storage_client().get(url).send().await?;
+    anyhow::ensure!(
+        response.status().is_success(),
+        "download failed with status {}",
+        response.status()
+    );
+    let total = dataset.backup_size.unwrap_or_default();
+    let mut downloaded = 0;
+    let mut chunks = response.bytes_stream();
+
+    while let Some(chunk) = chunks.next().await {
+        let chunk = chunk?;
+        file.write_all(&chunk).await?;
+        downloaded += chunk.len() as u64;
+        progress.set_position(if total == 0 {
+            downloaded
+        } else {
+            downloaded.min(total)
+        });
+    }
+    progress.finish();
+    Ok(local_path.to_string_lossy().to_string())
 }
 
 struct IngestOptions<'a> {
@@ -428,12 +459,12 @@ async fn ingest_path(
         .push_file(
             stream_id,
             path,
-            PushFileOptions {
-                metadata: metadata.clone(),
-                concurrency: options.concurrency,
-                upload_mode: options.upload_mode,
-                progress,
-            },
+            PushFileOptions::builder()
+                .metadata(metadata.clone())
+                .concurrency(options.concurrency)
+                .upload_mode(options.upload_mode)
+                .progress(progress)
+                .build(),
         )
         .await
     {
@@ -447,7 +478,7 @@ async fn handle_get(
     endpoint: &str,
     params: Vec<(String, Value)>,
 ) -> Result<()> {
-    let result = marpledb.get(endpoint, Some(params)).await?;
+    let result: Value = marpledb.get(endpoint, &to_record(params)).await?;
     println!("{}", serde_json::to_string_pretty(&result)?);
     Ok(())
 }
@@ -457,7 +488,7 @@ async fn handle_post(
     endpoint: &str,
     data: Vec<(String, Value)>,
 ) -> Result<()> {
-    let result = marpledb.post(endpoint, Some(data)).await?;
+    let result: Value = marpledb.post(endpoint, &to_record(data)).await?;
     println!("{}", serde_json::to_string_pretty(&result)?);
     Ok(())
 }
@@ -467,7 +498,7 @@ async fn handle_delete(
     endpoint: &str,
     data: Vec<(String, Value)>,
 ) -> Result<()> {
-    let result = marpledb.delete(endpoint, Some(data)).await?;
+    let result: Value = marpledb.delete(endpoint, &to_record(data)).await?;
     println!("{}", serde_json::to_string_pretty(&result)?);
     Ok(())
 }
