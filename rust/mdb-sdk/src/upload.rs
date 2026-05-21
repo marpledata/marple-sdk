@@ -327,39 +327,6 @@ impl MarpleDB {
         Ok(())
     }
 
-    #[cfg(feature = "azure-sdk-commit")]
-    async fn commit_azure_block_list(
-        &self,
-        sas_url: &reqwest::Url,
-        descriptors: &[BlockDescriptor],
-    ) -> Result<()> {
-        use azure_storage_blobs::prelude::{BlobBlockType, BlobClient, BlockList};
-
-        let blob_client = BlobClient::from_sas_url(sas_url).map_err(|error| Error::Storage {
-            context: "Azure block list commit failed".to_string(),
-            status: None,
-            body: Some(error.to_string()),
-            source: None,
-        })?;
-        let block_list = BlockList {
-            blocks: descriptors
-                .iter()
-                .map(|descriptor| BlobBlockType::new_uncommitted(descriptor.block_id.clone()))
-                .collect(),
-        };
-        blob_client
-            .put_block_list(block_list)
-            .await
-            .map_err(|error| Error::Storage {
-                context: "Azure block list commit failed".to_string(),
-                status: None,
-                body: Some(error.to_string()),
-                source: None,
-            })?;
-        Ok(())
-    }
-
-    #[cfg(not(feature = "azure-sdk-commit"))]
     async fn commit_azure_block_list(
         &self,
         sas_url: &reqwest::Url,
@@ -374,16 +341,20 @@ impl MarpleDB {
         for descriptor in descriptors {
             let block_id =
                 base64::engine::general_purpose::STANDARD.encode(descriptor.block_id.as_bytes());
-            xml.push_str("  <Latest>");
+            xml.push_str("\t<Uncommitted>");
             xml.push_str(&block_id);
-            xml.push_str("</Latest>\n");
+            xml.push_str("</Uncommitted>\n");
         }
         xml.push_str("</BlockList>");
+        let date = httpdate::fmt_http_date(std::time::SystemTime::now());
 
         let response = send_storage(
             self.storage_client
                 .put(block_list_url)
                 .header(reqwest::header::CONTENT_TYPE, "application/xml")
+                .header(reqwest::header::CONTENT_LENGTH, xml.len())
+                .header("x-ms-date", date)
+                .header("x-ms-version", "2022-11-02")
                 .body(xml),
             "Azure block list commit failed",
         )

@@ -115,18 +115,6 @@ let options = PushFileOptions::builder()
 
 For progress reporting, implement `ProgressReporter` and pass it through `PushFileOptions::builder().progress(...)`.
 
-## Features
-
-By default, the SDK keeps dependencies light and uses raw `reqwest` requests for the final Azure block-list commit.
-
-Enable `azure-sdk-commit` to use `azure_storage_blobs` for that final commit step:
-
-```toml
-marple-db = { version = "0.1", features = ["azure-sdk-commit"] }
-```
-
-The `mdb` CLI enables this feature so CLI uploads use the Azure SDK-backed commit path. Block staging still uses raw `reqwest` in both modes to preserve the SDK's progress reporting and concurrency behavior.
-
 ## Downloading Original Files
 
 `get_download_link` returns a pre-signed storage URL. The URL is already authenticated, so use `db.storage_client()` or another client that does not add MarpleDB authorization headers.

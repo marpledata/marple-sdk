@@ -124,8 +124,6 @@ mdb ingest "Runs" --upload-mode server run.csv
 
 `--upload-mode auto` lets the server choose the best upload mode. `--upload-mode server` forces uploads through the API server, which can be useful for debugging or network environments that cannot reach direct storage URLs.
 
-The CLI enables the SDK's `azure-sdk-commit` feature, so Azure direct uploads use the Azure SDK for the final block-list commit while keeping the SDK's progress reporting and concurrent block staging.
-
 ### Downloads
 
 `mdb dataset <stream> download <dataset-id>` downloads the original uploaded file backup for one dataset. If the dataset id is omitted, the CLI attempts to download all datasets in the stream:

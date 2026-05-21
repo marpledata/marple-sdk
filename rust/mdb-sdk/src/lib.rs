@@ -59,12 +59,6 @@
 //!
 //! This crate is async and does not install a runtime. The examples use Tokio,
 //! but callers can use any runtime supported by `reqwest`.
-//!
-//! # Features
-//!
-//! - `azure-sdk-commit` uses `azure_storage_blobs` for the final Azure
-//!   block-list commit. Without it, the SDK uses a lightweight raw `reqwest`
-//!   implementation for that step.
 
 mod client;
 mod errors;
