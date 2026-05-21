@@ -231,6 +231,17 @@ impl MarpleDB {
             .await
     }
 
+    /// Lists all datasets in a datapool.
+    pub async fn get_datapool_datasets(&self, pool: &str) -> Result<Vec<Dataset>> {
+        self.get(&format!("datapool/{}/datasets", pool), &()).await
+    }
+
+    /// Lists datasets currently in the ingest queue for a datapool.
+    pub async fn get_datapool_ingest_queue(&self, pool: &str) -> Result<Vec<Dataset>> {
+        self.get(&format!("datapool/{}/ingest/queue", pool), &())
+            .await
+    }
+
     /// Fetches a dataset by stream id and dataset id.
     pub async fn get_dataset(&self, stream_id: i32, dataset_id: i32) -> Result<Dataset> {
         self.get(&format!("stream/{}/dataset/{}", stream_id, dataset_id), &())

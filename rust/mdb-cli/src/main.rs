@@ -6,8 +6,8 @@ use marple_db::{
     Dataset, MarpleDB, Metadata, ProgressReporter, PushFileOptions, UploadModeOverride,
 };
 use mdb_cli::{
-    IndicatifProgress, StreamListFormat, format_stream_table_row, progress_bar,
-    progress_bar_or_hidden,
+    DatasetListFormat, IndicatifProgress, StreamListFormat, dataset_table_header,
+    format_dataset_table_row, format_stream_table_row, progress_bar, progress_bar_or_hidden,
 };
 use serde_json::Value;
 use std::collections::HashSet;
@@ -97,6 +97,12 @@ enum Commands {
         command: DatasetCommands,
     },
 
+    /// Datapool commands
+    Datapool {
+        #[command(subcommand)]
+        command: DatapoolCommands,
+    },
+
     /// GET a MarpleDB API endpoint
     Get {
         /// API endpoint
@@ -167,7 +173,11 @@ enum StreamCommands {
 #[derive(Subcommand)]
 enum DatasetCommands {
     /// List all datasets in a stream
-    List,
+    List {
+        /// Output format
+        #[arg(long, value_enum, default_value_t = DatasetListFormat::Short)]
+        format: DatasetListFormat,
+    },
 
     /// Get a dataset
     Get {
@@ -183,6 +193,24 @@ enum DatasetCommands {
 
         /// Dataset ID; omit to download all datasets in the stream
         dataset_id: Option<i32>,
+    },
+}
+
+#[derive(Subcommand)]
+enum DatapoolCommands {
+    /// List datasets in a datapool
+    Datasets {
+        /// Datapool name
+        #[arg(long, default_value = "default")]
+        pool: String,
+
+        /// Output format
+        #[arg(long, value_enum, default_value_t = DatasetListFormat::Short)]
+        format: DatasetListFormat,
+
+        /// Show only datasets in the ingest queue
+        #[arg(long)]
+        queue: bool,
     },
 }
 
@@ -287,9 +315,9 @@ async fn handle_dataset_commands(
     let stream = marpledb.get_stream(stream_name).await?;
 
     match command {
-        DatasetCommands::List => {
+        DatasetCommands::List { format } => {
             let datasets = marpledb.get_datasets(stream.id).await?;
-            println!("{}", serde_json::to_string_pretty(&datasets)?);
+            print_datasets(&datasets, *format)?;
         }
         DatasetCommands::Get { dataset_id } => {
             let dataset = marpledb.get_dataset(stream.id, *dataset_id).await?;
@@ -315,6 +343,37 @@ async fn handle_dataset_commands(
                 }
             }
         }
+    }
+    Ok(())
+}
+
+async fn handle_datapool_commands(marpledb: &MarpleDB, command: &DatapoolCommands) -> Result<()> {
+    match command {
+        DatapoolCommands::Datasets {
+            pool,
+            format,
+            queue,
+        } => {
+            let datasets = if *queue {
+                marpledb.get_datapool_ingest_queue(pool).await?
+            } else {
+                marpledb.get_datapool_datasets(pool).await?
+            };
+            print_datasets(&datasets, *format)?;
+        }
+    }
+    Ok(())
+}
+
+fn print_datasets(datasets: &[Dataset], format: DatasetListFormat) -> Result<()> {
+    match format {
+        DatasetListFormat::Short => {
+            println!("{}", dataset_table_header());
+            for dataset in datasets {
+                println!("{}", format_dataset_table_row(dataset));
+            }
+        }
+        DatasetListFormat::Long => println!("{}", serde_json::to_string_pretty(datasets)?),
     }
     Ok(())
 }
@@ -544,6 +603,7 @@ async fn main() -> Result<()> {
             stream_name,
             command,
         } => handle_dataset_commands(&marpledb, &stream_name, &command).await?,
+        Commands::Datapool { command } => handle_datapool_commands(&marpledb, &command).await?,
         Commands::Ingest {
             stream_name,
             metadata,

@@ -106,7 +106,7 @@ pub struct Dataset {
     /// Owning stream id.
     pub datastream_id: i32,
     /// Owning stream version.
-    pub datastream_version: i32,
+    pub datastream_version: Option<i32>,
     /// Creation timestamp as epoch seconds.
     pub created_at: f64,
     /// User that created the dataset, if available.
@@ -124,7 +124,7 @@ pub struct Dataset {
     /// User-defined dataset metadata.
     pub metadata: Metadata,
     /// Cold-storage path.
-    pub cold_path: String,
+    pub cold_path: Option<String>,
     /// Cold-storage byte size.
     pub cold_bytes: Option<u64>,
     /// Hot-storage byte size.
@@ -134,9 +134,9 @@ pub struct Dataset {
     /// Backup byte size, if available.
     pub backup_size: Option<u64>,
     /// Import plugin name.
-    pub plugin: String,
+    pub plugin: Option<String>,
     /// Import plugin arguments.
-    pub plugin_args: String,
+    pub plugin_args: Option<String>,
     /// Number of datapoints, if known.
     pub n_datapoints: Option<u64>,
     /// Number of signals, if known.

@@ -1,11 +1,19 @@
 use anyhow::Result;
 use clap::ValueEnum;
 use indicatif::{ProgressBar, ProgressStyle};
-use marple_db::{ProgressReporter, Stream};
+use marple_db::{Dataset, ImportStatus, ProgressReporter, Stream};
 
 #[derive(Clone, Copy, Debug, Default, ValueEnum)]
 #[clap(rename_all = "lowercase")]
 pub enum StreamListFormat {
+    #[default]
+    Short,
+    Long,
+}
+
+#[derive(Clone, Copy, Debug, Default, ValueEnum)]
+#[clap(rename_all = "lowercase")]
+pub enum DatasetListFormat {
     #[default]
     Short,
     Long,
@@ -30,6 +38,26 @@ pub fn format_stream_table_row(stream: &Stream) -> String {
         format_bytes(stream.hot_bytes),
         plugin,
         stream.description.clone(),
+    ]
+    .join("\t")
+}
+
+pub fn dataset_table_header() -> &'static str {
+    "ID\tpath\tstatus\tdatapoints\tsignals\tcold\thot\tbackup\tcreated_by\tmessage"
+}
+
+pub fn format_dataset_table_row(dataset: &Dataset) -> String {
+    [
+        dataset.id.to_string(),
+        dataset.path.clone(),
+        format_import_status(dataset.import_status),
+        format_compact_count(dataset.n_datapoints),
+        format_count(dataset.n_signals),
+        format_bytes(dataset.cold_bytes),
+        format_bytes(dataset.hot_bytes),
+        format_bytes(dataset.backup_size),
+        dataset.created_by.clone().unwrap_or_default(),
+        dataset.import_message.clone().unwrap_or_default(),
     ]
     .join("\t")
 }
@@ -64,6 +92,21 @@ impl ProgressReporter for IndicatifProgress {
 
 fn format_count(value: Option<u64>) -> String {
     value.map_or_else(|| "?".to_string(), |value| value.to_string())
+}
+
+fn format_import_status(status: ImportStatus) -> String {
+    match status {
+        ImportStatus::Uploading => "UPLOADING",
+        ImportStatus::Waiting => "WAITING",
+        ImportStatus::Importing => "IMPORTING",
+        ImportStatus::Postprocessing => "POSTPROCESSING",
+        ImportStatus::PostprocessingFailed => "POSTPROCESSING_FAILED",
+        ImportStatus::Finished => "FINISHED",
+        ImportStatus::Live => "LIVE",
+        ImportStatus::Failed => "FAILED",
+        _ => "?",
+    }
+    .to_string()
 }
 
 fn format_compact_count(value: Option<u64>) -> String {

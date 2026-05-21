@@ -281,9 +281,26 @@ async fn test_db_flow_via_cli() {
         "dataset metadata missing Foo value"
     );
 
-    // List datasets
-    let ds_list = mdb_cmd(&token, url.as_deref())
+    // List datasets in the default short/table format
+    let ds_short_list = mdb_cmd(&token, url.as_deref())
         .args(["dataset", &stream_name, "list"])
+        .assert()
+        .success();
+    let ds_short_stdout = String::from_utf8_lossy(&ds_short_list.get_output().stdout);
+    assert!(
+        ds_short_stdout.starts_with(
+            "ID\tpath\tstatus\tdatapoints\tsignals\tcold\thot\tbackup\tcreated_by\tmessage"
+        ),
+        "dataset short list missing header"
+    );
+    assert!(
+        ds_short_stdout.contains(&dataset_id.to_string()),
+        "dataset id not found in dataset short list"
+    );
+
+    // List datasets in JSON format
+    let ds_list = mdb_cmd(&token, url.as_deref())
+        .args(["dataset", &stream_name, "list", "--format", "long"])
         .assert()
         .success();
     let datasets = parse_json_stdout(&ds_list);
@@ -293,6 +310,38 @@ async fn test_db_flow_via_cli() {
             .iter()
             .any(|d| d.get("id").and_then(|v| v.as_i64()) == Some(dataset_id as i64)),
         "dataset id not found in dataset list"
+    );
+
+    // List datapool datasets with the same short and long formats
+    let datapool_short_list = mdb_cmd(&token, url.as_deref())
+        .args(["datapool", "datasets"])
+        .assert()
+        .success();
+    let datapool_short_stdout = String::from_utf8_lossy(&datapool_short_list.get_output().stdout);
+    assert!(
+        datapool_short_stdout.starts_with(
+            "ID\tpath\tstatus\tdatapoints\tsignals\tcold\thot\tbackup\tcreated_by\tmessage"
+        ),
+        "datapool short list missing header"
+    );
+    assert!(
+        datapool_short_stdout.contains(&dataset_id.to_string()),
+        "dataset id not found in datapool short list"
+    );
+
+    let datapool_list = mdb_cmd(&token, url.as_deref())
+        .args(["datapool", "datasets", "--format", "long"])
+        .assert()
+        .success();
+    let datapool_datasets = parse_json_stdout(&datapool_list);
+    let datapool_datasets = datapool_datasets
+        .as_array()
+        .expect("datapool datasets should be array");
+    assert!(
+        datapool_datasets
+            .iter()
+            .any(|d| d.get("id").and_then(|v| v.as_i64()) == Some(dataset_id as i64)),
+        "dataset id not found in datapool dataset list"
     );
 
     // Query endpoint

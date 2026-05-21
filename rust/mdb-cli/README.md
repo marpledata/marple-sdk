@@ -35,9 +35,10 @@ export MDB_URL="https://db.marpledata.com/api/v1"
 - `mdb stream new <stream-name> [key=value ...]` creates a stream.
 - `mdb stream update <stream-name> [key=value ...]` updates stream properties.
 - `mdb ingest <stream-name> [options] <files-or-directories>...` uploads files.
-- `mdb dataset <stream-name> list` lists datasets.
+- `mdb dataset <stream-name> list [--format short|long]` lists datasets in a stream.
 - `mdb dataset <stream-name> get <dataset-id>` prints one dataset.
 - `mdb dataset <stream-name> download [--output-dir DIR] [dataset-id]` downloads original uploaded files.
+- `mdb datapool datasets [--pool POOL] [--queue] [--format short|long]` lists datapool datasets.
 - `mdb get`, `mdb post`, and `mdb delete` call raw API endpoints.
 
 ## Examples
@@ -68,6 +69,15 @@ mdb ingest "Test Stream" -m Deployment=prod -m Foo=Bar data.csv
 
 # List datasets in the stream
 mdb dataset "Test Stream" list
+
+# Print dataset list as JSON
+mdb dataset "Test Stream" list --format long
+
+# List all datasets in the default datapool
+mdb datapool datasets
+
+# List datasets currently in the ingest queue
+mdb datapool datasets --queue
 
 # Get dataset details (use the ID from the list)
 mdb dataset "Test Stream" get 12345
@@ -134,6 +144,18 @@ mdb dataset "Runs" download --output-dir ./backups
 ```
 
 Downloads use pre-signed storage links internally.
+
+### Dataset Lists
+
+Dataset list commands print a tabular view by default. Use `--format long` when you need the full JSON response for scripting:
+
+```sh
+mdb dataset "Runs" list
+mdb dataset "Runs" list --format long
+mdb datapool datasets --pool default
+mdb datapool datasets --pool default --queue
+mdb datapool datasets --pool default --format long
+```
 
 ### Generic Endpoints
 

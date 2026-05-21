@@ -71,6 +71,8 @@ async fn main() -> anyhow::Result<()> {
 - `db.create_stream("runs", &serde_json::json!({ "plugin": "csv" }))` creates a stream.
 - `db.update_stream(stream_id, &serde_json::json!({ ... }))` updates stream metadata.
 - `db.get_datasets(stream_id)` lists datasets in a stream.
+- `db.get_datapool_datasets("default")` lists datasets across a datapool.
+- `db.get_datapool_ingest_queue("default")` lists datasets currently in the ingest queue.
 - `db.get_dataset(stream_id, dataset_id)` fetches one dataset.
 - `db.push_file(stream_id, path, PushFileOptions::default())` uploads a file.
 - `db.wait_for_import(stream_id, dataset_id, timeout)` polls until import reaches a terminal status.
