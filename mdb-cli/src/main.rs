@@ -297,6 +297,67 @@ struct MultipartUploadContext {
     bar: ProgressBar,
 }
 
+#[derive(Clone)]
+struct BlockDescriptor {
+    offset: u64,
+    length: u64,
+    block_id: String,
+}
+
+#[derive(Clone)]
+struct AzureBlockUploadContext {
+    storage_client: Client,
+    sas_url: reqwest::Url,
+    file_path: PathBuf,
+    uploaded: Arc<AtomicU64>,
+    bar: ProgressBar,
+}
+
+fn azure_block_descriptors(total_size: u64, block_size: u64) -> Vec<BlockDescriptor> {
+    if total_size == 0 {
+        return Vec::new();
+    }
+
+    let n_blocks = total_size.div_ceil(block_size);
+    (0..n_blocks as u32)
+        .map(|block_number| {
+            let offset = u64::from(block_number) * block_size;
+            let length = block_size.min(total_size - offset);
+            BlockDescriptor {
+                offset,
+                length,
+                block_id: format!("{block_number:08}"),
+            }
+        })
+        .collect()
+}
+
+fn base64_encode(input: &[u8]) -> String {
+    const TABLE: &[u8; 64] = b"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
+    let mut output = String::with_capacity(input.len().div_ceil(3) * 4);
+
+    for chunk in input.chunks(3) {
+        let first = chunk[0];
+        let second = chunk.get(1).copied().unwrap_or(0);
+        let third = chunk.get(2).copied().unwrap_or(0);
+
+        output.push(TABLE[(first >> 2) as usize] as char);
+        output.push(TABLE[(((first & 0b0000_0011) << 4) | (second >> 4)) as usize] as char);
+        if chunk.len() > 1 {
+            output.push(TABLE[(((second & 0b0000_1111) << 2) | (third >> 6)) as usize] as char);
+        } else {
+            output.push('=');
+        }
+        if chunk.len() > 2 {
+            output.push(TABLE[(third & 0b0011_1111) as usize] as char);
+        } else {
+            output.push('=');
+        }
+    }
+
+    output
+}
+
 struct MarpleDB {
     client: Client,
     storage_client: Client,
@@ -581,16 +642,67 @@ impl MarpleDB {
         Ok(())
     }
 
+    async fn put_block(
+        file: &mut tokio::fs::File,
+        context: &AzureBlockUploadContext,
+        descriptor: BlockDescriptor,
+    ) -> Result<()> {
+        const BLOCK_STREAM_CHUNK: usize = 256 * 1024;
+
+        file.seek(SeekFrom::Start(descriptor.offset)).await?;
+        let mut data = vec![0; usize::try_from(descriptor.length)?];
+        file.read_exact(&mut data).await?;
+
+        let uploaded = Arc::clone(&context.uploaded);
+        let bar = context.bar.clone();
+        let stream = async_stream::stream! {
+            let mut pos = 0;
+            while pos < data.len() {
+                let end = (pos + BLOCK_STREAM_CHUNK).min(data.len());
+                let chunk = data[pos..end].to_vec();
+                let chunk_len = chunk.len() as u64;
+                let new_uploaded = uploaded.fetch_add(chunk_len, Ordering::Relaxed) + chunk_len;
+                bar.set_position(new_uploaded);
+                yield Ok::<_, std::io::Error>(chunk);
+                pos = end;
+            }
+        };
+
+        let mut block_url = context.sas_url.clone();
+        block_url
+            .query_pairs_mut()
+            .append_pair("comp", "block")
+            .append_pair("blockid", &base64_encode(descriptor.block_id.as_bytes()));
+
+        let response = context
+            .storage_client
+            .put(block_url)
+            .header(CONTENT_LENGTH, descriptor.length)
+            .body(Body::wrap_stream(stream))
+            .send()
+            .await?;
+        if !response.status().is_success() {
+            return Err(anyhow!(
+                "Azure block {} upload failed with status {}: {}",
+                descriptor.block_id,
+                response.status(),
+                response.text().await?
+            ));
+        }
+        Ok(())
+    }
+
     async fn upload_via_azure(
         &self,
         init: &IngestionInit,
         file_path: &Path,
         file_name: &str,
         total_size: u64,
+        concurrency: usize,
     ) -> Result<()> {
         use azure_storage_blobs::prelude::{BlobBlockType, BlobClient, BlockList};
 
-        const AZURE_BLOCK_SIZE: usize = 8 * 1024 * 1024;
+        const AZURE_BLOCK_SIZE: u64 = 8 * 1024 * 1024;
 
         let url = init
             .presigned_url
@@ -599,32 +711,44 @@ impl MarpleDB {
         let sas_url = url.parse()?;
         let blob_client = BlobClient::from_sas_url(&sas_url)?;
 
+        let concurrency = concurrency.max(1);
+        let descriptors = azure_block_descriptors(total_size, AZURE_BLOCK_SIZE);
         let bar = Self::upload_progress_bar(file_name, total_size)?;
-        let mut file = tokio::fs::File::open(file_path).await?;
-        let mut block_list = BlockList::default();
-        let mut buffer = vec![0; AZURE_BLOCK_SIZE];
-        let mut block_number = 0;
-        let mut uploaded = 0;
+        let context = AzureBlockUploadContext {
+            storage_client: self.storage_client.clone(),
+            sas_url: sas_url.clone(),
+            file_path: file_path.to_path_buf(),
+            uploaded: Arc::new(AtomicU64::new(0)),
+            bar: bar.clone(),
+        };
+        let cursor = Arc::new(Mutex::new(descriptors.clone().into_iter()));
 
-        loop {
-            let bytes_read = file.read(&mut buffer).await?;
-            if bytes_read == 0 {
-                break;
+        let workers = (0..concurrency).map(|_| {
+            let context = context.clone();
+            let cursor = Arc::clone(&cursor);
+            async move {
+                let mut file = tokio::fs::File::open(&context.file_path).await?;
+                loop {
+                    let descriptor = {
+                        let mut cursor = cursor.lock().await;
+                        cursor.next()
+                    };
+                    let Some(descriptor) = descriptor else {
+                        return Ok::<_, anyhow::Error>(());
+                    };
+
+                    Self::put_block(&mut file, &context, descriptor).await?;
+                }
             }
+        });
+        futures_util::future::try_join_all(workers).await?;
 
-            let block_id = format!("{block_number:08}");
-            blob_client
-                .put_block(block_id.clone(), buffer[..bytes_read].to_vec())
-                .await?;
-            block_list
-                .blocks
-                .push(BlobBlockType::new_uncommitted(block_id));
-
-            uploaded += bytes_read as u64;
-            bar.set_position(uploaded);
-            block_number += 1;
-        }
-
+        let block_list = BlockList {
+            blocks: descriptors
+                .into_iter()
+                .map(|descriptor| BlobBlockType::new_uncommitted(descriptor.block_id))
+                .collect(),
+        };
         blob_client.put_block_list(block_list).await?;
         bar.finish_and_clear();
         Ok(())
@@ -783,7 +907,7 @@ impl MarpleDB {
                         .await?;
                 }
                 (_, UploadMode::Azure) => {
-                    self.upload_via_azure(&init, file_path, &file_name, total_size)
+                    self.upload_via_azure(&init, file_path, &file_name, total_size, concurrency)
                         .await?;
                 }
                 (_, UploadMode::Single) => {
