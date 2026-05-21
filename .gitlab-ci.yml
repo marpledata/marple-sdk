@@ -44,16 +44,18 @@ pytest:
       changes:
         - python/**/*
 
-rust:mdb-cli:
+rust:workspace:
   image: rust:1.93
   stage: test
   cache:
     key:
       files:
-        - rust/mdb-cli/Cargo.lock
+        - rust/Cargo.lock
+        - rust/Cargo.toml
         - rust/mdb-cli/Cargo.toml
+        - rust/mdb-sdk/Cargo.toml
     paths:
-      - rust/mdb-cli/target/
+      - rust/target/
       - .cargo/registry/
       - .cargo/git/
   before_script:
@@ -61,12 +63,16 @@ rust:mdb-cli:
     - cargo --version
     - apt-get update && apt-get install -y --no-install-recommends pkg-config libssl-dev ca-certificates
   script:
-    - cd rust/mdb-cli
-    - cargo test --locked
+    - cd rust
+    - cargo test --workspace --locked
+    - cargo build --workspace --examples --locked
   rules:
     - if: $CI_COMMIT_BRANCH
       changes:
+        - rust/Cargo.lock
+        - rust/Cargo.toml
         - rust/mdb-cli/**/*
+        - rust/mdb-sdk/**/*
 
 rust:parquet-transcode:
   image: rust:1.93
@@ -137,12 +143,12 @@ build:mdb-cli:
     - docker version
     - cargo install cross --git https://github.com/cross-rs/cross
   script:
-    - cd rust/mdb-cli
-    - cross build --release --target x86_64-pc-windows-gnu
-    - cross build --release --target x86_64-unknown-linux-gnu
-    - mkdir -p artifacts
-    - cp target/x86_64-pc-windows-gnu/release/mdb.exe artifacts/mdb-windows-x64.exe
-    - cp target/x86_64-unknown-linux-gnu/release/mdb artifacts/mdb-linux-x64
+    - cd rust
+    - cross build --release --bin mdb --target x86_64-pc-windows-gnu
+    - cross build --release --bin mdb --target x86_64-unknown-linux-gnu
+    - mkdir -p mdb-cli/artifacts
+    - cp target/x86_64-pc-windows-gnu/release/mdb.exe mdb-cli/artifacts/mdb-windows-x64.exe
+    - cp target/x86_64-unknown-linux-gnu/release/mdb mdb-cli/artifacts/mdb-linux-x64
   artifacts:
     paths:
       - rust/mdb-cli/artifacts/

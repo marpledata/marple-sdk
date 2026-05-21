@@ -1,0 +1,29 @@
+[package]
+name = "marple-db"
+version = "0.1.0"
+description = "Rust SDK for the MarpleDB API"
+documentation = "https://docs.marpledata.com/docs"
+keywords = ["marple", "database", "iceberg", "parquet", "sdk"]
+categories = ["api-bindings", "database", "filesystem"]
+license = "Apache-2.0 OR MIT"
+readme = "README.md"
+authors.workspace = true
+edition.workspace = true
+homepage.workspace = true
+repository.workspace = true
+
+[dependencies]
+anyhow.workspace = true
+async-stream.workspace = true
+azure_storage_blobs = { version = "0.21.0", default-features = false, features = ["enable_reqwest_rustls"] }
+base64.workspace = true
+futures-util.workspace = true
+reqwest.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+tokio = { workspace = true, features = ["fs", "io-util", "sync"] }
+tokio-util.workspace = true
+
+[dev-dependencies]
+tempfile = "3.23.0"
+tokio = { workspace = true, features = ["rt-multi-thread", "macros"] }
