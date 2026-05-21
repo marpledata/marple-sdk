@@ -59,8 +59,6 @@ rust:workspace:
       files:
         - rust/Cargo.lock
         - rust/Cargo.toml
-        - rust/mdb-cli/Cargo.toml
-        - rust/mdb-sdk/Cargo.toml
     paths:
       - rust/target/
       - .cargo/registry/
