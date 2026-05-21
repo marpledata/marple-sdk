@@ -207,11 +207,10 @@ impl MarpleDB {
         let mut downloaded = 0;
 
         while let Some(chunk) = bytes_stream.next().await {
-            if let Ok(chunk) = &chunk {
-                file.write_all(chunk).await?;
-                downloaded += chunk.len() as u64;
-                progress.set_position(downloaded.min(backup_size));
-            }
+            let chunk = chunk?;
+            file.write_all(&chunk).await?;
+            downloaded += chunk.len() as u64;
+            progress.set_position(downloaded.min(backup_size));
         }
         progress.finish();
         Ok(local_path.to_string_lossy().to_string())

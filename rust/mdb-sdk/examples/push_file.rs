@@ -1,5 +1,4 @@
-use marple_db::{MarpleDB, NoopProgress, PushFileOptions, UploadModeOverride};
-use std::sync::Arc;
+use marple_db::{MarpleDB, PushFileOptions};
 
 #[tokio::main]
 async fn main() -> anyhow::Result<()> {
@@ -9,16 +8,7 @@ async fn main() -> anyhow::Result<()> {
     let stream = db.get_stream("runs").await?;
 
     let dataset = db
-        .push_file(
-            stream.id,
-            "run.csv",
-            PushFileOptions {
-                metadata: Default::default(),
-                concurrency: 4,
-                upload_mode: UploadModeOverride::Auto,
-                progress: Arc::new(NoopProgress),
-            },
-        )
+        .push_file(stream.id, "run.csv", PushFileOptions::default())
         .await?;
 
     println!("uploaded dataset {}", dataset.id);

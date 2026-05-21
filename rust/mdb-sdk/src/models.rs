@@ -1,4 +1,4 @@
-use crate::ProgressReporter;
+use crate::{NoopProgress, ProgressReporter};
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use std::collections::HashMap;
@@ -57,6 +57,17 @@ pub struct PushFileOptions {
     pub concurrency: usize,
     pub upload_mode: UploadModeOverride,
     pub progress: Arc<dyn ProgressReporter>,
+}
+
+impl Default for PushFileOptions {
+    fn default() -> Self {
+        Self {
+            metadata: Default::default(),
+            concurrency: 4,
+            upload_mode: UploadModeOverride::Auto,
+            progress: Arc::new(NoopProgress),
+        }
+    }
 }
 
 #[derive(Debug, Serialize, Deserialize)]

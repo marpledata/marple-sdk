@@ -1402,6 +1402,7 @@ dependencies = [
  "async-stream",
  "azure_storage_blobs",
  "base64 0.22.1",
+ "dotenvy",
  "futures-util",
  "reqwest",
  "serde",

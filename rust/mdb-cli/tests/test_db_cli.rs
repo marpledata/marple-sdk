@@ -168,7 +168,8 @@ fn test_version() {
 #[tokio::test]
 async fn test_db_ping_via_cli() {
     let Some((token, url)) = maybe_skip_integration() else {
-        panic!("Skipping Rust CLI integration test: missing env var MDB_TOKEN");
+        eprintln!("Skipping Rust CLI integration test: missing env var MDB_TOKEN");
+        return;
     };
 
     mdb_cmd(&token, url.as_deref())
@@ -180,7 +181,8 @@ async fn test_db_ping_via_cli() {
 #[tokio::test]
 async fn test_db_flow_via_cli() {
     let Some((token, url)) = maybe_skip_integration() else {
-        panic!("Skipping Rust CLI integration test: missing env var MDB_TOKEN");
+        eprintln!("Skipping Rust CLI integration test: missing env var MDB_TOKEN");
+        return;
     };
 
     let stream_name = unique_stream_name();

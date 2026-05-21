@@ -12,7 +12,7 @@ marple-db = "0.1"
 ## Example
 
 ```rust
-use marple_db::{MarpleDB, NoopProgress, PushFileOptions, UploadModeOverride};
+use marple_db::{MarpleDB, PushFileOptions};
 
 #[tokio::main]
 async fn main() -> anyhow::Result<()> {
@@ -25,12 +25,7 @@ async fn main() -> anyhow::Result<()> {
         .push_file(
             stream.id,
             "run.csv",
-            PushFileOptions {
-                metadata: Default::default(),
-                concurrency: 4,
-                upload_mode: UploadModeOverride::Auto,
-                progress: &NoopProgress,
-            },
+            PushFileOptions::default(),
         )
         .await?;
 
