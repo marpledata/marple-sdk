@@ -5,10 +5,7 @@ use crate::models::{
 use crate::{Error, MarpleDB, ProgressReporter, Result};
 use base64::Engine;
 use futures_util::StreamExt;
-use reqwest::{
-    Body, Response,
-    header::{CONTENT_LENGTH, CONTENT_TYPE},
-};
+use reqwest::{Body, Response, header::CONTENT_LENGTH};
 use serde_json::Value;
 use std::io::SeekFrom;
 use std::path::{Path, PathBuf};
@@ -330,6 +327,39 @@ impl MarpleDB {
         Ok(())
     }
 
+    #[cfg(feature = "azure-sdk-commit")]
+    async fn commit_azure_block_list(
+        &self,
+        sas_url: &reqwest::Url,
+        descriptors: &[BlockDescriptor],
+    ) -> Result<()> {
+        use azure_storage_blobs::prelude::{BlobBlockType, BlobClient, BlockList};
+
+        let blob_client = BlobClient::from_sas_url(sas_url).map_err(|error| Error::Storage {
+            context: "Azure block list commit failed".to_string(),
+            status: None,
+            body: Some(error.to_string()),
+            source: None,
+        })?;
+        let block_list = BlockList {
+            blocks: descriptors
+                .iter()
+                .map(|descriptor| BlobBlockType::new_uncommitted(descriptor.block_id.clone()))
+                .collect(),
+        };
+        blob_client
+            .put_block_list(block_list)
+            .await
+            .map_err(|error| Error::Storage {
+                context: "Azure block list commit failed".to_string(),
+                status: None,
+                body: Some(error.to_string()),
+                source: None,
+            })?;
+        Ok(())
+    }
+
+    #[cfg(not(feature = "azure-sdk-commit"))]
     async fn commit_azure_block_list(
         &self,
         sas_url: &reqwest::Url,
@@ -353,7 +383,7 @@ impl MarpleDB {
         let response = send_storage(
             self.storage_client
                 .put(block_list_url)
-                .header(CONTENT_TYPE, "application/xml")
+                .header(reqwest::header::CONTENT_TYPE, "application/xml")
                 .body(xml),
             "Azure block list commit failed",
         )

@@ -422,6 +422,18 @@ async fn handle_ingest(
                     .await;
                 }
             }
+        } else if !path.exists() {
+            println!(
+                "{} {} - file or folder not found",
+                "✗".red(),
+                path.display()
+            );
+        } else if path.is_dir() {
+            println!(
+                "{} {} - is a directory, use --recursive to ingest its contents",
+                "-".yellow(),
+                path.display()
+            );
         } else {
             println!("{} {} skipped", "-".yellow(), path.display());
         }

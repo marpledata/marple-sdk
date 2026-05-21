@@ -12,8 +12,13 @@ edition.workspace = true
 homepage.workspace = true
 repository.workspace = true
 
+[features]
+default = []
+azure-sdk-commit = ["dep:azure_storage_blobs"]
+
 [dependencies]
 async-stream.workspace = true
+azure_storage_blobs = { version = "0.21.0", default-features = false, features = ["enable_reqwest_rustls"], optional = true }
 base64.workspace = true
 futures-util = { workspace = true, default-features = false, features = ["std"] }
 reqwest.workspace = true
