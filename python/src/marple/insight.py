@@ -2,6 +2,7 @@ from pathlib import Path
 from typing import Optional
 from urllib import request
 
+import marple
 import requests
 from marple.utils import validate_response
 from requests import Response
@@ -25,7 +26,7 @@ class Insight:
         bearer_token = f"Bearer {api_token}"
         self.session = requests.Session()
         self.session.headers.update({"Authorization": bearer_token})
-        self.session.headers.update({"X-Request-Source": "sdk/python"})
+        self.session.headers.update({"X-Request-Source": f"sdk/python:{marple.__version__}"})
         self.check_connection()
 
     # User functions #

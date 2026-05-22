@@ -5,6 +5,12 @@ All notable changes to the Python SDK package `marpledata` will be documented in
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [3.2.1] - 2026-05-22
+
+### Changed
+
+- Included the SDK version in the `X-Request-Source` header sent by the Marple Insight client, matching the Marple DB client.
+
 ## [3.2.0] - 2026-05-22
 
 ### Added

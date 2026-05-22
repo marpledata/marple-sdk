@@ -2,12 +2,20 @@ use crate::errors::{Error, Result};
 use crate::models::{Dataset, HealthResponse, ImportStatus, StreamsResponse};
 use reqwest::{
     Client, Method, Response, Url,
-    header::{AUTHORIZATION, HeaderMap, HeaderValue, USER_AGENT},
+    header::{AUTHORIZATION, HeaderMap, HeaderName, HeaderValue, USER_AGENT},
 };
 use serde::Serialize;
 use serde::de::DeserializeOwned;
 use serde_json::Value;
 use std::time::Duration;
+
+/// Identifies SDK-originated traffic in backend logs and metrics.
+///
+/// Sent on every API request via `X-Request-Source`. Matches the convention
+/// used by the Python and MATLAB SDKs (`sdk/<lang>:<version>`).
+const REQUEST_SOURCE_HEADER: HeaderName = HeaderName::from_static("x-request-source");
+const REQUEST_SOURCE_VALUE: HeaderValue =
+    HeaderValue::from_static(concat!("sdk/rust:", env!("CARGO_PKG_VERSION")));
 
 /// Client for the MarpleDB API.
 #[non_exhaustive]
@@ -49,7 +57,9 @@ impl MarpleDB {
     }
 
     fn auth(&self, request: reqwest::RequestBuilder) -> reqwest::RequestBuilder {
-        request.header(AUTHORIZATION, self.auth_header.clone())
+        request
+            .header(AUTHORIZATION, self.auth_header.clone())
+            .header(REQUEST_SOURCE_HEADER, REQUEST_SOURCE_VALUE)
     }
 
     async fn send_json<R>(
