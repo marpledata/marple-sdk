@@ -5,6 +5,21 @@ All notable changes to `mdb` will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.2.0] - 2026-05-22
+
+### Added
+
+- Added `--env-file` support to load credentials and settings from a dotenv file before reading `MDB_TOKEN` and `MDB_URL`.
+- Added datapool dataset listing with `mdb datapool datasets`, including ingest queue output with `--queue`.
+- Added short and long output formats for stream, dataset, and datapool dataset lists.
+- Added `--upload-mode` and `--concurrency` ingestion controls backed by the Rust SDK upload pipeline.
+
+### Changed
+
+- Updated the CLI to depend on the published `marple-db` Rust SDK crate.
+- Standardized the crate license metadata and packaged license file on Apache-2.0.
+- Improved tabular dataset and stream output for interactive CLI usage.
+
 ## [0.1.6] - 2026-05-11
 
 ### Changed
@@ -33,6 +48,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Environment variable and `.env` file support
 - Cross-platform support (macOS, Linux, Windows)
 
-[0.1.4]: https://github.com/marpledata/marple-sdk/releases/tag/v0.1.4
+[0.2.0]: https://github.com/marpledata/marple-sdk/releases/tag/v0.2.0
+[0.1.6]: https://github.com/marpledata/marple-sdk/releases/tag/v0.1.6
 [0.1.1]: https://github.com/marpledata/marple-sdk/releases/tag/v0.1.1
 [0.1.0]: https://github.com/marpledata/marple-sdk/releases/tag/v0.1.0

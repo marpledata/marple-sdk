@@ -8,7 +8,7 @@ The SDK is async and works with any runtime supported by `reqwest`. The examples
 
 ```toml
 [dependencies]
-marple-db = "0.1"
+marple-db = "0.2"
 tokio = { version = "1", features = ["rt-multi-thread", "macros"] }
 anyhow = "1"
 serde_json = "1"
@@ -171,4 +171,4 @@ The SDK emits `tracing` spans/events for API calls and upload mode dispatch. It 
 - Documentation: [docs.marpledata.com](https://docs.marpledata.com/docs)
 - Repository: [github.com/marpledata/marple-sdk](https://github.com/marpledata/marple-sdk)
 - Issues: [github.com/marpledata/marple-sdk/issues](https://github.com/marpledata/marple-sdk/issues)
-- License: Apache-2.0 OR MIT
+- License: Apache-2.0

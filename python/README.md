@@ -17,6 +17,8 @@ from marple import DB      # Marple DB
 from marple import Insight # Marple Insight
 ```
 
+For release notes, see [`CHANGELOG.md`](CHANGELOG.md).
+
 ## Marple DB
 
 To get started:

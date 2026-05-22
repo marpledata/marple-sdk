@@ -4,6 +4,12 @@
 
 ## Installation
 
+From crates.io:
+
+```sh
+cargo install mdb-cli
+```
+
 From this repository:
 
 ```sh
