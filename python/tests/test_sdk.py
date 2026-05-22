@@ -2,6 +2,7 @@ import os
 import random
 import re
 import time
+from contextlib import contextmanager
 from datetime import datetime
 from pathlib import Path
 from tempfile import TemporaryDirectory
@@ -17,7 +18,10 @@ from marple.db import Dataset, DataStream
 from marple.db.constants import SCHEMA
 from requests import HTTPError
 
-EXAMPLE_CSV = Path(__file__).parent / "examples_race.csv"
+EXAMPLE_CSV = Path(__file__).parents[2] / "test_data" / "examples_race.csv"
+PYTHON_UPLOAD_TEST_PREFIX = "Salty Compulsory PytestUpload"
+MIB = 1024 * 1024
+MULTIPART_THRESHOLD = 128 * MIB
 
 
 dotenv.load_dotenv()
@@ -55,6 +59,60 @@ def _ingest_dataset(stream: DataStream, metadata: dict | None = None) -> Dataset
         | (metadata or {}),
         file_name=file_name,
     ).wait_for_import()
+
+
+def _cleanup_upload_test_streams(db: DB) -> None:
+    for stream in db.get_streams():
+        if stream.name.startswith(PYTHON_UPLOAD_TEST_PREFIX):
+            db.delete_stream(stream.id)
+
+
+@contextmanager
+def _upload_test_stream(db: DB, suffix: str):
+    _cleanup_upload_test_streams(db)
+    stream = db.create_stream(
+        f"{PYTHON_UPLOAD_TEST_PREFIX} {suffix} {datetime.now().isoformat()}",
+        plugin_args="--use-index",
+    )
+    try:
+        yield stream
+    finally:
+        _cleanup_upload_test_streams(db)
+
+
+def _generate_multipart_csv(destination_folder: str) -> Path:
+    source = EXAMPLE_CSV.read_bytes()
+    assert source
+
+    destination = Path(destination_folder) / "multipart-examples-race.csv"
+    repeat_count = MULTIPART_THRESHOLD // len(source) + 1
+    with destination.open("wb") as f:
+        for _ in range(repeat_count):
+            f.write(source)
+
+    assert destination.stat().st_size > MULTIPART_THRESHOLD
+    return destination
+
+
+def _push_and_assert_upload(
+    stream: DataStream,
+    file_path: Path,
+    metadata: dict[str, str],
+    upload_mode: str = "auto",
+) -> Dataset:
+    dataset = stream.push_file(str(file_path), metadata=metadata, upload_mode=upload_mode).wait_for_import(timeout=180)
+
+    assert dataset.import_status == "FINISHED"
+    assert dataset.backup_size == file_path.stat().st_size
+    for key, value in metadata.items():
+        assert dataset.metadata.get(key) == value
+
+    with TemporaryDirectory() as tmp_path:
+        downloaded = dataset.download(destination_folder=tmp_path)
+        assert Path(downloaded).stat().st_size == file_path.stat().st_size
+        assert Path(downloaded).stat().st_size == dataset.backup_size
+
+    return dataset
 
 
 @pytest.fixture(scope="session")
@@ -192,7 +250,7 @@ def test_get_signals(example_dataset: Dataset) -> None:
     assert len(example_dataset.get_signals(signal_names=["car.speed", "car.accel", "some_random_signal"])) == 2
     assert len(example_dataset.get_signals(signal_names=[re.compile(r"car\.wheel\..*")])) == 4
     assert len(example_dataset.get_signals(signal_names=["car.speed", re.compile(r"car\.wheel.*")])) == 5
-    assert len(example_dataset.get_signals(signal_names=["car\.wheel.*"])) == 0
+    assert len(example_dataset.get_signals(signal_names=[r"car\.wheel.*"])) == 0
 
 
 def test_test_dataset(db: DB, example_dataset: Dataset) -> None:
@@ -233,6 +291,24 @@ def test_db_get_original(example_dataset: Dataset) -> None:
         p = Path(file_path)
         assert p.exists()
         assert p.stat().st_size == EXAMPLE_CSV.stat().st_size
+
+
+def test_push_file_server_upload(db: DB) -> None:
+    metadata = {"upload_mode": "server"}
+    with _upload_test_stream(db, "server") as stream:
+        dataset = _push_and_assert_upload(stream, EXAMPLE_CSV, metadata, upload_mode="server")
+
+    assert dataset.metadata.get("upload_mode") == "server"
+
+
+def test_push_file_multipart_upload(db: DB) -> None:
+    metadata = {"upload_mode": "multipart"}
+    with TemporaryDirectory() as tmp_path:
+        multipart_csv = _generate_multipart_csv(tmp_path)
+        with _upload_test_stream(db, "multipart") as stream:
+            dataset = _push_and_assert_upload(stream, multipart_csv, metadata)
+
+    assert dataset.metadata.get("upload_mode") == "multipart"
 
 
 def test_db_get_parquet(example_dataset: Dataset) -> None:

@@ -4,10 +4,14 @@
 
 The testing suite runs against a real linked DB & Insight deployment on our SaaS (e.g. Castro Comrades).
 Among other things it will create a stream, ingest a dataset, and export that dataset from Insight
+Upload tests also exercise server and multipart upload flows, and create/delete temporary streams with a test prefix.
 
 ```bash
 export MDB_TOKEN=...
 export INSIGHT_TOKEN=...
+# Optional, defaults to SaaS URLs:
+export MDB_URL=https://db.marpledata.com/api/v1
+export INSIGHT_URL=https://insight.marpledata.com/api/v1
 uv run pytest -vs
 ```
 

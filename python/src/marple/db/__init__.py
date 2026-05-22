@@ -161,7 +161,6 @@ class DB:
         r_json = validate_response(r, "Create stream failed")
         return self.get_stream(r_json["id"])
 
-    @deprecated
     def delete_stream(self, stream_key: str | int) -> None:
         """
         Delete a datastream and all its datasets.
@@ -334,16 +333,12 @@ class DB:
             raise Exception("Signal not found")
         return signal.get_parquet_files(refresh_cache)
 
-    @deprecated
     def delete_dataset(self, dataset_id: int | None, dataset_path: str | None):
         """
         Delete a dataset by its ID.
 
         Warning:
             This is a destructive operation that cannot be undone.
-
-        Note:
-          This function is deprecated and it is encouraged to use the `delete` method in the `Dataset` class directly.
         """
         dataset = self.get_dataset(dataset_id, dataset_path)
         r = self.post(f"/stream/{dataset.datastream_id}/dataset/{dataset.id}/delete")

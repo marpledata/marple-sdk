@@ -1,6 +1,8 @@
 import warnings
+from collections.abc import Iterator
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from pathlib import Path
+from threading import Lock
 from typing import Literal, Optional
 
 import requests
@@ -13,10 +15,21 @@ from marple.utils import DBClient, validate_response
 class IngestionInit(BaseModel):
     dataset_id: int
     ingestion_id: int
-    mode: Literal["single", "multipart"]
-    presigned_url: str | None
-    part_size: int | None
+    mode: Literal["server", "azure", "single", "multipart"]
+    presigned_url: str | None = None
+    part_size: int | None = None
     expires_in: int
+
+
+class PartUrl(BaseModel):
+    part_number: int
+    url: str
+
+
+class PartUrlsResponse(BaseModel):
+    parts: list[PartUrl]
+    expires_in: int
+    next_part: int | None
 
 
 class DataStream(BaseModel):
@@ -71,6 +84,7 @@ class DataStream(BaseModel):
         metadata: dict | None = None,
         file_name: str | None = None,
         concurrency: int = 4,
+        upload_mode: Literal["auto", "server"] = "auto",
     ) -> Dataset:
         """
         Push a file to the datastream. The file will be ingested as a new dataset.
@@ -80,30 +94,30 @@ class DataStream(BaseModel):
             metadata: Optional metadata to attach to the dataset.
             file_name: Optional name for the dataset. If not provided, the file name will be used.
             concurrency: Maximum number of concurrent part uploads for multipart uploads.
+            upload_mode: Upload mode override. Use "server" to force upload through the Marple DB API server.
         """
+        if upload_mode not in ("auto", "server"):
+            raise ValueError("upload_mode must be either 'auto' or 'server'")
+
         path = Path(file_path)
         file_size = path.stat().st_size
-        dataset_name = file_name or path.name
+        init = self._init_ingestion(file_name or path.name, file_size, metadata or {})
 
-        init = self._init_ingestion(dataset_name, file_size, metadata or {})
-        ingestion_id = init.ingestion_id
         try:
-            if init.mode == "single":
-                presigned_url = init.presigned_url
-                if presigned_url is None:
-                    raise ValueError("Single upload mode without presigned_url")
-                self._put_single(presigned_url, path, file_size)
+            if upload_mode == "server" or init.mode == "server":
+                self._upload_server(init, path)
+            elif init.mode == "azure":
+                self._upload_azure(init, path, max(concurrency, 1))
+            elif init.mode == "single":
+                self._upload_single(init, path, file_size)
             elif init.mode == "multipart":
-                part_size = init.part_size
-                if part_size is None:
-                    raise ValueError("Multipart upload mode without part_size")
-                self._upload_multipart(ingestion_id, path, file_size, part_size, max(concurrency, 1))
+                self._upload_multipart(init, path, file_size, max(concurrency, 1))
             else:
                 raise ValueError(f"Unknown upload mode: {init.mode}")
 
-            self._complete_upload(ingestion_id)
-        except BaseException:
-            self._abort_upload(ingestion_id)
+            self._complete_upload(init.ingestion_id)
+        except BaseException as exc:
+            self._abort_upload(init.ingestion_id, str(exc) or type(exc).__name__)
             raise
 
         return self.get_dataset(init.dataset_id)
@@ -118,72 +132,92 @@ class DataStream(BaseModel):
                 "metadata": metadata,
             },
         )
-        return IngestionInit.model_validate(validate_response(r, "Initialize ingestion failed"))
+        return IngestionInit(**validate_response(r, "Initialize ingestion failed"))
 
-    def _get_part_urls(self, ingestion_id: int, start_part: int, count: int) -> dict:
+    def _upload_server(self, init: IngestionInit, path: Path) -> None:
+        with path.open("rb") as file:
+            files = {"file": (path.name, file, "application/octet-stream")}
+            r = self._client.post(f"/ingestion/{init.ingestion_id}/upload/server", files=files)
+        validate_response(r, "Server upload failed")
+
+    def _upload_azure(self, init: IngestionInit, path: Path, concurrency: int) -> None:
+        from azure.storage.blob import BlobClient
+
+        if init.presigned_url is None:
+            raise ValueError("Azure upload mode without presigned_url")
+        blob = BlobClient.from_blob_url(init.presigned_url)
+        with path.open("rb") as file:
+            blob.upload_blob(file, overwrite=True, max_concurrency=concurrency)
+
+    def _upload_single(self, init: IngestionInit, path: Path, file_size: int) -> None:
+        if init.presigned_url is None:
+            raise ValueError("Single upload mode without presigned_url")
+        with path.open("rb") as file:
+            response = requests.put(init.presigned_url, data=file, headers={"Content-Length": str(file_size)})
+        _validate_storage_response(response, "Storage PUT failed")
+
+    def _upload_multipart(
+        self,
+        init: IngestionInit,
+        path: Path,
+        file_size: int,
+        concurrency: int,
+    ) -> None:
+        if init.part_size is None:
+            raise ValueError("Multipart upload mode without part_size")
+        part_size = init.part_size
+
+        batch_size = max(concurrency, 32)
+        parts = self._iter_part_urls(init.ingestion_id, batch_size)
+        parts_lock = Lock()
+
+        def next_part() -> PartUrl | None:
+            with parts_lock:
+                return next(parts, None)
+
+        def upload_worker() -> None:
+            with path.open("rb") as file:
+                while (part := next_part()) is not None:
+                    offset = (part.part_number - 1) * part_size
+                    part_len = min(part_size, file_size - offset)
+                    file.seek(offset)
+                    chunk = file.read(part_len)
+
+                    response = requests.put(part.url, data=chunk, headers={"Content-Length": str(part_len)})
+                    _validate_storage_response(response, f"Part {part.part_number} storage PUT failed")
+
+        with ThreadPoolExecutor(max_workers=concurrency) as executor:
+            futures = [executor.submit(upload_worker) for _ in range(concurrency)]
+            for future in as_completed(futures):
+                future.result()
+
+    def _iter_part_urls(self, ingestion_id: int, batch_size: int) -> Iterator[PartUrl]:
+        next_part: int | None = 1
+        while next_part is not None:
+            urls = self._get_part_urls(ingestion_id, next_part, batch_size)
+            if not urls.parts:
+                raise RuntimeError("Server returned no multipart upload URLs")
+
+            yield from urls.parts
+            next_part = urls.next_part
+
+    def _get_part_urls(self, ingestion_id: int, start_part: int, count: int) -> PartUrlsResponse:
         r = self._client.get(
             f"/ingestion/{ingestion_id}/upload/part-urls",
             params={"start_part": start_part, "count": count},
         )
-        return validate_response(r, "Get upload part URLs failed")
+        return PartUrlsResponse(**validate_response(r, "Get upload part URLs failed"))
 
     def _complete_upload(self, ingestion_id: int) -> None:
         r = self._client.post(f"/ingestion/{ingestion_id}/upload/complete")
         validate_response(r, "Complete upload failed")
 
-    def _abort_upload(self, ingestion_id: int) -> None:
+    def _abort_upload(self, ingestion_id: int, reason: str) -> None:
         try:
-            r = self._client.post(f"/ingestion/{ingestion_id}/abort")
+            r = self._client.post(f"/ingestion/{ingestion_id}/abort", json={"reason": reason})
             validate_response(r, "Abort upload failed")
         except Exception as e:
             warnings.warn(f"Failed to abort ingestion {ingestion_id}: {e}")
-
-    @staticmethod
-    def _put_single(url: str, path: Path, file_size: int) -> None:
-        with path.open("rb") as file:
-            response = requests.put(url, data=file, headers={"Content-Length": str(file_size)})
-        _validate_response(response, "Storage PUT failed")
-
-    def _upload_multipart(
-        self, ingestion_id: int, path: Path, total_size: int, part_size: int, concurrency: int
-    ) -> None:
-        total_parts = (total_size + part_size - 1) // part_size
-        next_part = 1
-        batch_size = max(concurrency, 32)
-
-        while next_part is not None and next_part <= total_parts:
-            urls = self._get_part_urls(ingestion_id, next_part, batch_size)
-            parts = urls.get("parts", [])
-            if not parts:
-                raise RuntimeError("Server returned no multipart upload URLs")
-
-            with ThreadPoolExecutor(max_workers=concurrency) as executor:
-                futures = [
-                    executor.submit(
-                        self._put_part,
-                        path,
-                        part_size,
-                        total_size,
-                        part["part_number"],
-                        part["url"],
-                    )
-                    for part in parts
-                ]
-                for future in as_completed(futures):
-                    future.result()
-
-            next_part = urls.get("next_part")
-
-    @staticmethod
-    def _put_part(path: Path, part_size: int, total_size: int, part_number: int, url: str) -> None:
-        offset = (part_number - 1) * part_size
-        part_len = min(part_size, total_size - offset)
-        with path.open("rb") as file:
-            file.seek(offset)
-            chunk = file.read(part_len)
-
-        response = requests.put(url, data=chunk, headers={"Content-Length": str(part_len)})
-        _validate_response(response, f"Part {part_number} storage PUT failed")
 
     def delete(self) -> None:
         """
@@ -196,6 +230,6 @@ class DataStream(BaseModel):
         validate_response(r, "Delete stream failed")
 
 
-def _validate_response(response: requests.Response, failure_message: str) -> None:
+def _validate_storage_response(response: requests.Response, failure_message: str) -> None:
     if not response.ok:
         raise RuntimeError(f"{failure_message}: status {response.status_code}: {response.text}")

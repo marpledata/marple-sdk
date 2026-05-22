@@ -29,6 +29,14 @@ fn mdb_cmd(token: &str, url: Option<&str>) -> Command {
     cmd
 }
 
+fn mdb_cmd_without_auth() -> Command {
+    let mut cmd = cargo_bin_cmd!("mdb");
+    cmd.env("NO_COLOR", "1");
+    cmd.env_remove("MDB_TOKEN");
+    cmd.env_remove("MDB_URL");
+    cmd
+}
+
 fn parse_json_stdout(output: &assert_cmd::assert::Assert) -> Value {
     let out = output.get_output();
     let s = String::from_utf8_lossy(&out.stdout);
@@ -62,7 +70,7 @@ fn find_last_i32(s: &str) -> Option<i32> {
 
 fn example_csv_path() -> PathBuf {
     let root = Path::new(env!("CARGO_MANIFEST_DIR"));
-    root.join("../python/tests/examples_race.csv")
+    root.join("../../test_data/examples_race.csv")
 }
 
 async fn download_to_file(url: &str, dest: &Path) {
@@ -165,10 +173,74 @@ fn test_version() {
     );
 }
 
+#[test]
+fn test_env_file_appears_in_help() {
+    let mut cmd = cargo_bin_cmd!("mdb");
+    cmd.env("NO_COLOR", "1");
+    let output = cmd.arg("--help").assert().success();
+    let stdout = String::from_utf8_lossy(&output.get_output().stdout);
+
+    assert!(
+        stdout.contains("--env-file <PATH>"),
+        "help should mention --env-file, got: {stdout}"
+    );
+}
+
+#[test]
+fn test_missing_env_file_fails() {
+    let output = mdb_cmd_without_auth()
+        .args(["--env-file", "does-not-exist.env", "--version"])
+        .assert()
+        .failure();
+    let stderr = String::from_utf8_lossy(&output.get_output().stderr);
+    assert!(
+        stderr.contains("does-not-exist.env"),
+        "stderr should mention missing env file, got: {stderr}"
+    );
+}
+
+#[tokio::test]
+async fn test_env_file_loads_credentials() {
+    let Some((token, url)) = maybe_skip_integration() else {
+        eprintln!("Skipping Rust CLI env-file integration test: missing env var MDB_TOKEN");
+        return;
+    };
+    let tmp = tempfile::tempdir().expect("tempdir");
+    let env_path = tmp.path().join(".env.staging");
+    let url = url.unwrap_or_else(|| "https://db.marpledata.com/api/v1".to_string());
+    fs::write(&env_path, format!("MDB_TOKEN={token}\nMDB_URL={url}\n")).expect("write env file");
+
+    mdb_cmd_without_auth()
+        .args(["--env-file", env_path.to_str().unwrap(), "ping"])
+        .assert()
+        .success();
+}
+
+#[tokio::test]
+async fn test_shell_env_wins_over_env_file() {
+    let Some((token, url)) = maybe_skip_integration() else {
+        eprintln!("Skipping Rust CLI env-file precedence test: missing env var MDB_TOKEN");
+        return;
+    };
+    let tmp = tempfile::tempdir().expect("tempdir");
+    let env_path = tmp.path().join(".env.production");
+    fs::write(
+        &env_path,
+        "MDB_TOKEN=mdb_invalid\nMDB_URL=https://invalid.marpledata.example/api/v1\n",
+    )
+    .expect("write env file");
+
+    mdb_cmd(&token, url.as_deref())
+        .args(["--env-file", env_path.to_str().unwrap(), "ping"])
+        .assert()
+        .success();
+}
+
 #[tokio::test]
 async fn test_db_ping_via_cli() {
     let Some((token, url)) = maybe_skip_integration() else {
-        panic!("Skipping Rust CLI integration test: missing env var MDB_TOKEN");
+        eprintln!("Skipping Rust CLI integration test: missing env var MDB_TOKEN");
+        return;
     };
 
     mdb_cmd(&token, url.as_deref())
@@ -180,7 +252,8 @@ async fn test_db_ping_via_cli() {
 #[tokio::test]
 async fn test_db_flow_via_cli() {
     let Some((token, url)) = maybe_skip_integration() else {
-        panic!("Skipping Rust CLI integration test: missing env var MDB_TOKEN");
+        eprintln!("Skipping Rust CLI integration test: missing env var MDB_TOKEN");
+        return;
     };
 
     let stream_name = unique_stream_name();
@@ -203,7 +276,7 @@ async fn test_db_flow_via_cli() {
 
     // Ensure stream appears in list
     let streams_json = mdb_cmd(&token, url.as_deref())
-        .args(["stream", "list"])
+        .args(["stream", "list", "--format", "long"])
         .assert()
         .success();
     let streams = parse_json_stdout(&streams_json);
@@ -279,9 +352,26 @@ async fn test_db_flow_via_cli() {
         "dataset metadata missing Foo value"
     );
 
-    // List datasets
-    let ds_list = mdb_cmd(&token, url.as_deref())
+    // List datasets in the default short/table format
+    let ds_short_list = mdb_cmd(&token, url.as_deref())
         .args(["dataset", &stream_name, "list"])
+        .assert()
+        .success();
+    let ds_short_stdout = String::from_utf8_lossy(&ds_short_list.get_output().stdout);
+    assert!(
+        ds_short_stdout.starts_with(
+            "ID\tpath\tstatus\tdatapoints\tsignals\tcold\thot\tbackup\tcreated_by\tmessage"
+        ),
+        "dataset short list missing header"
+    );
+    assert!(
+        ds_short_stdout.contains(&dataset_id.to_string()),
+        "dataset id not found in dataset short list"
+    );
+
+    // List datasets in JSON format
+    let ds_list = mdb_cmd(&token, url.as_deref())
+        .args(["dataset", &stream_name, "list", "--format", "long"])
         .assert()
         .success();
     let datasets = parse_json_stdout(&ds_list);
@@ -291,6 +381,50 @@ async fn test_db_flow_via_cli() {
             .iter()
             .any(|d| d.get("id").and_then(|v| v.as_i64()) == Some(dataset_id as i64)),
         "dataset id not found in dataset list"
+    );
+
+    // List datapool datasets with the same short and long formats
+    let datapool_short_list = mdb_cmd(&token, url.as_deref())
+        .args(["datapool", "datasets"])
+        .assert()
+        .success();
+    let datapool_short_stdout = String::from_utf8_lossy(&datapool_short_list.get_output().stdout);
+    assert!(
+        datapool_short_stdout.starts_with(
+            "ID\tpath\tstatus\tdatapoints\tsignals\tcold\thot\tbackup\tcreated_by\tmessage"
+        ),
+        "datapool short list missing header"
+    );
+    assert!(
+        datapool_short_stdout.contains(&dataset_id.to_string()),
+        "dataset id not found in datapool short list"
+    );
+
+    let datapool_list = mdb_cmd(&token, url.as_deref())
+        .args(["datapool", "datasets", "--format", "long"])
+        .assert()
+        .success();
+    let datapool_datasets = parse_json_stdout(&datapool_list);
+    let datapool_datasets = datapool_datasets
+        .as_array()
+        .expect("datapool datasets should be array");
+    assert!(
+        datapool_datasets
+            .iter()
+            .any(|d| d.get("id").and_then(|v| v.as_i64()) == Some(dataset_id as i64)),
+        "dataset id not found in datapool dataset list"
+    );
+
+    let queue_short_list = mdb_cmd(&token, url.as_deref())
+        .args(["datapool", "datasets", "--queue"])
+        .assert()
+        .success();
+    let queue_short_stdout = String::from_utf8_lossy(&queue_short_list.get_output().stdout);
+    assert!(
+        queue_short_stdout.starts_with(
+            "ID\tpath\tstatus\tprogress\tdatapoints\tsignals\tbackup\tcreated_by\tmessage"
+        ),
+        "datapool queue short list missing header"
     );
 
     // Query endpoint
@@ -375,7 +509,7 @@ async fn test_db_flow_via_cli() {
     // Cleanup leftovers: delete any stream whose name starts with "Salty Compulsory"
     // (covers stale streams from previously failed runs).
     let streams_json = mdb_cmd(&token, url.as_deref())
-        .args(["stream", "list"])
+        .args(["stream", "list", "--format", "long"])
         .assert()
         .success();
     let streams = parse_json_stdout(&streams_json);

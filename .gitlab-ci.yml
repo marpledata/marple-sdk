@@ -40,56 +40,83 @@ pytest:
       - python/coverage.xml
   coverage: '/TOTAL\s+\d+\s+\d+\s+(\d+%)/'
   rules:
+    - if: '$CI_COMMIT_BRANCH == $CI_DEFAULT_BRANCH'
+      changes:
+        - python/**/*
+        - test_data/**/*
     - if: $CI_COMMIT_BRANCH
       changes:
         - python/**/*
+        - test_data/**/*
+      when: manual
+      allow_failure: true
 
-rust:mdb-cli:
+rust:workspace:
   image: rust:1.93
   stage: test
+  variables:
+    CARGO_HOME: "$CI_PROJECT_DIR/.cargo"
   cache:
     key:
       files:
-        - mdb-cli/Cargo.lock
-        - mdb-cli/Cargo.toml
+        - rust/Cargo.lock
+        - rust/Cargo.toml
     paths:
-      - mdb-cli/target/
+      - rust/target/
       - .cargo/registry/
       - .cargo/git/
   before_script:
     - rustc --version
     - cargo --version
+    - mkdir -p "$CARGO_HOME/registry" "$CARGO_HOME/git"
     - apt-get update && apt-get install -y --no-install-recommends pkg-config libssl-dev ca-certificates
   script:
-    - cd mdb-cli
-    - cargo test --locked
+    - cd rust
+    - cargo test --workspace --locked
+    - cargo build --workspace --examples --locked
   rules:
+    - if: '$CI_COMMIT_BRANCH == $CI_DEFAULT_BRANCH'
+      changes:
+        - rust/Cargo.lock
+        - rust/Cargo.toml
+        - rust/mdb-cli/**/*
+        - rust/mdb-sdk/**/*
+        - test_data/**/*
     - if: $CI_COMMIT_BRANCH
       changes:
-        - mdb-cli/**/*
+        - rust/Cargo.lock
+        - rust/Cargo.toml
+        - rust/mdb-cli/**/*
+        - rust/mdb-sdk/**/*
+        - test_data/**/*
+      when: manual
+      allow_failure: true
 
 rust:parquet-transcode:
   image: rust:1.93
   stage: test
+  variables:
+    CARGO_HOME: "$CI_PROJECT_DIR/.cargo"
   cache:
     key:
       files:
-        - parquet-transcode/Cargo.lock
-        - parquet-transcode/Cargo.toml
+        - rust/parquet-transcode/Cargo.lock
+        - rust/parquet-transcode/Cargo.toml
     paths:
-      - parquet-transcode/target/
+      - rust/parquet-transcode/target/
       - .cargo/registry/
       - .cargo/git/
   before_script:
     - rustc --version
     - cargo --version
+    - mkdir -p "$CARGO_HOME/registry" "$CARGO_HOME/git"
   script:
-    - cd parquet-transcode
+    - cd rust/parquet-transcode
     - cargo test
   rules:
     - if: $CI_COMMIT_BRANCH
       changes:
-        - parquet-transcode/**/*
+        - rust/parquet-transcode/**/*
 
 build:parquet-transcode:
   image: rust:1.93
@@ -108,7 +135,7 @@ build:parquet-transcode:
     - docker version
     - cargo install cross --git https://github.com/cross-rs/cross
   script:
-    - cd parquet-transcode
+    - cd rust/parquet-transcode
     - cross build --release --target x86_64-pc-windows-gnu
     - cross build --release --target x86_64-unknown-linux-gnu
     - mkdir -p artifacts
@@ -116,7 +143,7 @@ build:parquet-transcode:
     - cp target/x86_64-unknown-linux-gnu/release/parquet-transcode artifacts/parquet-transcode-linux-x64
   artifacts:
     paths:
-      - parquet-transcode/artifacts/
+      - rust/parquet-transcode/artifacts/
   rules:
     - when: manual
 
@@ -137,15 +164,15 @@ build:mdb-cli:
     - docker version
     - cargo install cross --git https://github.com/cross-rs/cross
   script:
-    - cd mdb-cli
-    - cross build --release --target x86_64-pc-windows-gnu
-    - cross build --release --target x86_64-unknown-linux-gnu
-    - mkdir -p artifacts
-    - cp target/x86_64-pc-windows-gnu/release/mdb.exe artifacts/mdb-windows-x64.exe
-    - cp target/x86_64-unknown-linux-gnu/release/mdb artifacts/mdb-linux-x64
+    - cd rust
+    - cross build --release --bin mdb --target x86_64-pc-windows-gnu
+    - cross build --release --bin mdb --target x86_64-unknown-linux-gnu
+    - mkdir -p mdb-cli/artifacts
+    - cp target/x86_64-pc-windows-gnu/release/mdb.exe mdb-cli/artifacts/mdb-windows-x64.exe
+    - cp target/x86_64-unknown-linux-gnu/release/mdb mdb-cli/artifacts/mdb-linux-x64
   artifacts:
     paths:
-      - mdb-cli/artifacts/
+      - rust/mdb-cli/artifacts/
   rules:
     - when: manual
 
