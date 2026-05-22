@@ -27,12 +27,12 @@ To get started:
 If you are using a VPC or self-hosted version, pass a custom `api_url` to `DB(...)` (it should end in `/api/v1`).
 
 ### Examples
+
 #### Import a file and wait for it to import
 
 This is the typical flow for importing a new file into Marple DB:
 
 ```python
-import time
 from marple import DB
 
 # Create a stream + API token in the Marple DB web application
@@ -50,7 +50,31 @@ dataset = stream.push_file("examples_race.csv", metadata={"driver": "Mbaerto"})
 dataset = dataset.wait_for_import(timeout=10)
 ```
 
+#### Upload large files
+
+`stream.push_file(...)` starts an ingestion and lets the Marple DB API choose the best upload mode. Depending on the deployment and file size, the SDK can upload through the API server, upload directly to Azure Blob Storage, use a single presigned URL, or split the file into multipart uploads.
+
+The default `upload_mode="auto"` is recommended for most users. Increase `concurrency` when uploading large files over a fast connection:
+
+```python
+dataset = stream.push_file(
+    "large_export.csv",
+    metadata={"source": "testbench"},
+    concurrency=8,
+).wait_for_import(timeout=180)
+```
+
+If your network, proxy, or firewall blocks direct storage URLs, force the SDK to upload through the Marple DB API server:
+
+```python
+dataset = stream.push_file(
+    "large_export.csv",
+    upload_mode="server",
+).wait_for_import(timeout=180)
+```
+
 #### Filter datasets and get resampled data
+
 ```python
 # See previous example for setup
 import re
@@ -97,6 +121,7 @@ for dataset, data in datasets.get_data(
 ```
 
 #### Delete a dataset that failed to import
+
 ```python
 datasets = stream.get_datasets()
 datasets = datasets.where_dataset("import_status", equals="FAILED")
@@ -110,11 +135,13 @@ if len(datasets) > 0:
 
 - **List streams**: `db.get_streams()`
 - **List datasets in a stream**: `stream.get_datasets()`
-- **Upload a file to a file-stream**: `stream.push_file(file_path, metadata={...})`
+- **Upload a file to a file-stream**: `stream.push_file(file_path, metadata={...}, concurrency=4)`
 - **Wait for a dataset to import**: `dataset.wait_for_import(timeout=60)`
 - **Download original uploaded file**: `dataset.download(destination_folder=".")`
 - **Download parquet for a signal**: `dataset.get_signal(signal_name).download(destination_folder=".")`
 - **Get a resampled df of multiple signals**: `dataset.get_data(signals=[...], resample_rule="1s")`
+- **Delete a stream**: `stream.delete()` or `db.delete_stream(stream_key)`
+- **Delete a dataset**: `dataset.delete()` or `db.delete_dataset(dataset_id, dataset_path)`
 
 For live/realtime streams (creating and appending data):
 
@@ -132,9 +159,9 @@ db.get("/health")
 
 ### Notes on DB API changes
 
-- Methods like `DB.push_file`, `DB.download_signal`, and `DB.update_metadata` are deprecated.
+- Methods like `DB.push_file`, `DB.download_signal`, and `DB.update_metadata` are deprecated compatibility paths.
 - Prefer stream/dataset methods instead: `stream.push_file`, `dataset.get_signal(...).download()`, and `dataset.update_metadata(...)`.
-- These are still available for compatibility, but the examples above use the current API.
+- Use `DataStream.push_file` for new upload code because it exposes the current upload controls, including `concurrency` and `upload_mode`.
 
 ## Marple Insight
 
@@ -171,7 +198,9 @@ print("Wrote", file_path)
 ```
 
 ### Calling endpoints directly
+
 For advanced use cases, you can call API endpoints directly:
+
 ```python
 insight.get("/user/info")
 insight.post("sources/search")

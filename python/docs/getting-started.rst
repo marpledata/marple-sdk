@@ -36,6 +36,22 @@ Marple DB quickstart
    dataset = stream.push_file("examples_race.csv", metadata={"driver": "Mbaerto"})
    dataset = dataset.wait_for_import(timeout=10)
 
+``stream.push_file(...)`` starts an ingestion and lets the Marple DB API choose
+the best upload mode for the deployment and file size. For large files, use a
+longer ``wait_for_import`` timeout and optionally increase upload concurrency:
+
+.. code-block:: python
+
+   dataset = stream.push_file("large_export.csv", concurrency=8)
+   dataset = dataset.wait_for_import(timeout=180)
+
+If direct storage uploads are blocked by your network or proxy, force upload
+through the Marple DB API server:
+
+.. code-block:: python
+
+   dataset = stream.push_file("large_export.csv", upload_mode="server")
+
 Marple Insight quickstart
 -------------------------
 
