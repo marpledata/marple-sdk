@@ -5,6 +5,12 @@ All notable changes to `mdb` will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.2.1] - 2026-05-22
+
+### Changed
+
+- Identified CLI traffic with `X-Request-Source: cli/rust:<version>` (via the new `MarpleDBBuilder::request_source` hook in `marple-db` 0.2.1) so backend logs and metrics can distinguish CLI users from raw SDK consumers.
+
 ## [0.2.0] - 2026-05-22
 
 ### Added
@@ -48,6 +54,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Environment variable and `.env` file support
 - Cross-platform support (macOS, Linux, Windows)
 
+[0.2.1]: https://github.com/marpledata/marple-sdk/releases/tag/v0.2.1
 [0.2.0]: https://github.com/marpledata/marple-sdk/releases/tag/v0.2.0
 [0.1.6]: https://github.com/marpledata/marple-sdk/releases/tag/v0.1.6
 [0.1.1]: https://github.com/marpledata/marple-sdk/releases/tag/v0.1.1

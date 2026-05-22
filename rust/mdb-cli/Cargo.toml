@@ -47,5 +47,5 @@ license = "Apache-2.0"
 name = "mdb-cli"
 readme = "README.md"
 repository.workspace = true
-version = "0.2.0"
+version = "0.2.1"
 exclude = ["target/", ".git/", ".gitignore"]

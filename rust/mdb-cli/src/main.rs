@@ -634,7 +634,11 @@ async fn handle_delete(
 async fn main() -> Result<()> {
     load_env()?;
     let cli = Cli::parse();
-    let marpledb = MarpleDB::new(&cli.mdb_url, &cli.mdb_token)?;
+    let marpledb = MarpleDB::builder()
+        .url(&cli.mdb_url)
+        .token(&cli.mdb_token)
+        .request_source(concat!("cli/rust:", env!("CARGO_PKG_VERSION")))
+        .build()?;
 
     let Some(command) = cli.command else {
         if cli.version {

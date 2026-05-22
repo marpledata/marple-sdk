@@ -10,6 +10,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Added
 
 - Sent an `X-Request-Source: sdk/rust:<version>` header on every API request so SDK traffic shows up in backend logs and metrics alongside the Python and MATLAB SDKs. Storage-client requests against pre-signed URLs are unaffected.
+- Added `MarpleDBBuilder::request_source` so higher-level tools built on the SDK can override the default `X-Request-Source` value and identify themselves distinctly (for example `cli/rust:<version>` from `mdb-cli`).
 
 ## [0.2.0] - 2026-05-22
 

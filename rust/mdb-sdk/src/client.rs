@@ -12,9 +12,11 @@ use std::time::Duration;
 /// Identifies SDK-originated traffic in backend logs and metrics.
 ///
 /// Sent on every API request via `X-Request-Source`. Matches the convention
-/// used by the Python and MATLAB SDKs (`sdk/<lang>:<version>`).
+/// used by the Python and MATLAB SDKs (`sdk/<lang>:<version>`). Callers can
+/// override the value with [`MarpleDBBuilder::request_source`] to identify
+/// higher-level tools built on top of the SDK.
 const REQUEST_SOURCE_HEADER: HeaderName = HeaderName::from_static("x-request-source");
-const REQUEST_SOURCE_VALUE: HeaderValue =
+const DEFAULT_REQUEST_SOURCE: HeaderValue =
     HeaderValue::from_static(concat!("sdk/rust:", env!("CARGO_PKG_VERSION")));
 
 /// Client for the MarpleDB API.
@@ -25,6 +27,7 @@ pub struct MarpleDB {
     pub(crate) storage_client: Client,
     pub(crate) base_url: String,
     auth_header: HeaderValue,
+    request_source: HeaderValue,
 }
 
 impl MarpleDB {
@@ -59,7 +62,7 @@ impl MarpleDB {
     fn auth(&self, request: reqwest::RequestBuilder) -> reqwest::RequestBuilder {
         request
             .header(AUTHORIZATION, self.auth_header.clone())
-            .header(REQUEST_SOURCE_HEADER, REQUEST_SOURCE_VALUE)
+            .header(REQUEST_SOURCE_HEADER, self.request_source.clone())
     }
 
     async fn send_json<R>(
@@ -327,6 +330,7 @@ pub struct MarpleDBBuilder {
     storage_client: Option<Client>,
     timeout: Option<Duration>,
     user_agent: Option<String>,
+    request_source: Option<String>,
 }
 
 impl Default for MarpleDBBuilder {
@@ -338,6 +342,7 @@ impl Default for MarpleDBBuilder {
             storage_client: None,
             timeout: None,
             user_agent: Some(format!("marple-db/{}", env!("CARGO_PKG_VERSION"))),
+            request_source: None,
         }
     }
 }
@@ -374,6 +379,17 @@ impl MarpleDBBuilder {
         self
     }
 
+    /// Overrides the `X-Request-Source` header sent on every API request.
+    ///
+    /// The default is `sdk/rust:<crate-version>`. Higher-level tools built on
+    /// top of the SDK should identify themselves so their traffic shows up
+    /// distinctly in backend logs and metrics, for example `cli/rust:1.2.3`
+    /// or `my-ingester/2.0.0`.
+    pub fn request_source(mut self, request_source: impl Into<String>) -> Self {
+        self.request_source = Some(request_source.into());
+        self
+    }
+
     /// Uses a caller-provided API HTTP client.
     ///
     /// The SDK still attaches the MarpleDB authorization header per request.
@@ -402,6 +418,11 @@ impl MarpleDBBuilder {
         let mut auth_header = HeaderValue::from_str(&format!("Bearer {}", token))?;
         auth_header.set_sensitive(true);
 
+        let request_source = match self.request_source {
+            Some(value) => HeaderValue::from_str(&value)?,
+            None => DEFAULT_REQUEST_SOURCE,
+        };
+
         let client = match self.client {
             Some(client) => client,
             None => build_client(self.timeout, self.user_agent.as_deref())?,
@@ -416,6 +437,7 @@ impl MarpleDBBuilder {
             storage_client,
             base_url: url.trim_end_matches('/').to_string() + "/",
             auth_header,
+            request_source,
         })
     }
 }
