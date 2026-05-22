@@ -1,11 +1,11 @@
 [package]
 name = "marple-db"
-version = "0.1.0"
+version = "0.2.0"
 description = "Rust SDK for the MarpleDB API"
 documentation = "https://docs.marpledata.com/docs"
 keywords = ["marple", "database", "iceberg", "parquet", "sdk"]
 categories = ["api-bindings", "database", "filesystem"]
-license = "Apache-2.0 OR MIT"
+license = "Apache-2.0"
 readme = "README.md"
 authors.workspace = true
 edition.workspace = true
