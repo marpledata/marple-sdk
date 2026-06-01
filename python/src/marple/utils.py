@@ -48,7 +48,7 @@ class TimeoutHTTPAdapter(HTTPAdapter):
 
 
 class DBClient:
-    DEFAULT_TIMEOUT = (5, 60)
+    DEFAULT_TIMEOUT = (5, 300)
 
     def __init__(self, api_token: str, api_url: str, datapool: str, cache_folder: str):
         self.api_token = api_token
