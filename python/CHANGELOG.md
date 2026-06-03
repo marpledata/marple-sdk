@@ -5,6 +5,13 @@ All notable changes to the Python SDK package `marpledata` will be documented in
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [3.2.2] - 2026-06-01
+
+### Changed
+
+- Added default request timeouts and bounded retries to improve SDK reliability on spotty networks.
+- Retried idempotent direct-storage uploads while keeping Marple API POST retries conservative.
+
 ## [3.2.1] - 2026-05-22
 
 ### Changed

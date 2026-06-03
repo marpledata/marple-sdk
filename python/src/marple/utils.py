@@ -15,6 +15,8 @@ from marple.db.constants import (
     COL_VAL_TEXT,
     COL_VAL_TEXT_IDX,
 )
+from requests.adapters import HTTPAdapter
+from urllib3.util.retry import Retry
 
 
 def validate_response(response: requests.Response, failure_message: str) -> dict:
@@ -34,7 +36,20 @@ def validate_response(response: requests.Response, failure_message: str) -> dict
     return r_json
 
 
+class TimeoutHTTPAdapter(HTTPAdapter):
+    def __init__(self, *args, timeout=None, **kwargs):
+        self.timeout = timeout
+        super().__init__(*args, **kwargs)
+
+    def send(self, request, **kwargs):
+        if kwargs.get("timeout") is None:
+            kwargs["timeout"] = self.timeout
+        return super().send(request, **kwargs)
+
+
 class DBClient:
+    DEFAULT_TIMEOUT = (5, 300)
+
     def __init__(self, api_token: str, api_url: str, datapool: str, cache_folder: str):
         self.api_token = api_token
         self.api_url = api_url
@@ -42,9 +57,45 @@ class DBClient:
         self.cache_folder = cache_folder
         self._signal_map: dict[str, int] | None = None
 
-        self.session = requests.Session()
+        self.session = self._create_api_session()
+        self.storage_session = self._create_storage_session()
         self.session.headers.update({"Authorization": f"Bearer {self.api_token}"})
         self.session.headers.update({"X-Request-Source": f"sdk/python:{marple.__version__}"})
+
+    def _create_api_session(self) -> requests.Session:
+        retry = Retry(
+            total=5,
+            connect=5,
+            read=2,
+            status=2,
+            backoff_factor=0.5,
+            status_forcelist=(429, 502, 503, 504),
+            allowed_methods=frozenset({"GET", "HEAD", "OPTIONS", "DELETE"}),
+            respect_retry_after_header=True,
+            raise_on_status=False,
+        )
+        return self._create_session(retry)
+
+    def _create_storage_session(self) -> requests.Session:
+        retry = Retry(
+            total=5,
+            connect=5,
+            read=5,
+            status=5,
+            backoff_factor=0.5,
+            status_forcelist=(429, 500, 502, 503, 504),
+            allowed_methods=frozenset({"PUT", "GET", "HEAD"}),
+            respect_retry_after_header=True,
+            raise_on_status=False,
+        )
+        return self._create_session(retry)
+
+    def _create_session(self, retry: Retry) -> requests.Session:
+        session = requests.Session()
+        adapter = TimeoutHTTPAdapter(max_retries=retry, timeout=self.DEFAULT_TIMEOUT)
+        session.mount("https://", adapter)
+        session.mount("http://", adapter)
+        return session
 
     def get(self, url: str, *args, **kwargs) -> requests.Response:
         return self.session.get(f"{self.api_url}{url}", *args, **kwargs)

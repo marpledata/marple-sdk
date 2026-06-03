@@ -153,7 +153,11 @@ class DataStream(BaseModel):
         if init.presigned_url is None:
             raise ValueError("Single upload mode without presigned_url")
         with path.open("rb") as file:
-            response = requests.put(init.presigned_url, data=file, headers={"Content-Length": str(file_size)})
+            response = self._client.storage_session.put(
+                init.presigned_url,
+                data=file,
+                headers={"Content-Length": str(file_size)},
+            )
         _validate_storage_response(response, "Storage PUT failed")
 
     def _upload_multipart(
@@ -183,7 +187,11 @@ class DataStream(BaseModel):
                     file.seek(offset)
                     chunk = file.read(part_len)
 
-                    response = requests.put(part.url, data=chunk, headers={"Content-Length": str(part_len)})
+                    response = self._client.storage_session.put(
+                        part.url,
+                        data=chunk,
+                        headers={"Content-Length": str(part_len)},
+                    )
                     _validate_storage_response(response, f"Part {part.part_number} storage PUT failed")
 
         with ThreadPoolExecutor(max_workers=concurrency) as executor:
