@@ -5,6 +5,18 @@ All notable changes to the Python SDK package `marpledata` will be documented in
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+### Added
+
+- Added `DataStream.add_dataset`, `Dataset.upsert_signals`, `Dataset.append`, and `Dataset.cool` for realtime ingest.
+- Extended `Dataset.wait_for_import` to recognize `COOLING` as a busy status.
+
+### Changed
+
+- `DB.add_dataset`, `DB.upsert_signals`, and `DB.dataset_append` now delegate to the DataStream and Dataset methods.
+- Fixed broken `DB.download_signal` compatibility path (`get_parquet_files` → `list_parquet_files`).
+
 ## [3.2.3] - 2026-06-08
 
 ### Changed

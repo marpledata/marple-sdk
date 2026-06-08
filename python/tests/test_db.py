@@ -18,6 +18,7 @@ from marple.db import Dataset, DataStream
 from support import EXAMPLE_CSV, ingest_dataset
 
 PYTHON_UPLOAD_TEST_PREFIX = "Salty Compulsory PytestUpload"
+REALTIME_TEST_PREFIX = "Salty Compulsory PytestRealtime"
 MIB = 1024 * 1024
 MULTIPART_THRESHOLD = 128 * MIB
 
@@ -268,3 +269,44 @@ def test_db_get_parquet(example_dataset: Dataset) -> None:
     table = pq.ParquetDataset(signal.cache_parquet()).read()
     assert table.column_names == ["dataset", "signal", "time", "value", "value_text"]
     assert table.num_rows == 12500
+
+
+@contextmanager
+def _realtime_test_stream(db: DB):
+    for stream in db.get_streams():
+        if stream.name.startswith(REALTIME_TEST_PREFIX):
+            db.delete_stream(stream.id)
+    stream = db.create_stream(f"{REALTIME_TEST_PREFIX} {datetime.now().isoformat()}", type="realtime")
+    try:
+        yield stream
+    finally:
+        try:
+            db.delete_stream(stream.id)
+        except Exception:
+            pass
+
+
+def test_realtime_dataset_cool(db: DB) -> None:
+    with _realtime_test_stream(db) as stream:
+        dataset = stream.add_dataset("pytest-run", metadata={"source": "pytest"})
+        assert dataset.import_status == "LIVE"
+
+        dataset.upsert_signals([{"signal": "speed", "unit": "km/h"}])
+        dataset.append(
+            pd.DataFrame(
+                {
+                    "time": [1_000_000_000, 2_000_000_000],
+                    "signal": ["speed", "speed"],
+                    "value": [10.0, 20.0],
+                }
+            ),
+        )
+
+        cooling = dataset.cool()
+        assert cooling.import_status == "COOLING"
+        assert cooling.id == dataset.id
+
+
+def test_realtime_cool_rejects_invalid_status(example_dataset: Dataset) -> None:
+    with pytest.raises(ValueError, match="cannot be cooled"):
+        example_dataset.cool()
