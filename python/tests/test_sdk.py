@@ -2,21 +2,23 @@ import os
 import random
 import re
 import time
+from collections.abc import Generator
 from contextlib import contextmanager
 from datetime import datetime
 from pathlib import Path
 from tempfile import TemporaryDirectory
+from typing import Literal
 
 import dotenv
-import marple
 import pandas as pd
 import pyarrow.parquet as pq
 import pytest
 from h5py import File
+from requests import HTTPError
+
+import marple
 from marple import DB, Insight
 from marple.db import Dataset, DataStream
-from marple.db.constants import SCHEMA
-from requests import HTTPError
 
 EXAMPLE_CSV = Path(__file__).parents[2] / "test_data" / "examples_race.csv"
 PYTHON_UPLOAD_TEST_PREFIX = "Salty Compulsory PytestUpload"
@@ -98,9 +100,11 @@ def _push_and_assert_upload(
     stream: DataStream,
     file_path: Path,
     metadata: dict[str, str],
-    upload_mode: str = "auto",
+    upload_mode: Literal["auto", "server"] = "auto",
 ) -> Dataset:
-    dataset = stream.push_file(str(file_path), metadata=metadata, upload_mode=upload_mode).wait_for_import(timeout=180)
+    dataset = stream.push_file(str(file_path), metadata=metadata, upload_mode=upload_mode).wait_for_import(
+        timeout=180
+    )
 
     assert dataset.import_status == "FINISHED"
     assert dataset.backup_size == file_path.stat().st_size
@@ -116,7 +120,7 @@ def _push_and_assert_upload(
 
 
 @pytest.fixture(scope="session")
-def example_stream() -> DataStream:
+def example_stream() -> Generator[DataStream, None, None]:
     url = os.getenv("MDB_URL", marple.db.SAAS_URL)
     assert url is not None
     session_db = DB(_required_env("MDB_TOKEN"), url)
@@ -169,9 +173,10 @@ def test_db_filter_datasets(example_stream: DataStream) -> None:
     assert len(all_datasets.where_dataset("timestamp_start", equals=int(0.1 * 1e9))) == n_datasets
 
     def test_signal_filter(signal_name: str, stat, value: float) -> None:
-        assert (
-            len(all_datasets.where_signal(signal_name, stat, equals=value)) == n_datasets
-        ), f"Failed on {signal_name} {stat} == {value}, stat in datasets: {[d.get_signal(signal_name).stats.get(stat) for d in all_datasets]}"
+        assert len(all_datasets.where_signal(signal_name, stat, equals=value)) == n_datasets, (
+            f"Failed on {signal_name} {stat} == {value}, stat in datasets: "
+            f"{[(s.stats.get(stat) if (s := d.get_signal(signal_name)) and s.stats else None) for d in all_datasets]}"
+        )
         assert len(all_datasets.where_signal(signal_name, stat, greater_than=value)) == 0
         assert len(all_datasets.where_signal(signal_name, stat, greater_than=value - 1)) == n_datasets
         assert len(all_datasets.where_signal(signal_name, stat, less_than=value)) == 0
@@ -191,6 +196,7 @@ def test_db_filter_datasets(example_stream: DataStream) -> None:
     ]  # Some signals fail due to rounding with the avg stat
 
     random_signal = random_dataset.get_signal(random.choice(possible_names))
+    assert random_signal is not None
 
     df = pd.read_csv(EXAMPLE_CSV)
     actual_signal = df[random_signal.name]
@@ -207,10 +213,12 @@ def test_db_filter_datasets(example_stream: DataStream) -> None:
     test_signal_filter(random_signal.name, "count_text", 0)
 
     def custom_filter(dataset: marple.db.Dataset) -> bool:
+        ng_signal = dataset.get_signal("car.engine.NGear")
+        assert ng_signal is not None and ng_signal.stats is not None
         return (
             dataset.metadata.get("A") == 1
             and dataset.metadata.get("B") in [2, 3]
-            or dataset.get_signal("car.engine.NGear").stats.get("max", 0) ** 2 > 16
+            or ng_signal.stats.get("max", 0) ** 2 > 16
         )
 
     assert len(all_datasets.where(custom_filter)) == n_datasets
@@ -272,6 +280,7 @@ def test_test_dataset(db: DB, example_dataset: Dataset) -> None:
 
 def test_get_signal(example_dataset: Dataset) -> None:
     signal = example_dataset.get_signal("car.speed")
+    assert signal is not None
     assert signal.name == "car.speed"
     assert signal.count == 12500
 

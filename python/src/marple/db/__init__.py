@@ -1,4 +1,3 @@
-import logging
 import warnings
 from functools import wraps
 from io import BytesIO
@@ -9,6 +8,10 @@ import numpy as np
 import pandas as pd
 import pyarrow as pa
 import pyarrow.parquet as pq
+from pydantic import ValidationError
+from requests import Response
+from requests.exceptions import ConnectionError
+
 from marple.db.constants import (
     COL_SIG,
     COL_TIME,
@@ -21,9 +24,6 @@ from marple.db.dataset import Dataset, DatasetList
 from marple.db.datastream import DataStream
 from marple.db.signal import Signal
 from marple.utils import DBClient, validate_response
-from pydantic import ValidationError
-from requests import Response
-from requests.exceptions import ConnectionError
 
 __all__ = ["DB", "DataStream", "Dataset", "DatasetList", "Signal", "SCHEMA"]
 
@@ -191,7 +191,11 @@ class DB:
         if isinstance(stream_key, int):
             return self._streams.get(stream_key)
         return next(
-            (s for s in self._streams.values() if s.name.lower() == stream_key.lower() or str(s.id) == stream_key),
+            (
+                s
+                for s in self._streams.values()
+                if s.name.lower() == stream_key.lower() or str(s.id) == stream_key
+            ),
             None,
         )
 
@@ -229,8 +233,8 @@ class DB:
         if stream_key is not None:
             return self.get_stream(stream_key).get_datasets()
         r = self.get(f"/datapool/{self.client.datapool}/datasets")
-        r = validate_response(r, f"Failed to get datasets for datapool {self.client.datapool}")
-        return DatasetList.from_dicts(self.client, r)
+        datasets = validate_response(r, f"Failed to get datasets for datapool {self.client.datapool}")
+        return DatasetList.from_dicts(self.client, datasets)
 
     def get_dataset(self, dataset_id: int | None = None, dataset_path: str | None = None) -> Dataset:
         """
@@ -331,7 +335,7 @@ class DB:
         )
         if signal is None:
             raise Exception("Signal not found")
-        return signal.get_parquet_files(refresh_cache)
+        return signal.list_parquet_files(refresh_cache)
 
     def delete_dataset(self, dataset_id: int | None, dataset_path: str | None):
         """
@@ -434,7 +438,9 @@ class DB:
                 raise Exception(f"DataFrame must contain {COL_TIME} and {COL_SIG} columns")
             if not (COL_VAL in data.columns or COL_VAL_TEXT in data.columns):
                 raise Exception(f"DataFrame must contain at least one of {COL_VAL} or {COL_VAL_TEXT} columns")
-            value = pd.to_numeric(data[COL_VAL], errors="coerce") if COL_VAL in data.columns else pa.nulls(len(data))
+            value = (
+                pd.to_numeric(data[COL_VAL], errors="coerce") if COL_VAL in data.columns else pa.nulls(len(data))
+            )
             value_text = data[COL_VAL_TEXT] if COL_VAL_TEXT in data.columns else pa.nulls(len(data))
             table = pa.Table.from_arrays([data[COL_TIME], data[COL_SIG], value, value_text], schema=SCHEMA)
 
@@ -467,11 +473,13 @@ def _wide_to_long(df: pd.DataFrame) -> pa.Table:
     for col in df.columns:
         if col == COL_TIME:
             continue
-        if (value := _to_numeric(df[col])) is not None:
-            (value, value_text) = (value.to_numpy().astype(np.float64), pa.nulls(len(time)))
+        if (numeric_col := _to_numeric(df[col])) is not None:
+            value_arr = numeric_col.to_numpy().astype(np.float64)
+            value_text = pa.nulls(len(time))
         else:
-            (value, value_text) = (pa.nulls(len(time)), df[col].fillna("").to_numpy().astype(str))
-        signals.append(pa.Table.from_arrays([time, [col] * len(time), value, value_text], schema=SCHEMA))
+            value_arr = pa.nulls(len(time))
+            value_text = df[col].fillna("").to_numpy().astype(str)
+        signals.append(pa.Table.from_arrays([time, [col] * len(time), value_arr, value_text], schema=SCHEMA))
     return pa.concat_tables(signals)
 
 

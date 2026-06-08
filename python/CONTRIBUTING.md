@@ -1,5 +1,25 @@
 ## Development (Python)
 
+### Formatting, linting, and typing
+
+Checks run on `src/` and `tests/` in GitLab CI (`python:lint`, `python:typing`).
+
+Fix formatting locally:
+
+```bash
+uv run isort src tests
+uv run black src tests
+```
+
+Verify (mirror CI):
+
+```bash
+uv run isort src tests --check --diff
+uv run flake8 --config .flake8 src tests
+uv run black --check src tests
+uv run mypy --install-types --non-interactive
+```
+
 ### Testing
 
 The testing suite runs against a real linked DB & Insight deployment on our SaaS (e.g. Castro Comrades).

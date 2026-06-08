@@ -2,10 +2,11 @@ from pathlib import Path
 from typing import Optional
 from urllib import request
 
-import marple
 import requests
-from marple.utils import validate_response
 from requests import Response
+
+import marple
+from marple.utils import validate_response
 
 SAAS_URL = "https://insight.marpledata.com/api/v1"
 
@@ -49,7 +50,7 @@ class Insight:
          - If the connection is successful, returns True.
          - If the connection fails, raise error message.
         """
-        default_error =   f"Could not find Marple Insight at {self.api_url}. Please check if the api_url parameter is correct and try again."
+        default_error = f"Could not find Marple Insight at {self.api_url}. Please check if the api_url parameter is correct and try again."
         if not self.api_url.endswith("/api/v1"):
             default_error += " The api_url parameter should end with /api/v1"
         try:
@@ -80,7 +81,6 @@ class Insight:
             raise Exception(error_text)
 
         return True
-
 
     def get_datasets(self) -> list[dict]:
         """

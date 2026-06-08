@@ -17,6 +17,9 @@ This directory contains the Python SDK package published as `marpledata`.
 - Run tests with output: `uv run pytest -vs`
 - Build docs: `uv run --group docs sphinx-build -b html docs docs/_build/html`
 - Build package: `uv build`
+- Fix formatting: `uv run isort src tests && uv run black src tests`
+- Verify lint/format/types (mirror CI):
+  `uv run isort src tests --check --diff && uv run flake8 --config .flake8 src tests && uv run black --check src tests && uv run mypy --install-types --non-interactive`
 
 Run commands from `python/` unless a command explicitly says otherwise.
 

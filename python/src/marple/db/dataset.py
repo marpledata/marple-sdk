@@ -3,16 +3,14 @@ import time
 import warnings
 from collections import UserList
 from pathlib import Path
-from typing import Callable, Iterable, Literal, Optional, Sequence
+from typing import Callable, Iterable, Literal, Optional
 from urllib import parse, request
 
 import pandas as pd
 from pandas._typing import AggFuncType, Frequency
-from pydantic import BaseModel, ConfigDict, Field, PrivateAttr
-from pydantic import ValidationError
-import pyarrow.parquet as pq
-from marple.db.constants import COL_TIME, COL_VAL
+from pydantic import BaseModel, ConfigDict, Field, PrivateAttr, ValidationError
 
+from marple.db.constants import COL_VAL
 from marple.db.signal import Signal
 from marple.utils import DBClient, validate_response
 
@@ -67,7 +65,9 @@ class Dataset(BaseModel):
         self._client = client
 
     @classmethod
-    def fetch(cls, client: DBClient, dataset_id: int | None = None, dataset_path: str | None = None) -> "Dataset":
+    def fetch(
+        cls, client: DBClient, dataset_id: int | None = None, dataset_path: str | None = None
+    ) -> "Dataset":
         """
         Fetch a dataset by its ID or path.
 
@@ -130,24 +130,24 @@ class Dataset(BaseModel):
         """
         if signal_names is None:
             return self._get_all_signals()
-        signals = self._client.find_matching_signals(signal_names)
-        if len(signals) == 0:
+        signal_ids = self._client.find_matching_signals(signal_names)
+        if len(signal_ids) == 0:
             return []
 
         r = self._client.get(
             f"/stream/{self.datastream_id}/dataset/{self.id}/signals",
-            params={"signal_ids": list(signals.values())},
+            params={"signal_ids": list(signal_ids.values())},
         )
-        signals = []
+        result: list[Signal] = []
         for response in validate_response(r, "Failed to get signals by name"):
             try:
                 signal = Signal(self._client, self.datastream_id, self.id, **response)
-                signals.append(signal)
+                result.append(signal)
             except ValidationError as e:
                 warnings.warn(f"Failed to create signal {response['name']} (id {response['id']}): {e}")
                 continue
             self._signals[signal.id] = signal
-        return signals
+        return result
 
     def get_data(
         self,
@@ -285,7 +285,9 @@ class DatasetList(UserList[Dataset]):
             try:
                 dataset = Dataset(client=client, **value)
             except ValidationError as e:
-                warnings.warn(f"Failed to create dataset with id {value.get('id')} and path {value.get('path')}: {e}")
+                warnings.warn(
+                    f"Failed to create dataset with id {value.get('id')} and path {value.get('path')}: {e}"
+                )
                 continue
             datasets.append(dataset)
         return cls(datasets)
@@ -296,7 +298,9 @@ class DatasetList(UserList[Dataset]):
         """
         return self.where(lambda d: d.import_status == "FINISHED")
 
-    def where_metadata(self, metadata: dict[str, int | str | Iterable[int | str]] | None = None) -> "DatasetList":
+    def where_metadata(
+        self, metadata: dict[str, int | str | Iterable[int | str]] | None = None
+    ) -> "DatasetList":
         """
         Filter datasets by their metadata fields.
 

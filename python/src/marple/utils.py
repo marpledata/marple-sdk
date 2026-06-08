@@ -3,11 +3,14 @@ from pathlib import Path
 from typing import Iterable, Literal
 from urllib import parse, request
 
-import marple
 import pandas as pd
 import pyarrow as pa
 import pyarrow.parquet as pq
 import requests
+from requests.adapters import HTTPAdapter
+from urllib3.util.retry import Retry
+
+import marple
 from marple.db.constants import (
     COL_TIME,
     COL_VAL,
@@ -15,8 +18,6 @@ from marple.db.constants import (
     COL_VAL_TEXT,
     COL_VAL_TEXT_IDX,
 )
-from requests.adapters import HTTPAdapter
-from urllib3.util.retry import Retry
 
 
 def validate_response(response: requests.Response, failure_message: str) -> dict:
@@ -173,7 +174,9 @@ class DBClient:
                 pa.field(COL_VAL, pa.float64()) if dtype == "numeric" else pa.field(COL_VAL_TEXT, pa.string()),
             ]
         )
-        df = pd.read_parquet(self.cache_parquet(dataset_id, signal_id, refresh_cache), engine="pyarrow", schema=schema)
+        df = pd.read_parquet(
+            self.cache_parquet(dataset_id, signal_id, refresh_cache), engine="pyarrow", schema=schema
+        )
         df = df.rename(columns={COL_VAL_TEXT: COL_VAL}).set_index(COL_TIME)
         if df.index.min() > 1e17:
             df.index = pd.to_datetime(df.index, unit="ns")

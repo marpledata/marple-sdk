@@ -56,12 +56,32 @@ explicit = true
 
 [dependency-groups]
 dev = [
+    "black>=24.2.0",
+    "flake8>=7.0.0",
     "h5py>=3.15.1",
+    "isort>=5.13.2",
+    "mypy>=1.8.0",
     "pytest>=9.0.2",
     "pytest-cov>=7.0.0",
+    "types-requests>=2.32.0",
 ]
 docs = [
   "autodoc-pydantic>=2.2.0",
   "pydata-sphinx-theme>=0.15.4",
   "sphinx>=7.2.6",
 ]
+
+[tool.black]
+line-length = 113
+target-version = ["py311"]
+
+[tool.isort]
+profile = "black"
+src_paths = ["src", "tests"]
+
+[tool.mypy]
+mypy_path = "src"
+files = ["src/marple", "tests"]
+ignore_missing_imports = true
+allow_untyped_globals = true
+explicit_package_bases = true
