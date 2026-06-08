@@ -44,12 +44,15 @@ Only once on your laptop
   - `username: __token__`
   - `password: pypi-XXXXXXXXXXXXXXXXXXXXXXXXXXXX` (see 1Password)
 
-For every build
+### Publishing Production
 
+- Delete `./dist` folder
 - `uv version x.y.z.devi`
 - bump version in `__version__` variable
 - `uv build`
-- `uv publish --index testpypi`
+- `uv publish`
+  - `username: __token__`
+  - `password: pypi-XXXXXXXXXXXXXXXXXXXXXXXXXXXX` (see 1Password)
 
 **Versioning**
 
