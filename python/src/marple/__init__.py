@@ -3,4 +3,4 @@ from .db import DB
 from .insight import Insight
 
 __all__ = ["DB", "Insight", "db"]
-__version__ = "3.2.2"
+__version__ = "3.2.3"

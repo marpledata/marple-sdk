@@ -55,10 +55,6 @@ For every build
 
 To ensure pip correctly updates our package, correct versioning is important. Use `major.minor.patch`
 
-- `major` when they make incompatible API changes
-- `minor` when they add functionality in a backwards-compatible manner
-- `patch` when they make backwards-compatible bug fixes
-
 **Recommended test workflow**
 
 - Publish to test Pypi
