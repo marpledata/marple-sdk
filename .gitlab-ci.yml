@@ -40,16 +40,10 @@ pytest:
       - python/coverage.xml
   coverage: '/TOTAL\s+\d+\s+\d+\s+(\d+%)/'
   rules:
-    - if: '$CI_COMMIT_BRANCH == $CI_DEFAULT_BRANCH'
-      changes:
-        - python/**/*
-        - test_data/**/*
     - if: $CI_COMMIT_BRANCH
       changes:
         - python/**/*
         - test_data/**/*
-      when: manual
-      allow_failure: true
 
 python:lint:
   image: python:3.11
@@ -64,14 +58,9 @@ python:lint:
     - /root/.local/bin/uv run flake8 --config .flake8 src tests
     - /root/.local/bin/uv run black --check src tests
   rules:
-    - if: '$CI_COMMIT_BRANCH == $CI_DEFAULT_BRANCH'
-      changes:
-        - python/**/*
     - if: $CI_COMMIT_BRANCH
       changes:
         - python/**/*
-      when: manual
-      allow_failure: true
 
 python:typing:
   image: python:3.11
@@ -84,14 +73,9 @@ python:typing:
     - cd python
     - /root/.local/bin/uv run mypy --install-types --non-interactive
   rules:
-    - if: '$CI_COMMIT_BRANCH == $CI_DEFAULT_BRANCH'
-      changes:
-        - python/**/*
     - if: $CI_COMMIT_BRANCH
       changes:
         - python/**/*
-      when: manual
-      allow_failure: true
 
 rust:workspace:
   image: rust:1.93
