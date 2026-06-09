@@ -272,7 +272,7 @@ def test_db_get_parquet(example_dataset: Dataset) -> None:
 
 
 @contextmanager
-def _realtime_test_stream(db: DB):
+def _realtime_test_stream(db: DB) -> Generator[DataStream, None, None]:
     for stream in db.get_streams():
         if stream.name.startswith(REALTIME_TEST_PREFIX):
             db.delete_stream(stream.id)
