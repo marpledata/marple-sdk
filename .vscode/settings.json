@@ -4,6 +4,10 @@
     ],
     "python.testing.pytestEnabled": true,
     "python.testing.unittestEnabled": false,
+    "python.analysis.extraPaths": [
+        "python/src"
+    ],
+    "python.defaultInterpreterPath": "python/.venv/bin/python",
     "files.watcherExclude": {
         "python/.mdb_cache/**": true
     },
