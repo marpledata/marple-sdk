@@ -1,66 +1,25 @@
-import os
 import random
 import re
 import time
-from collections.abc import Generator
 from contextlib import contextmanager
 from datetime import datetime
 from pathlib import Path
 from tempfile import TemporaryDirectory
 from typing import Literal
 
-import dotenv
 import pandas as pd
 import pyarrow.parquet as pq
 import pytest
-from h5py import File
 from requests import HTTPError
 
 import marple
-from marple import DB, Insight
+from marple import DB
 from marple.db import Dataset, DataStream
+from support import EXAMPLE_CSV, ingest_dataset
 
-EXAMPLE_CSV = Path(__file__).parents[2] / "test_data" / "examples_race.csv"
 PYTHON_UPLOAD_TEST_PREFIX = "Salty Compulsory PytestUpload"
 MIB = 1024 * 1024
 MULTIPART_THRESHOLD = 128 * MIB
-
-
-dotenv.load_dotenv()
-
-
-def _required_env(name: str) -> str:
-    value = os.getenv(name)
-    if value is None:
-        pytest.fail(f"Missing env var {name}; skipping integration test.")
-    return value
-
-
-@pytest.fixture()
-def db() -> DB:
-    url = os.getenv("MDB_URL", marple.db.SAAS_URL)
-    assert url is not None
-    return DB(_required_env("MDB_TOKEN"), url)
-
-
-@pytest.fixture(scope="session")
-def insight() -> Insight:
-    url = os.getenv("INSIGHT_URL", marple.insight.SAAS_URL)
-    assert url is not None
-    return Insight(_required_env("INSIGHT_TOKEN"), api_url=url)
-
-
-def _ingest_dataset(stream: DataStream, metadata: dict | None = None) -> Dataset:
-    file_name = f"pytest-sdk-{datetime.now().strftime('%Y-%m-%d-%H-%M-%S')}.csv"
-    return stream.push_file(
-        str(EXAMPLE_CSV),
-        metadata={
-            "source": "pytest:test_db.py",
-            "sdk_version": marple.__version__,
-        }
-        | (metadata or {}),
-        file_name=file_name,
-    ).wait_for_import()
 
 
 def _cleanup_upload_test_streams(db: DB) -> None:
@@ -119,23 +78,6 @@ def _push_and_assert_upload(
     return dataset
 
 
-@pytest.fixture(scope="session")
-def example_stream() -> Generator[DataStream, None, None]:
-    url = os.getenv("MDB_URL", marple.db.SAAS_URL)
-    assert url is not None
-    session_db = DB(_required_env("MDB_TOKEN"), url)
-
-    name = "Salty Compulsory Pytest " + datetime.now().isoformat()
-    yield session_db.create_stream(name)
-    print("Cleaning up stream...")
-    session_db.delete_stream(name)  # optional cleanup
-
-
-@pytest.fixture()
-def example_dataset(example_stream: DataStream) -> Dataset:
-    return _ingest_dataset(example_stream, metadata={"A": 1, "B": 1})
-
-
 def test_db_check_connection(db: DB) -> None:
     assert db.check_connection() is True
     with pytest.raises(Exception, match="Invalid API token"):
@@ -152,9 +94,9 @@ def test_db_get_streams_and_datasets(db: DB, example_stream: DataStream) -> None
 
 def test_db_filter_datasets(example_stream: DataStream) -> None:
     n_datasets = 3
-    dataset_1 = _ingest_dataset(example_stream, metadata={"A": 1, "B": 1})
-    _ingest_dataset(example_stream, metadata={"A": 1, "B": 2})
-    _ingest_dataset(example_stream, metadata={"A": 4, "B": 3})
+    dataset_1 = ingest_dataset(example_stream, metadata={"A": 1, "B": 1})
+    ingest_dataset(example_stream, metadata={"A": 1, "B": 2})
+    ingest_dataset(example_stream, metadata={"A": 4, "B": 3})
     all_datasets = example_stream.get_datasets()
 
     datasets_a1 = all_datasets.where_metadata({"A": 1})
@@ -326,31 +268,3 @@ def test_db_get_parquet(example_dataset: Dataset) -> None:
     table = pq.ParquetDataset(signal.cache_parquet()).read()
     assert table.column_names == ["dataset", "signal", "time", "value", "value_text"]
     assert table.num_rows == 12500
-
-
-@pytest.fixture()
-def insight_dataset(insight: Insight, example_dataset: Dataset):
-    yield insight.get_dataset_mdb(example_dataset.id)
-
-
-def test_insight_mdb_signals(insight: Insight, example_dataset: Dataset) -> None:
-    signals = insight.get_signals_mdb(example_dataset.id)
-    assert len(signals) > 0
-    assert "car.speed" in [signal["name"] for signal in signals]
-    assert "car.accel" in [signal["name"] for signal in signals]
-
-
-def test_insight_export(insight: Insight, insight_dataset: dict) -> None:
-    with TemporaryDirectory() as tmp_path:
-        file_path = insight.export_data(
-            insight_dataset["dataset_filter"],
-            format="h5",
-            signals=["car.speed"],
-            timestamp_stop=int(1e9),
-            destination=tmp_path,
-        )
-        assert Path(file_path).exists()
-        with File(file_path, "r") as f:
-            assert "car.speed" in f
-            assert "car.accel" not in f
-            assert len(f["car.speed"]["time"][:]) == 10
