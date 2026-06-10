@@ -128,7 +128,7 @@ classdef DB
       end
 
       % If we get here, stream wasn't found
-      available_names = strjoin(arrayfun(@(s) s.name, obj.streams, 'UniformOutput', false), ', ');
+      available_names = strjoin(cellfun(@(s) s.name, obj.streams, 'UniformOutput', false), ', ');
       error('Stream "%s" not found. Available streams are: %s', stream_name, available_names);
     end
 
@@ -161,8 +161,14 @@ classdef DB
       endpoint = '/streams';
       response = obj.make_request('GET', endpoint);
       % actual data is nested in this key
-      obj.streams = response.streams;
-      streams = obj.streams;
+      streams = response.streams;
+      % jsondecode returns a struct array when all stream objects have
+      % identical fields, but a cell array when they don't. Normalize to
+      % a cell array so consumers only have to handle one shape.
+      if isstruct(streams)
+        streams = num2cell(streams);
+      end
+      obj.streams = streams;
     end
 
     function datasets = get_datasets(obj, stream_name)
