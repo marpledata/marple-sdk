@@ -121,8 +121,8 @@ classdef DB
 
     function stream_id = find_stream_id(obj, stream_name)
       for i = 1:length(obj.streams)
-        if strcmpi(obj.streams(i).name, stream_name)
-          stream_id = obj.streams(i).id;
+        if strcmpi(obj.streams{i}.name, stream_name)
+          stream_id = obj.streams{i}.id;
           return;
         end
       end
