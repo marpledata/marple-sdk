@@ -13,12 +13,13 @@ specific `AGENTS.md` files in subdirectories override or extend this guidance.
   workspace.
 - `matlab/`: MATLAB DB client, example script, and local configuration.
 - `test_data/`: shared fixtures used by Python and Rust tests.
-- `.gitlab-ci.yml`: GitLab CI for Python tests, Rust tests, manual release
-  builds, and docs publishing.
+- `.gitlab-ci.yml`: GitLab CI for Python tests, lint, typing, Rust tests, manual
+  release builds, and docs publishing.
 
 ## Common Commands
 
 - Python tests: `cd python && uv run pytest -v`
+- Python lint/format/types: `cd python && uv run isort src tests --check --diff && uv run flake8 --config .flake8 src tests && uv run black --check src tests && uv run mypy --install-types --non-interactive`
 - Python docs: `cd python && uv run --group docs sphinx-build -b html docs docs/_build/html`
 - Rust workspace tests: `cd rust && cargo test --workspace --locked`
 - Rust workspace examples: `cd rust && cargo build --workspace --examples --locked`

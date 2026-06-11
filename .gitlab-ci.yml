@@ -18,7 +18,7 @@ cache:
     - .cache/uv
     - python/.venv/
 
-pytest:
+python:quality:
   image: python:3.11
   stage: test
   before_script:
@@ -27,6 +27,10 @@ pytest:
     - /root/.local/bin/uv --version
   script:
     - cd python
+    - /root/.local/bin/uv run isort src tests --check --diff
+    - /root/.local/bin/uv run flake8 --config .flake8 src tests
+    - /root/.local/bin/uv run black --check src tests
+    - /root/.local/bin/uv run mypy --install-types --non-interactive
     - /root/.local/bin/uv run pytest -v --junitxml=pytest.xml --cov=marple --cov-report=term-missing --cov-report=xml:coverage.xml
   artifacts:
     when: always
@@ -40,16 +44,10 @@ pytest:
       - python/coverage.xml
   coverage: '/TOTAL\s+\d+\s+\d+\s+(\d+%)/'
   rules:
-    - if: '$CI_COMMIT_BRANCH == $CI_DEFAULT_BRANCH'
-      changes:
-        - python/**/*
-        - test_data/**/*
     - if: $CI_COMMIT_BRANCH
       changes:
         - python/**/*
         - test_data/**/*
-      when: manual
-      allow_failure: true
 
 rust:workspace:
   image: rust:1.93

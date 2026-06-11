@@ -1,11 +1,10 @@
+from pathlib import Path
 from typing import Literal
 
+import pandas as pd
 from pydantic import BaseModel, PrivateAttr
 
 from marple.utils import DBClient
-
-from pathlib import Path
-import pandas as pd
 
 
 class Signal(BaseModel):
@@ -67,7 +66,9 @@ class Signal(BaseModel):
         """
         return self._client.list_parquet_files(self.dataset_id, self.id, refresh_cache)
 
-    def get_data(self, dtype: Literal["numeric", "text"] | None = None, refresh_cache: bool = False) -> pd.DataFrame:
+    def get_data(
+        self, dtype: Literal["numeric", "text"] | None = None, refresh_cache: bool = False
+    ) -> pd.DataFrame:
         """
         Get this signal's raw data as a pandas DataFrame.
 

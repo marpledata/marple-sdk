@@ -4,9 +4,10 @@ from http.server import BaseHTTPRequestHandler, HTTPServer
 from threading import Thread
 
 import pytest
-from marple.utils import DBClient
 from requests import Response
 from requests.adapters import HTTPAdapter
+
+from marple.utils import DBClient
 
 
 @contextmanager
@@ -41,8 +42,9 @@ def retry_test_server(statuses: list[int]) -> Iterator[tuple[str, dict[str, int]
     thread.start()
 
     try:
-        host, port = server.server_address
-        yield f"http://{host}:{port}", calls
+        addr = server.server_address
+        assert addr is not None
+        yield f"http://{str(addr[0])}:{addr[1]}", calls
     finally:
         server.shutdown()
         thread.join()
