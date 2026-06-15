@@ -5,7 +5,7 @@ from contextlib import contextmanager
 from datetime import datetime
 from pathlib import Path
 from tempfile import TemporaryDirectory
-from typing import Literal
+from typing import Generator, Literal
 
 import pandas as pd
 import pyarrow.parquet as pq
