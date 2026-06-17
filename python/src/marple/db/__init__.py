@@ -366,7 +366,7 @@ class DB:
         Returns the ID of the newly created dataset.
 
         Use `dataset_append` to add data to the dataset and `upsert_signals` to define signals.
-        Use `get_dataset(dataset_id).cool()` to finalize the dataset when done.
+        Use `cool` to finalize the dataset when done.
 
         To add datasets from a file to a file stream, use `push_file` instead.
         """
@@ -408,3 +408,18 @@ class DB:
 
         """
         self.get_dataset(dataset_id=dataset_id).append(data, shape)
+
+    def cool(self, stream_key: str | int, dataset_id: int) -> Dataset:
+        """
+        Move all realtime data to cold storage and finalize a realtime dataset.
+
+        Cooling is started asynchronously on the server. Poll completion with
+        `Dataset.wait_for_import`.
+
+        Only realtime datasets in LIVE or COOLING_FAILED status can be cooled. After
+        cooling completes, the dataset no longer accepts appends and
+        `import_status` becomes FINISHED.
+
+        Returns the current dataset state (typically `import_status == "COOLING"`).
+        """
+        return self.get_dataset(dataset_id=dataset_id).cool()
