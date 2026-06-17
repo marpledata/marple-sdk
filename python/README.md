@@ -147,9 +147,10 @@ if len(datasets) > 0:
 
 For live/realtime streams (creating and appending data):
 
-- **Create an empty dataset**: `db.add_dataset(stream_key, dataset_name, metadata=None)`
-- **Upsert signal definitions**: `db.upsert_signals(stream_key, dataset_id, signals=[...])`
-- **Append timeseries data**: `db.dataset_append(stream_key, dataset_id, data=df, shape="long"|"wide"|None)`
+- **Create an empty dataset**: `stream.add_dataset(dataset_name, metadata=None)`
+- **Upsert signal definitions**: `dataset.upsert_signals(signals=[...])`
+- **Append timeseries data**: `dataset.append(data=df, shape="long"|"wide"|None)`
+- **Cool a realtime dataset**: `dataset.cool()` then `dataset.wait_for_import()` to wait until `FINISHED`
 
 ### Calling endpoints directly
 

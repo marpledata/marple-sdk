@@ -9,7 +9,7 @@ EXAMPLE_CSV = Path(__file__).parents[2] / "test_data" / "examples_race.csv"
 
 def ingest_dataset(stream: DataStream, metadata: dict | None = None) -> Dataset:
     file_name = f"pytest-sdk-{datetime.now().strftime('%Y-%m-%d-%H-%M-%S')}.csv"
-    return stream.push_file(
+    dataset = stream.push_file(
         str(EXAMPLE_CSV),
         metadata={
             "source": "pytest:test_db.py",
@@ -17,4 +17,8 @@ def ingest_dataset(stream: DataStream, metadata: dict | None = None) -> Dataset:
         }
         | (metadata or {}),
         file_name=file_name,
-    ).wait_for_import()
+    ).wait_for_import(timeout=180)
+    assert (
+        dataset.import_status == "FINISHED"
+    ), f"Dataset {dataset.id} did not finish importing (status: {dataset.import_status})"
+    return dataset

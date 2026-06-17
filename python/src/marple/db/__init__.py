@@ -1,25 +1,14 @@
 import warnings
 from functools import wraps
-from io import BytesIO
 from pathlib import Path
 from typing import Literal, Optional
 
-import numpy as np
 import pandas as pd
-import pyarrow as pa
-import pyarrow.parquet as pq
 from pydantic import ValidationError
 from requests import Response
 from requests.exceptions import ConnectionError
 
-from marple.db.constants import (
-    COL_SIG,
-    COL_TIME,
-    COL_VAL,
-    COL_VAL_TEXT,
-    SAAS_URL,
-    SCHEMA,
-)
+from marple.db.constants import SAAS_URL, SCHEMA
 from marple.db.dataset import Dataset, DatasetList
 from marple.db.datastream import DataStream
 from marple.db.signal import Signal
@@ -377,17 +366,11 @@ class DB:
         Returns the ID of the newly created dataset.
 
         Use `dataset_append` to add data to the dataset and `upsert_signals` to define signals.
+        Use `cool` to finalize the dataset when done.
 
         To add datasets from a file to a file stream, use `push_file` instead.
         """
-        stream_id = self._get_stream_id(stream_key)
-        r = self.post(
-            f"/stream/{stream_id}/dataset/add",
-            json={"dataset_name": dataset_name, "metadata": metadata or {}},
-        )
-        r_json = validate_response(r, "Add dataset failed")
-
-        return r_json["dataset_id"]
+        return self.get_stream(stream_key).add_dataset(dataset_name, metadata).id
 
     def upsert_signals(self, stream_key: str | int, dataset_id: int, signals: list[dict]) -> None:
         """
@@ -399,10 +382,7 @@ class DB:
         - `description`: (optional) Description of the signal
         - `[any metadata key]`: (optional) Any metadata value
         """
-        stream_id = self._get_stream_id(stream_key)
-
-        r = self.post(f"/stream/{stream_id}/dataset/{dataset_id}/signals", json=signals)
-        validate_response(r, "Upsert signals failed")
+        self.get_dataset(dataset_id=dataset_id).upsert_signals(signals)
 
     def dataset_append(
         self,
@@ -427,66 +407,19 @@ class DB:
         - `"wide"` format: Each row represents a single time point with multiple signals as columns. Expects at least a `time` column.
 
         """
-        stream_id = self._get_stream_id(stream_key)
+        self.get_dataset(dataset_id=dataset_id).append(data, shape)
 
-        if self._detect_shape(shape, data) == "wide":
-            if COL_TIME not in data.columns:
-                raise ValueError("DataFrame must contain a time column")
-            table = _wide_to_long(data)
-        else:
-            if COL_TIME not in data.columns or COL_SIG not in data.columns:
-                raise Exception(f"DataFrame must contain {COL_TIME} and {COL_SIG} columns")
-            if not (COL_VAL in data.columns or COL_VAL_TEXT in data.columns):
-                raise Exception(f"DataFrame must contain at least one of {COL_VAL} or {COL_VAL_TEXT} columns")
-            value = (
-                pd.to_numeric(data[COL_VAL], errors="coerce") if COL_VAL in data.columns else pa.nulls(len(data))
-            )
-            value_text = data[COL_VAL_TEXT] if COL_VAL_TEXT in data.columns else pa.nulls(len(data))
-            table = pa.Table.from_arrays([data[COL_TIME], data[COL_SIG], value, value_text], schema=SCHEMA)
+    def cool(self, stream_key: str | int, dataset_id: int) -> Dataset:
+        """
+        Move all realtime data to cold storage and finalize a realtime dataset.
 
-        parquet_buffer = BytesIO()
-        pq.write_table(table, parquet_buffer)
-        parquet_buffer.seek(0)
+        Cooling is started asynchronously on the server. Poll completion with
+        `Dataset.wait_for_import`.
 
-        # Send as multipart/form-data
-        files = {"file": ("data.parquet", parquet_buffer, "application/octet-stream")}
+        Only realtime datasets in LIVE or COOLING_FAILED status can be cooled. After
+        cooling completes, the dataset no longer accepts appends and
+        `import_status` becomes FINISHED.
 
-        r = self.post(f"/stream/{stream_id}/dataset/{dataset_id}/append", files=files)
-        validate_response(r, "Append data failed")
-
-    # Internal functions #
-
-    @staticmethod
-    def _detect_shape(shape: Optional[Literal["long", "wide"]], df: pd.DataFrame) -> Literal["long", "wide"]:
-        if shape is not None:
-            return shape
-
-        if "signal" in df.columns and ((COL_VAL in df.columns) or (COL_VAL_TEXT in df.columns)):
-            return "long"
-        else:
-            return "wide"
-
-
-def _wide_to_long(df: pd.DataFrame) -> pa.Table:
-    signals = []
-    time = pa.array(df[COL_TIME], type=pa.int64())
-    for col in df.columns:
-        if col == COL_TIME:
-            continue
-        if (numeric_col := _to_numeric(df[col])) is not None:
-            value_arr = numeric_col.to_numpy().astype(np.float64)
-            value_text = pa.nulls(len(time))
-        else:
-            value_arr = pa.nulls(len(time))
-            value_text = df[col].fillna("").to_numpy().astype(str)
-        signals.append(pa.Table.from_arrays([time, [col] * len(time), value_arr, value_text], schema=SCHEMA))
-    return pa.concat_tables(signals)
-
-
-def _to_numeric(col: pd.Series) -> pd.Series | None:
-    if pd.api.types.is_numeric_dtype(col.dtype):
-        return col
-    null_count = col.isnull().sum()
-    numeric_col = pd.to_numeric(col, errors="coerce")
-    is_numeric = (numeric_col.isnull().sum() - null_count) / max(len(col), 1) < 0.2
-    return numeric_col if is_numeric else None
+        Returns the current dataset state (typically `import_status == "COOLING"`).
+        """
+        return self.get_dataset(dataset_id=dataset_id).cool()

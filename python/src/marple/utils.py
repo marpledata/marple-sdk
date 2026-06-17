@@ -24,7 +24,11 @@ def validate_response(response: requests.Response, failure_message: str) -> dict
     if response.status_code == 400:
         raise ValueError(f"{failure_message}: Bad request. {response.json().get('error', 'Unknown error')}")
     if response.status_code == 403:
-        raise ValueError(f"{failure_message}: Invalid token.")
+        try:
+            detail = response.json().get("error", "Invalid or insufficient token.")
+        except Exception:
+            detail = "Invalid or insufficient token."
+        raise ValueError(f"{failure_message}: {detail}")
     if response.status_code == 405:
         raise ValueError(f"{failure_message}: Method not allowed.")
     if response.status_code == 500:

@@ -78,6 +78,22 @@ class DataStream(BaseModel):
         r = self._client.get(f"/stream/{self.id}/datasets")
         return DatasetList.from_dicts(self._client, validate_response(r, "Get datasets failed"))
 
+    def add_dataset(self, dataset_name: str, metadata: dict | None = None) -> Dataset:
+        """
+        Create a new empty dataset in this realtime stream.
+
+        Use :meth:`~marple.db.dataset.Dataset.append` to add data and
+        :meth:`~marple.db.dataset.Dataset.cool` to finalize the dataset.
+
+        To add datasets from a file to a file stream, use :meth:`push_file` instead.
+        """
+        r = self._client.post(
+            f"/stream/{self.id}/dataset/add",
+            json={"dataset_name": dataset_name, "metadata": metadata or {}},
+        )
+        r_json = validate_response(r, "Add dataset failed")
+        return self.get_dataset(r_json["dataset_id"])
+
     def push_file(
         self,
         file_path: str,

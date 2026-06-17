@@ -2,15 +2,19 @@ import re
 import time
 import warnings
 from collections import UserList
+from io import BytesIO
 from pathlib import Path
 from typing import Callable, Iterable, Literal, Optional
 from urllib import parse, request
 
+import numpy as np
 import pandas as pd
+import pyarrow as pa
+import pyarrow.parquet as pq
 from pandas._typing import AggFuncType, Frequency
 from pydantic import BaseModel, ConfigDict, Field, PrivateAttr, ValidationError
 
-from marple.db.constants import COL_VAL
+from marple.db.constants import COL_SIG, COL_TIME, COL_VAL, COL_VAL_TEXT, SCHEMA
 from marple.db.signal import Signal
 from marple.utils import DBClient, validate_response
 
@@ -19,6 +23,7 @@ BUSY_STATUSES = [
     "IMPORTING",
     "POST_PROCESSING",
     "UPDATING_ICEBERG",
+    "COOLING",
 ]
 
 
@@ -236,12 +241,90 @@ class Dataset(BaseModel):
         validate_response(r, "Update metadata failed")
         return self.fetch(self._client, self.id)
 
+    def upsert_signals(self, signals: list[dict]) -> None:
+        """
+        Add signals to this dataset or update existing ones.
+
+        Each signal in the `signals` list should be a dictionary with the following keys:
+        - `signal`: Name of the signal
+        - `unit`: (optional) Unit of the signal
+        - `description`: (optional) Description of the signal
+        - `[any metadata key]`: (optional) Any metadata value
+        """
+        r = self._client.post(f"/stream/{self.datastream_id}/dataset/{self.id}/signals", json=signals)
+        validate_response(r, "Upsert signals failed")
+
+    def append(
+        self,
+        data: pd.DataFrame,
+        shape: Optional[Literal["wide", "long"]] = None,
+    ) -> None:
+        """
+        Append new data to this realtime dataset.
+
+        `data` is a DataFrame with the following columns. It can be in either "long"
+        or "wide" format. If `shape` is not specified, the format is automatically
+        detected:
+
+        - `"long"` format: Each row represents a single measurement for a single signal
+          at a specific time. Expects `time`, `signal`, and at least one of `value` or
+          `value_text`.
+        - `"wide"` format: Each row represents a single time point with multiple signals
+          as columns. Expects at least a `time` column.
+        """
+        if _detect_shape(shape, data) == "wide":
+            if COL_TIME not in data.columns:
+                raise ValueError("DataFrame must contain a time column")
+            table = _wide_to_long(data)
+        else:
+            if COL_TIME not in data.columns or COL_SIG not in data.columns:
+                raise ValueError(f"DataFrame must contain {COL_TIME} and {COL_SIG} columns")
+            if not (COL_VAL in data.columns or COL_VAL_TEXT in data.columns):
+                raise ValueError(f"DataFrame must contain at least one of {COL_VAL} or {COL_VAL_TEXT} columns")
+            value = (
+                pd.to_numeric(data[COL_VAL], errors="coerce") if COL_VAL in data.columns else pa.nulls(len(data))
+            )
+            value_text = data[COL_VAL_TEXT] if COL_VAL_TEXT in data.columns else pa.nulls(len(data))
+            table = pa.Table.from_arrays([data[COL_TIME], data[COL_SIG], value, value_text], schema=SCHEMA)
+
+        parquet_buffer = BytesIO()
+        pq.write_table(table, parquet_buffer)
+        parquet_buffer.seek(0)
+
+        files = {"file": ("data.parquet", parquet_buffer, "application/octet-stream")}
+        r = self._client.post(f"/stream/{self.datastream_id}/dataset/{self.id}/append", files=files)
+        validate_response(r, "Append data failed")
+
+    def cool(self) -> "Dataset":
+        """
+        Move all hot data to cold storage and finalize this realtime dataset.
+
+        Cooling is started asynchronously on the server. Poll completion with
+        :meth:`wait_for_import`.
+
+        Only datasets in LIVE or COOLING_FAILED status can be cooled.
+        After cooling completes, the dataset no longer accepts appends and
+        ``import_status`` becomes FINISHED.
+
+        Returns:
+            The current dataset state (typically ``import_status == "COOLING"``).
+        """
+        if self.import_status not in ("LIVE", "COOLING_FAILED"):
+            raise ValueError(f"Dataset {self.id} cannot be cooled (status: {self.import_status})")
+
+        r = self._client.post(f"/stream/{self.datastream_id}/dataset/{self.id}/cool")
+        validate_response(r, "Cool dataset failed")
+        return self.fetch(self._client, self.id)
+
     def wait_for_import(self, timeout: float = 60, force_fetch: bool = False) -> "Dataset":
         """
-        Wait for the dataset import to complete.
+        Wait for the dataset import or cooling to complete.
 
-        If the dataset is still in a busy status (WAITING, IMPORTING, POST_PROCESSING, UPDATING_ICEBERG) after the timeout, a warning is issued and the current dataset information is returned.
-        If `force_fetch` is True, the import status is fetched at least once even if the dataset is not in a busy status, to ensure the latest status is returned.
+        If the dataset is still in a busy status (WAITING, IMPORTING, POST_PROCESSING,
+        UPDATING_ICEBERG, COOLING) after the timeout, a warning is issued and the current
+        dataset information is returned.
+        If `force_fetch` is True, the import status is fetched at least once even if the
+        dataset is not in a busy status, to ensure the latest status is returned.
         """
         if not (force_fetch or self.import_status in BUSY_STATUSES):
             return self
@@ -514,3 +597,37 @@ class DatasetList(UserList[Dataset]):
             index=False,
         )
         return f"{df_str}\nDatasetList with {len(self.data)} datasets and {len(df.columns) - 5} unique metadata fields."
+
+
+def _detect_shape(shape: Optional[Literal["long", "wide"]], df: pd.DataFrame) -> Literal["long", "wide"]:
+    if shape is not None:
+        return shape
+
+    if "signal" in df.columns and ((COL_VAL in df.columns) or (COL_VAL_TEXT in df.columns)):
+        return "long"
+    return "wide"
+
+
+def _wide_to_long(df: pd.DataFrame) -> pa.Table:
+    signals = []
+    time = pa.array(df[COL_TIME], type=pa.int64())
+    for col in df.columns:
+        if col == COL_TIME:
+            continue
+        if (numeric_col := _to_numeric(df[col])) is not None:
+            value_arr = numeric_col.to_numpy().astype(np.float64)
+            value_text = pa.nulls(len(time))
+        else:
+            value_arr = pa.nulls(len(time))
+            value_text = df[col].fillna("").to_numpy().astype(str)
+        signals.append(pa.Table.from_arrays([time, [col] * len(time), value_arr, value_text], schema=SCHEMA))
+    return pa.concat_tables(signals)
+
+
+def _to_numeric(col: pd.Series) -> pd.Series | None:
+    if pd.api.types.is_numeric_dtype(col.dtype):
+        return col
+    null_count = col.isnull().sum()
+    numeric_col = pd.to_numeric(col, errors="coerce")
+    is_numeric = (numeric_col.isnull().sum() - null_count) / max(len(col), 1) < 0.2
+    return numeric_col if is_numeric else None
