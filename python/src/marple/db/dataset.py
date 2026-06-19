@@ -297,7 +297,7 @@ class Dataset(BaseModel):
 
     def cool(self) -> "Dataset":
         """
-        Move all hot data to cold storage and finalize this realtime dataset.
+        Move all realtime data to cold storage and finalize this realtime dataset.
 
         Cooling is started asynchronously on the server. Poll completion with
         :meth:`wait_for_import`.
