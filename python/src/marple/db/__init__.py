@@ -409,9 +409,9 @@ class DB:
         """
         self.get_dataset(dataset_id=dataset_id).append(data, shape)
 
-    def cool(self, stream_key: str | int, dataset_id: int) -> Dataset:
+    def dataset_cool(self, stream_key: str | int, dataset_id: int) -> Dataset:
         """
-        Move all realtime data to cold storage and finalize a realtime dataset.
+        Move all realtime data to cold storage and finalize the specified realtime dataset.
 
         Cooling is started asynchronously on the server. Poll completion with
         `Dataset.wait_for_import`.

@@ -123,6 +123,8 @@ fn format_import_status(status: ImportStatus) -> String {
         ImportStatus::Finished => "FINISHED",
         ImportStatus::Live => "LIVE",
         ImportStatus::Failed => "FAILED",
+        ImportStatus::Cooling => "COOLING",
+        ImportStatus::CoolingFailed => "COOLING_FAILED",
         _ => "?",
     }
     .to_string()

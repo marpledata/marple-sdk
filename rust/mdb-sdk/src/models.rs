@@ -95,6 +95,10 @@ pub enum ImportStatus {
     Live,
     /// Dataset import failed.
     Failed,
+    /// Realtime dataset cooling is in progress.
+    Cooling,
+    /// Realtime dataset cooling failed.
+    CoolingFailed,
 }
 
 /// Dataset metadata returned by the MarpleDB API.
