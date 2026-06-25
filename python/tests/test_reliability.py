@@ -4,10 +4,11 @@ from http.server import BaseHTTPRequestHandler, HTTPServer
 from threading import Thread
 
 import pytest
+import requests
 from requests import Response
 from requests.adapters import HTTPAdapter
 
-from marple.utils import DBClient
+from marple.utils import DBClient, TimeoutHTTPAdapter
 
 
 @contextmanager
@@ -68,24 +69,36 @@ def test_api_session_retries_retryable_get_status() -> None:
     assert calls["GET"] == 2
 
 
-def test_default_timeout_applied(monkeypatch: pytest.MonkeyPatch) -> None:
-    timeouts = []
+def test_sessions_use_configured_timeouts() -> None:
+    client = make_client()
 
-    def fake_send(self, request, **kwargs) -> Response:
-        timeouts.append(kwargs["timeout"])
+    api_adapter = client.session.get_adapter("http://example.test")
+    storage_adapter = client.storage_session.get_adapter("http://example.test")
+
+    assert isinstance(api_adapter, TimeoutHTTPAdapter)
+    assert isinstance(storage_adapter, TimeoutHTTPAdapter)
+    assert api_adapter.timeout == DBClient.API_TIMEOUT
+    assert storage_adapter.timeout == DBClient.STORAGE_TIMEOUT
+
+
+def test_timeout_http_adapter_applies_default(monkeypatch: pytest.MonkeyPatch) -> None:
+    seen: list[object] = []
+
+    def capture_send(self, request, **kwargs) -> Response:
+        seen.append(kwargs.get("timeout"))
         response = Response()
         response.status_code = 200
-        response.url = request.url
-        response._content = b"{}"
         return response
 
-    monkeypatch.setattr(HTTPAdapter, "send", fake_send)
+    monkeypatch.setattr(HTTPAdapter, "send", capture_send)
 
-    client = make_client()
-    client.get("/health")
-    client.get("/health", timeout=(1, 2))
+    adapter = TimeoutHTTPAdapter(timeout=DBClient.API_TIMEOUT)
+    request = requests.Request("GET", "http://example.test/health").prepare()
 
-    assert timeouts == [DBClient.DEFAULT_TIMEOUT, (1, 2)]
+    adapter.send(request)
+    adapter.send(request, timeout=(1, 2))
+
+    assert seen == [DBClient.API_TIMEOUT, (1, 2)]
 
 
 def test_storage_put_retries_retryable_status() -> None:

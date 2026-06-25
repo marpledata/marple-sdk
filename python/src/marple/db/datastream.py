@@ -153,7 +153,11 @@ class DataStream(BaseModel):
     def _upload_server(self, init: IngestionInit, path: Path) -> None:
         with path.open("rb") as file:
             files = {"file": (path.name, file, "application/octet-stream")}
-            r = self._client.post(f"/ingestion/{init.ingestion_id}/upload/server", files=files)
+            r = self._client.post(
+                f"/ingestion/{init.ingestion_id}/upload/server",
+                files=files,
+                timeout=self._client.STORAGE_TIMEOUT,
+            )
         validate_response(r, "Server upload failed")
 
     def _upload_azure(self, init: IngestionInit, path: Path, concurrency: int) -> None:

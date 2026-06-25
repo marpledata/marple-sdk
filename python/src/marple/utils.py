@@ -53,7 +53,31 @@ class TimeoutHTTPAdapter(HTTPAdapter):
 
 
 class DBClient:
-    DEFAULT_TIMEOUT = (5, 300)
+    API_TIMEOUT = (5, 300)
+    API_RETRY = Retry(
+        total=5,
+        connect=5,
+        read=2,
+        status=2,
+        backoff_factor=0.5,
+        status_forcelist=(429, 502, 503, 504),
+        allowed_methods=frozenset({"GET", "HEAD", "OPTIONS", "DELETE"}),
+        respect_retry_after_header=True,
+        raise_on_status=False,
+    )
+
+    STORAGE_TIMEOUT = 1800
+    STORAGE_RETRY = Retry(
+        total=5,
+        connect=5,
+        read=5,
+        status=5,
+        backoff_factor=0.5,
+        status_forcelist=(429, 500, 502, 503, 504),
+        allowed_methods=frozenset({"PUT", "GET", "HEAD"}),
+        respect_retry_after_header=True,
+        raise_on_status=False,
+    )
 
     def __init__(self, api_token: str, api_url: str, datapool: str, cache_folder: str):
         self.api_token = api_token
@@ -62,42 +86,14 @@ class DBClient:
         self.cache_folder = cache_folder
         self._signal_map: dict[str, int] | None = None
 
-        self.session = self._create_api_session()
-        self.storage_session = self._create_storage_session()
+        self.session = self._create_session(self.API_RETRY, self.API_TIMEOUT)
         self.session.headers.update({"Authorization": f"Bearer {self.api_token}"})
         self.session.headers.update({"X-Request-Source": f"sdk/python:{marple.__version__}"})
+        self.storage_session = self._create_session(self.STORAGE_RETRY, self.STORAGE_TIMEOUT)
 
-    def _create_api_session(self) -> requests.Session:
-        retry = Retry(
-            total=5,
-            connect=5,
-            read=2,
-            status=2,
-            backoff_factor=0.5,
-            status_forcelist=(429, 502, 503, 504),
-            allowed_methods=frozenset({"GET", "HEAD", "OPTIONS", "DELETE"}),
-            respect_retry_after_header=True,
-            raise_on_status=False,
-        )
-        return self._create_session(retry)
-
-    def _create_storage_session(self) -> requests.Session:
-        retry = Retry(
-            total=5,
-            connect=5,
-            read=5,
-            status=5,
-            backoff_factor=0.5,
-            status_forcelist=(429, 500, 502, 503, 504),
-            allowed_methods=frozenset({"PUT", "GET", "HEAD"}),
-            respect_retry_after_header=True,
-            raise_on_status=False,
-        )
-        return self._create_session(retry)
-
-    def _create_session(self, retry: Retry) -> requests.Session:
+    def _create_session(self, retry, timeout) -> requests.Session:
         session = requests.Session()
-        adapter = TimeoutHTTPAdapter(max_retries=retry, timeout=self.DEFAULT_TIMEOUT)
+        adapter = TimeoutHTTPAdapter(max_retries=retry, timeout=timeout)
         session.mount("https://", adapter)
         session.mount("http://", adapter)
         return session

@@ -292,7 +292,11 @@ class Dataset(BaseModel):
         parquet_buffer.seek(0)
 
         files = {"file": ("data.parquet", parquet_buffer, "application/octet-stream")}
-        r = self._client.post(f"/stream/{self.datastream_id}/dataset/{self.id}/append", files=files)
+        r = self._client.post(
+            f"/stream/{self.datastream_id}/dataset/{self.id}/append",
+            files=files,
+            timeout=self._client.STORAGE_TIMEOUT,
+        )
         validate_response(r, "Append data failed")
 
     def cool(self) -> "Dataset":
