@@ -84,8 +84,9 @@ def test_default_timeout_applied(monkeypatch: pytest.MonkeyPatch) -> None:
     client = make_client()
     client.get("/health")
     client.get("/health", timeout=(1, 2))
+    client.storage_session.put("http://example.test/blob", data=b"payload")
 
-    assert timeouts == [DBClient.DEFAULT_TIMEOUT, (1, 2)]
+    assert timeouts == [DBClient.DEFAULT_TIMEOUT, (1, 2), DBClient.STORAGE_TIMEOUT]
 
 
 def test_storage_put_retries_retryable_status() -> None:

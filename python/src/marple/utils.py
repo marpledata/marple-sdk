@@ -54,6 +54,9 @@ class TimeoutHTTPAdapter(HTTPAdapter):
 
 class DBClient:
     DEFAULT_TIMEOUT = (5, 300)
+    STORAGE_TIMEOUT = 1800
+    STORAGE_RETRY_TOTAL = 3
+    STORAGE_RETRY_BACKOFF = 1.0
 
     def __init__(self, api_token: str, api_url: str, datapool: str, cache_folder: str):
         self.api_token = api_token
@@ -83,21 +86,21 @@ class DBClient:
 
     def _create_storage_session(self) -> requests.Session:
         retry = Retry(
-            total=5,
-            connect=5,
-            read=5,
-            status=5,
-            backoff_factor=0.5,
+            total=self.STORAGE_RETRY_TOTAL,
+            connect=self.STORAGE_RETRY_TOTAL,
+            read=self.STORAGE_RETRY_TOTAL,
+            status=self.STORAGE_RETRY_TOTAL,
+            backoff_factor=self.STORAGE_RETRY_BACKOFF,
             status_forcelist=(429, 500, 502, 503, 504),
             allowed_methods=frozenset({"PUT", "GET", "HEAD"}),
             respect_retry_after_header=True,
             raise_on_status=False,
         )
-        return self._create_session(retry)
+        return self._create_session(retry, timeout=self.STORAGE_TIMEOUT)
 
-    def _create_session(self, retry: Retry) -> requests.Session:
+    def _create_session(self, retry: Retry, timeout=DEFAULT_TIMEOUT) -> requests.Session:
         session = requests.Session()
-        adapter = TimeoutHTTPAdapter(max_retries=retry, timeout=self.DEFAULT_TIMEOUT)
+        adapter = TimeoutHTTPAdapter(max_retries=retry, timeout=timeout)
         session.mount("https://", adapter)
         session.mount("http://", adapter)
         return session
