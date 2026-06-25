@@ -1,6 +1,6 @@
 import re
 from pathlib import Path
-from typing import Any, Iterable, Literal
+from typing import Iterable, Literal
 from urllib import parse, request
 
 import pandas as pd
@@ -174,7 +174,9 @@ class DBClient:
                 pa.field(COL_VAL, pa.float64()) if dtype == "numeric" else pa.field(COL_VAL_TEXT, pa.string()),
             ]
         )
-        df = pd.read_parquet(self.cache_parquet(dataset_id, signal_id, refresh_cache), engine="pyarrow", schema=schema)
+        df = pd.read_parquet(
+            self.cache_parquet(dataset_id, signal_id, refresh_cache), engine="pyarrow", schema=schema
+        )
         df = df.rename(columns={COL_VAL_TEXT: COL_VAL}).set_index(COL_TIME)
         if df.index.min() > 1e17:
             df.index = pd.to_datetime(df.index, unit="ns")
