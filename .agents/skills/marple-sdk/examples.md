@@ -1,0 +1,96 @@
+# Marple SDK examples
+
+End-to-end recipes for the `marpledata` Python SDK (Marple DB). Adapt signal names, time windows, and filters to the actual task; these are starting points, not fixed templates.
+
+## Recipe 1: import a file and wait for import
+
+```python
+import os
+from marple import DB
+
+db = DB(os.environ["MARPLE_API_TOKEN"])
+db.check_connection()
+
+stream = db.get_stream("Car data")
+dataset = stream.push_file("examples_race.csv", metadata={"driver": "Mbaerto"})
+# Importing is async; wait before reading data.
+dataset = dataset.wait_for_import(timeout=10)
+```
+
+## Recipe 2: filter datasets and get resampled data
+
+```python
+import os, re
+from marple import DB
+
+db = DB(os.environ["MARPLE_API_TOKEN"])
+stream = db.get_stream("Car data")
+
+datasets = stream.get_datasets()
+datasets = datasets.where_metadata({"car_id": [1, 2], "track": "track_1"})
+datasets = datasets.wait_for_import().where_imported()
+datasets = datasets.where_signal("car.speed", "max", greater_than=75)
+
+for dataset, data in datasets.get_data(
+    signals=["car.speed", re.compile(r"car\.wheel\..*\.speed")],
+    resample_rule="0.17s",
+):
+    ...  # data is a DataFrame on a common timebase
+```
+
+## Recipe 3 (happy path): question to self-contained script + visualization
+
+A general question such as "what happened in dataset xyz in corner 3?" is enough to produce a self-contained script that connects, fetches the relevant signals/window, and renders a plot. Refine signals, the time window, and the plot type together with the user instead of hardcoding guesses.
+
+Default: a single-file `uv` script with PEP 723 inline dependencies. Run with `uv run analyze.py`.
+
+```python
+# /// script
+# requires-python = ">=3.10"
+# dependencies = ["marpledata", "pandas", "matplotlib"]
+# ///
+import os
+from marple import DB
+import matplotlib.pyplot as plt
+
+STREAM = "Car data"
+DATASET = "xyz"
+SIGNALS = ["car.speed", "car.steering_angle"]  # refine for the actual question
+
+db = DB(os.environ["MARPLE_API_TOKEN"])
+db.check_connection()
+
+stream = db.get_stream(STREAM)
+datasets = stream.get_datasets().wait_for_import().where_imported()
+dataset = next(d for d in datasets if d.name == DATASET)
+
+# Optionally narrow to the time window of interest (e.g. corner 3) once known.
+_, data = next(iter(datasets.where_signal("car.speed", "max", greater_than=0)
+                     .get_data(signals=SIGNALS, resample_rule="0.05s")))
+
+data.plot(subplots=True, figsize=(10, 6))
+plt.tight_layout()
+plt.savefig("analysis.png", dpi=150)
+print("Wrote analysis.png")
+```
+
+Fallback without `uv`: drop the `# /// script` header and provide a `requirements.txt`:
+
+```
+marpledata
+pandas
+matplotlib
+```
+
+```bash
+pip install -r requirements.txt && python analyze.py
+```
+
+## Recipe 4: uploading large files and realtime (brief)
+
+For large uploads and realtime streaming, consult the docs rather than inlining here:
+
+- Upload large files: https://docs.marpledata.com/docs/sdk/overview/python-sdk
+- Realtime stream via DB SDK: https://docs.marpledata.com/docs/sdk/advanced/realtime-stream
+
+When unsure of the exact method, introspect the package or query `<doc-url>.md?ask=<question>` (see `reference.md`).
