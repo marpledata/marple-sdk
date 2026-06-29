@@ -47,11 +47,12 @@ Default: a single-file `uv` script with PEP 723 inline dependencies. Run with `u
 ```python
 # /// script
 # requires-python = ">=3.10"
-# dependencies = ["marpledata", "pandas", "matplotlib"]
+# dependencies = ["marpledata", "pandas", "plotly"]
 # ///
 import os
 from marple import DB
-import matplotlib.pyplot as plt
+from plotly.subplots import make_subplots
+import plotly.graph_objects as go
 
 STREAM = "Car data"
 DATASET = "xyz"
@@ -67,10 +68,15 @@ dataset = next(d for d in stream.get_datasets().wait_for_import().where_imported
 # Optionally narrow to the time window of interest (e.g. corner 3) once known.
 data = dataset.get_data(signals=SIGNALS, resample_rule="0.05s")
 
-data.plot(subplots=True, figsize=(10, 6))
-plt.tight_layout()
-plt.savefig("analysis.png", dpi=150)
-print("Wrote analysis.png")
+fig = make_subplots(rows=len(SIGNALS), cols=1, shared_xaxes=True,
+                    subplot_titles=SIGNALS)
+for i, sig in enumerate(SIGNALS, start=1):
+    fig.add_trace(go.Scatter(x=data.index, y=data[sig], name=sig), row=i, col=1)
+fig.update_layout(height=300 * len(SIGNALS), title=f"{DATASET} analysis")
+
+# Standalone, self-contained HTML dashboard (no server, no CDN needed).
+fig.write_html("dashboard.html", include_plotlyjs="inline")
+print("Wrote dashboard.html")
 ```
 
 Fallback without `uv`: drop the `# /// script` header and provide a `requirements.txt`:
@@ -78,7 +84,7 @@ Fallback without `uv`: drop the `# /// script` header and provide a `requirement
 ```
 marpledata
 pandas
-matplotlib
+plotly
 ```
 
 ```bash

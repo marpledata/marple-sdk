@@ -34,7 +34,7 @@ db.check_connection()
 
 A general analytical question (e.g. "what happened in dataset x while event y?") is enough to produce a self-contained script that connects, pulls the relevant signals/window, and renders a visualization. Default approach:
 
-1. Write a single-file `uv` script with PEP 723 inline dependencies (`marpledata`,`pandas`, etc.). Fall back to `requirements.txt` if `uv` is unavailable.
+1. Write a single-file `uv` script with PEP 723 inline dependencies (`marpledata`, `pandas`, `plotly`, etc.). Fall back to `requirements.txt` if `uv` is unavailable.
 2. Read the token from `MDB_TOKEN`.
 3. Connect, locate the dataset/stream, fetch + resample the signals of interest, use this data to fulfill the user's request
 
