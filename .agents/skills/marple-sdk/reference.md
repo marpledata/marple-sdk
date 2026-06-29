@@ -4,8 +4,12 @@ Pointers to canonical docs and how to explore them. This file intentionally does
 
 ## Canonical links
 
+Main path is the Python SDK on Marple DB; Rust and MATLAB pointers are included for other-language tasks.
+
 - SDK API reference (versioned): https://marpledata.gitlab.io/marple-sdk/
 - Python SDK overview: https://docs.marpledata.com/docs/sdk/overview/python-sdk
+- Rust SDK (DB): crate `marple-db` (imported as `marple_db`), async/Tokio; CLI binary `mdb`. Source in `rust/`.
+- MATLAB DB client: example script and config in `matlab/`.
 - Agentic coding guidance: https://docs.marpledata.com/docs/sdk/agentic-coding
 - API tokens: https://docs.marpledata.com/docs/sdk/overview/api-tokens
 - REST API overview: https://docs.marpledata.com/docs/sdk/overview/rest-api
@@ -59,4 +63,4 @@ Two products are available as core building blocks:
 
 ## Marple Insight (secondary)
 
-The Insight SDK is not ready for general SDK access; prefer Marple DB. For Insight automation, use the REST API with `Authorization: Bearer <api-token>` and the Swagger reference: https://insight.marpledata.com/api/v1/spec/
+Most SDK work targets Marple DB. For Insight, use the `marple.Insight` client (`from marple import Insight`) or the REST API with `Authorization: Bearer <api-token>` and the Swagger reference: https://insight.marpledata.com/api/v1/spec/

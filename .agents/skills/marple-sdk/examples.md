@@ -8,7 +8,7 @@ End-to-end recipes for the `marpledata` Python SDK (Marple DB). Adapt signal nam
 import os
 from marple import DB
 
-db = DB(os.environ["MARPLE_API_TOKEN"])
+db = DB(os.environ["MDB_TOKEN"])
 db.check_connection()
 
 stream = db.get_stream("Car data")
@@ -23,7 +23,7 @@ dataset = dataset.wait_for_import(timeout=10)
 import os, re
 from marple import DB
 
-db = DB(os.environ["MARPLE_API_TOKEN"])
+db = DB(os.environ["MDB_TOKEN"])
 stream = db.get_stream("Car data")
 
 datasets = stream.get_datasets()
@@ -57,16 +57,15 @@ STREAM = "Car data"
 DATASET = "xyz"
 SIGNALS = ["car.speed", "car.steering_angle"]  # refine for the actual question
 
-db = DB(os.environ["MARPLE_API_TOKEN"])
+db = DB(os.environ["MDB_TOKEN"])
 db.check_connection()
 
 stream = db.get_stream(STREAM)
-datasets = stream.get_datasets().wait_for_import().where_imported()
-dataset = next(d for d in datasets if d.name == DATASET)
+dataset = next(d for d in stream.get_datasets().wait_for_import().where_imported()
+               if d.path == DATASET)  # datasets are identified by path, not name
 
 # Optionally narrow to the time window of interest (e.g. corner 3) once known.
-_, data = next(iter(datasets.where_signal("car.speed", "max", greater_than=0)
-                     .get_data(signals=SIGNALS, resample_rule="0.05s")))
+data = dataset.get_data(signals=SIGNALS, resample_rule="0.05s")
 
 data.plot(subplots=True, figsize=(10, 6))
 plt.tight_layout()

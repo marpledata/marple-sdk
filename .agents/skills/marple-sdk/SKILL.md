@@ -5,9 +5,12 @@ description: Build apps, scripts, and visualizations on Marple DB time series da
 
 # Marple SDK
 
-Marple DB is a high-performance time series lakehouse (the primary, well-developed SDK target). Marple Insight is the analysis/dashboarding web product; its SDK is not ready for general access, so prefer DB and use REST for Insight automation (see `reference.md`).
+Marpledata has two products:
 
-The `marpledata` Python SDK is typed and docstringed. Lean on that: discover functionality by introspecting the installed package and querying live docs rather than guessing.
+- **Marple DB** — a high-performance time series lakehouse (built on Iceberg + PostgreSQL) for processing and standardising measurement-file data at extreme sizes and frequencies. Main target for SDK/programmatic access.
+- **Marple Insight** — the analysis/dashboarding web product; secondary for the SDK.
+
+The `marpledata` Python SDK is typed and docstringed, so discover functionality by introspecting the installed package and querying live docs rather than guessing.
 
 ## Install and authenticate
 
@@ -20,11 +23,11 @@ import os
 from marple import DB
 
 # Token is created in the Marple DB UI (Settings -> API Tokens), shown once.
-db = DB(os.environ["MARPLE_API_TOKEN"])  # defaults to SaaS URL
+db = DB(os.environ["MDB_TOKEN"])  # defaults to SaaS URL
 db.check_connection()
 ```
 
-- Token via `MARPLE_API_TOKEN` env var; never hardcode it.
+- Token via `MDB_TOKEN` env var (the repo's convention; use `MDB_URL` for non-SaaS); never hardcode it.
 - Default URL is SaaS (`https://db.marpledata.com/api/v1`). Pass a second arg `DB(token, api_url)` for VPC/self-hosted.
 
 ## Happy path: question to script to visualization
@@ -32,7 +35,7 @@ db.check_connection()
 A general analytical question (e.g. "what happened in dataset x while event y?") is enough to produce a self-contained script that connects, pulls the relevant signals/window, and renders a visualization. Default approach:
 
 1. Write a single-file `uv` script with PEP 723 inline dependencies (`marpledata`,`pandas`, etc.). Fall back to `requirements.txt` if `uv` is unavailable.
-2. Read the token from `MARPLE_API_TOKEN`.
+2. Read the token from `MDB_TOKEN`.
 3. Connect, locate the dataset/stream, fetch + resample the signals of interest, use this data to fulfill the user's request
 
 Do not over-engineer. Use judgement together with the user (and a plan for non-trivial apps) to refine which signals, time window, and visualisation types are actually needed. See a full recipe in `examples.md`.
@@ -45,11 +48,11 @@ Do not over-engineer. Use judgement together with the user (and a plan for non-t
 
 ## Gotchas
 
-- A 403 usually means the token belongs to a different deployment. Ask the user whether they are on SaaS, VPC, or self-hosted, then set `api_url` accordingly.
+- A 403 means the token is invalid/expired or belongs to a different deployment. Verify the token; if it is valid, ask whether they are on SaaS, VPC, or self-hosted and set `api_url`/`MDB_URL` accordingly.
 - Importing is async: after `stream.push_file(...)`, call `dataset.wait_for_import(timeout=...)` before reading data.
 - Terminology: a `stream` contains `dataset`s; each dataset has `signal`s.
 
 ## More
 
-- Links, how to explore, and the reusable "Marple guidance" prompt block: `reference.md`
+- Links, other language targets (Rust, MATLAB, REST), and the reusable "Marple guidance" prompt block: `reference.md`
 - End-to-end recipes (import, filter + resample, happy-path script): `examples.md`
