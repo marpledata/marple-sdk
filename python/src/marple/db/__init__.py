@@ -1,18 +1,22 @@
 import warnings
 from functools import wraps
 from pathlib import Path
-from typing import Literal, Optional
+from typing import TYPE_CHECKING, Any, Literal, Optional, Sequence
 
 import pandas as pd
 from pydantic import ValidationError
 from requests import Response
 from requests.exceptions import ConnectionError
 
+from marple.db import sql
 from marple.db.constants import SAAS_URL, SCHEMA
 from marple.db.dataset import Dataset, DatasetList
 from marple.db.datastream import DataStream
 from marple.db.signal import Signal
 from marple.utils import DBClient, validate_response
+
+if TYPE_CHECKING:
+    from trino.dbapi import Connection
 
 __all__ = ["DB", "DataStream", "Dataset", "DatasetList", "Signal", "SCHEMA"]
 
@@ -40,6 +44,8 @@ class DB:
         api_url: The URL of the Marple DB API.
         datapool: The datapool to use (default: "default").
         cache_folder: The folder to cache the data in (default: "./.mdb_cache").
+        trino_host: Override for the Trino query host. By default it is derived
+            from `api_url` as `query.<api-host>`.
     """
 
     _streams: dict[int, DataStream] = {}
@@ -51,9 +57,10 @@ class DB:
         api_url: str = SAAS_URL,
         datapool="default",
         cache_folder: str = "./.mdb_cache",
+        trino_host: str | None = None,
     ):
         self._streams: dict[int, DataStream] = {}
-        self.client = DBClient(api_token, api_url, datapool, cache_folder)
+        self.client = DBClient(api_token, api_url, datapool, cache_folder, trino_host)
         self.check_connection()
 
     # Utility functions #
@@ -250,6 +257,62 @@ class DB:
         You can specify the signal by its name or ID and the dataset by its ID or path.
         """
         return self.get_dataset(dataset_id, dataset_path).get_signal(signal_name, signal_id)
+
+    # SQL functions #
+
+    @property
+    def trino_info(self) -> dict:
+        """
+        Connection metadata for SQL querying: `host`, `user`, `hot_catalog`,
+        `cold_catalog`, and `datapool`.
+
+        Useful for building fully-qualified table names (see `query`). Not
+        available on Marple SaaS.
+        """
+        return sql.trino_params(self.client)
+
+    def connect_trino(self) -> "Connection":
+        """
+        Open a raw Trino DBAPI connection to Marple DB and return it.
+
+        Use this for full control (server-side cursors, streaming large
+        results, passing to other tools). For one-shot queries, prefer `query`.
+
+        Connection details are discovered automatically from the API token and
+        URL. SQL querying is not available on Marple SaaS.
+        """
+        return sql.connect_trino(self.client)
+
+    def query(self, sql_query: str, params: Optional[Sequence[Any]] = None) -> "pd.DataFrame":
+        """
+        Run a Trino SQL query against Marple DB and return a pandas DataFrame.
+
+        Hot (Postgres metadata) and cold (Iceberg raw data) are queryable as one
+        database. Tables must be fully qualified; see `trino_info` for the
+        catalog names. Layout:
+
+        - Hot metadata: `<hot_catalog>.public.mdb_<datapool>_dataset`,
+          `..._signal`, `..._signal_enum`.
+        - Cold raw data: `<cold_catalog>.<datapool>.data` with columns
+          `dataset`, `signal`, `time`, `value`, `value_text`.
+
+        The cold `data` table is keyed by dataset/signal **IDs**, not names; join
+        `..._signal_enum` (`name` -> `id`) to filter by signal name.
+
+        Pass `params` as a sequence bound to `?` placeholders to parameterize the
+        query. SQL querying is not available on Marple SaaS.
+
+        Example:
+            info = db.trino_info
+            db.query(
+                f"SELECT time, value FROM {info['cold_catalog']}.{info['datapool']}.data "
+                "WHERE dataset = ? AND signal = ? LIMIT 1000",
+                params=[12, 3],
+            )
+
+        Full schema and examples: https://docs.marpledata.com/docs/marple-db/querying
+        """
+        return sql.query(self.client, sql_query, params)
 
     # Deprecated functions #
 

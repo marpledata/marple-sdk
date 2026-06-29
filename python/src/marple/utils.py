@@ -79,12 +79,21 @@ class DBClient:
         raise_on_status=False,
     )
 
-    def __init__(self, api_token: str, api_url: str, datapool: str, cache_folder: str):
+    def __init__(
+        self,
+        api_token: str,
+        api_url: str,
+        datapool: str,
+        cache_folder: str,
+        trino_host: str | None = None,
+    ):
         self.api_token = api_token
         self.api_url = api_url
         self.datapool = datapool
         self.cache_folder = cache_folder
+        self.trino_host = trino_host
         self._signal_map: dict[str, int] | None = None
+        self._trino_cache: dict | None = None
 
         self.session = self._create_session(self.API_RETRY, self.API_TIMEOUT)
         self.session.headers.update({"Authorization": f"Bearer {self.api_token}"})

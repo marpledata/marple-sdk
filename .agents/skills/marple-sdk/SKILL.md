@@ -46,6 +46,14 @@ Do not over-engineer. Use judgement together with the user (and a plan for non-t
 - Use raw calls like `db.get(...)` / `db.post(...)` only when no built-in method exists.
 - When unsure, query the live docs on demand: `GET <doc-url>.md?ask=<question>&goal=<goal>` (GitBook answers from the docs). Example: `https://docs.marpledata.com/docs/sdk/overview/python-sdk.md?ask=how%20do%20I%20list%20datasets`.
 
+## Pull vs SQL
+
+Default to pulling signals via the SDK (`get_data`) for analysis/plotting on a known dataset + window. Prefer SQL when you'd otherwise download a lot to filter/aggregate client-side, scan across many datasets/signals, or feed a BI tool:
+
+- `db.query(sql) -> DataFrame` for one-shot queries; `db.connect_trino()` for a raw Trino connection.
+- Queries hot (Postgres metadata) + cold (Iceberg raw data) as one DB. See `db.trino_info` for catalog names and `reference.md` for the layout.
+- Not available on Marple SaaS yet (VPC/self-hosted only).
+
 ## Gotchas
 
 - A 403 means the token is invalid/expired or belongs to a different deployment. Verify the token; if it is valid, ask whether they are on SaaS, VPC, or self-hosted and set `api_url`/`MDB_URL` accordingly.

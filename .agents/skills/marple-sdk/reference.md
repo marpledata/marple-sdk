@@ -61,6 +61,15 @@ Two products are available as core building blocks:
 - If an API token returns 403, ask the user if they are on a different deployment than SaaS
 ```
 
+## SQL via Trino
+
+For server-side filtering/aggregation or BI tools, query Marple DB with SQL instead of pulling parquet: `db.query(sql) -> DataFrame` or `db.connect_trino()` for a raw connection. Not available on Marple SaaS yet. Connection details are auto-discovered; `db.trino_info` exposes the catalog names. Structure:
+
+- Hot catalog (`<hot_catalog>`, Postgres metadata), schema `public`: `mdb_<datapool>_dataset`, `mdb_<datapool>_signal`, `mdb_<datapool>_signal_enum` (`name` -> `id`).
+- Cold catalog (`<cold_catalog>`, Iceberg raw data), schema `<datapool>`: table `data` with columns `dataset`, `signal`, `time`, `value`, `value_text`. Keyed by dataset/signal IDs, so join `signal_enum` to filter by name.
+
+Tables must be fully qualified, and hot + cold can be joined in one query. Full docs and examples: https://docs.marpledata.com/docs/marple-db/querying
+
 ## Marple Insight (secondary)
 
 Most SDK work targets Marple DB. For Insight, use the `marple.Insight` client (`from marple import Insight`) or the REST API with `Authorization: Bearer <api-token>` and the Swagger reference: https://insight.marpledata.com/api/v1/spec/
