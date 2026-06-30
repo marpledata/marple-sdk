@@ -115,8 +115,14 @@ class DB:
 
         r = self.client.get("/streams")
         if r.status_code == 403:
-            error_text = "Invalid API token. Please check if the api_token parameter is correct and not expired."
-            raise Exception(error_text)
+            try:
+                detail = r.json().get("detail")
+            except Exception:
+                detail = None
+            raise Exception(
+                detail
+                or "Invalid API token. Please check if the api_token parameter is correct and not expired."
+            )
 
         self._refresh_stream_cache(r)
         return True
