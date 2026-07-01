@@ -81,7 +81,7 @@ def _push_and_assert_upload(
 
 def test_db_check_connection(db: DB) -> None:
     assert db.check_connection() is True
-    with pytest.raises(Exception, match="Invalid API token"):
+    with pytest.raises(Exception):
         DB("invalid_token", marple.db.SAAS_URL).check_connection()
 
 

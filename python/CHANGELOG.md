@@ -5,6 +5,13 @@ All notable changes to the Python SDK package `marpledata` will be documented in
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [3.3.0] - 2026-06-29
+
+### Added
+
+- `DB.query` (SQL to DataFrame) and `DB.connect_trino` (raw Trino DBAPI connection) for querying hot (Postgres metadata) and cold (Iceberg raw data) as one database via Trino. Connection details are auto-discovered; `DB.trino_info` exposes the catalog names. Not available on Marple SaaS yet.
+- `trino_host` parameter on `DB` to override the derived Trino host.
+
 ## [3.2.5] - 2026-06-25
 
 ### Fixed
