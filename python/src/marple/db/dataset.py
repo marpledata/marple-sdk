@@ -14,7 +14,7 @@ import pyarrow.parquet as pq
 from pandas._typing import AggFuncType, Frequency
 from pydantic import BaseModel, ConfigDict, Field, PrivateAttr, ValidationError
 
-from marple.db.constants import COL_SIG, COL_TIME, COL_VAL, COL_VAL_TEXT, SCHEMA
+from marple.db.constants import COL_SIG, COL_TIME, COL_VAL, COL_VAL_TEXT, MAX_SIGNALS_PER_ADD, SCHEMA
 from marple.db.signal import Signal
 from marple.db.signal_upload import (
     SignalUpload,
@@ -295,8 +295,13 @@ class Dataset(BaseModel):
         Returns:
             The uploaded signals (refreshed; ``COLD`` when ``wait`` succeeds).
         """
-        uploads = coerce_signal_uploads(signals)
-        planned = plan_uploads(uploads)
+
+        if len(signals) == 0 or len(signals) > MAX_SIGNALS_PER_ADD:
+            raise ValueError(f"Provide at most {MAX_SIGNALS_PER_ADD} signals per call")
+        planned = [
+            (signal if isinstance(signal, SignalUpload) else SignalUpload.model_validate(signal)).plan()
+            for signal in signals
+        ]
         signal_ids = run_signal_uploads(
             self._client,
             self.datastream_id,
