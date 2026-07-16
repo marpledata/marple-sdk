@@ -320,8 +320,9 @@ class Dataset(BaseModel):
         """
         Upload one lake-native signal onto this dataset.
 
-        ``data`` must be a DataFrame, Arrow table, or parquet path with ``time`` and
-        ``value`` and/or ``value_text``. Times must overlap the dataset time range.
+        ``data`` must be a DataFrame, Arrow table, or parquet path matching
+        :data:`~marple.db.LAKE_ARROW_SCHEMA` (``time`` plus ``value`` and/or
+        ``value_text``). Times must overlap the dataset time range.
 
         Returns the new signal immediately after upload completes. Call
         :meth:`Signal.wait_until_cold` before reading data if the signal is still

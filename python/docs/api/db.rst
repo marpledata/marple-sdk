@@ -17,3 +17,5 @@ See :doc:`../tutorials` for upload examples.
    marple.db.Signal
    marple.db.SignalUpload
    marple.db.SignalsAlreadyExistError
+   marple.db.SCHEMA
+   marple.db.LAKE_ARROW_SCHEMA

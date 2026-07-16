@@ -20,13 +20,15 @@ Add signals to an imported dataset
 ----------------------------------
 
 After a file import finishes, you can attach additional lake-native signals
-(for example derived channels). Provide a DataFrame, Arrow table, or parquet path
-with ``time`` and ``value`` and/or ``value_text``. Signal times must overlap the
-dataset time range. Call ``wait_until_cold`` before reading the new signal.
+(for example derived channels). Input data must match
+:data:`marple.db.LAKE_ARROW_SCHEMA`: ``time`` (int64 nanoseconds) plus
+``value`` and/or ``value_text``. Signal times must overlap the dataset time
+range. Call ``wait_until_cold`` before reading the new signal.
 
 .. code-block:: python
 
    import pandas as pd
+   from marple.db import LAKE_ARROW_SCHEMA  # time + value and/or value_text
 
    speed = dataset.get_signal("car.speed").get_data()
    derived = pd.DataFrame({

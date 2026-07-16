@@ -9,7 +9,9 @@ from requests import Response
 from requests.exceptions import ConnectionError
 
 from marple.db import sql
-from marple.db.constants import SAAS_URL, SCHEMA
+from marple.db.constants import LAKE_ARROW_SCHEMA as _LAKE_ARROW_SCHEMA
+from marple.db.constants import SAAS_URL
+from marple.db.constants import SCHEMA as _SCHEMA
 from marple.db.dataset import Dataset, DatasetList
 from marple.db.datastream import DataStream
 from marple.db.signal import Signal
@@ -18,6 +20,17 @@ from marple.utils import DBClient, validate_response
 
 if TYPE_CHECKING:
     from trino.dbapi import Connection
+
+SCHEMA = _SCHEMA
+"""Arrow schema for :meth:`~marple.db.Dataset.append` (long-format realtime rows)."""
+
+LAKE_ARROW_SCHEMA = _LAKE_ARROW_SCHEMA
+"""Arrow schema for :meth:`~marple.db.Dataset.add_signal` / :meth:`~marple.db.Dataset.add_signals`.
+
+Columns: ``time`` (int64 nanoseconds, required) plus ``value`` (float64) and/or
+``value_text`` (string). At least one value column is required; the other may be
+omitted and is filled with nulls during validation.
+"""
 
 __all__ = [
     "DB",
@@ -28,6 +41,7 @@ __all__ = [
     "SignalUpload",
     "SignalsAlreadyExistError",
     "SCHEMA",
+    "LAKE_ARROW_SCHEMA",
 ]
 
 

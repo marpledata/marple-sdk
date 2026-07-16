@@ -10,7 +10,7 @@ COL_DATASET = "dataset"
 COL_VAL_IDX = 3
 COL_VAL_TEXT_IDX = 4
 
-# Realtime append schema (string signal names).
+# Realtime append schema (string signal names). Used by Dataset.append.
 SCHEMA = pa.schema(
     [
         pa.field(COL_TIME, pa.int64()),
@@ -19,6 +19,7 @@ SCHEMA = pa.schema(
         pa.field(COL_VAL_TEXT, pa.string()),
     ]
 )
+"""Arrow schema for :meth:`~marple.db.Dataset.append` (long-format realtime rows)."""
 
 # Lake / Iceberg parquet schema for signal upload (int64 signal IDs).
 ROW_GROUP_SIZE = 1_048_576  # ~1M rows per row group
@@ -26,14 +27,19 @@ MAX_ROWS_PER_FILE = 16 * ROW_GROUP_SIZE  # ~16M rows per file
 MAX_SIGNALS_PER_ADD = 10_000
 SIGNAL_IDS_QUERY_CHUNK = 200  # max signal_ids per GET to stay under typical URL limits
 
-# Lake / Iceberg arrow schema during signal upload planning / validation.
 LAKE_ARROW_SCHEMA = pa.schema(
     [
-        pa.field("time", pa.int64(), nullable=False),
-        pa.field("value", pa.float64(), nullable=True),
-        pa.field("value_text", pa.string(), nullable=True),
+        pa.field(COL_TIME, pa.int64(), nullable=False),
+        pa.field(COL_VAL, pa.float64(), nullable=True),
+        pa.field(COL_VAL_TEXT, pa.string(), nullable=True),
     ]
 )
+"""Arrow schema for :meth:`~marple.db.Dataset.add_signal` / :meth:`~marple.db.Dataset.add_signals`.
+
+Columns: ``time`` (int64 nanoseconds, required) plus ``value`` (float64) and/or
+``value_text`` (string). At least one value column is required; the other may be
+omitted and is filled with nulls during validation.
+"""
 
 # Lake / Iceberg parquet schema for signal upload (int64 signal IDs).
 LAKE_PARQUET_SCHEMA = pa.schema(

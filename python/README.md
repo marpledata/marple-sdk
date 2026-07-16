@@ -55,12 +55,14 @@ dataset = dataset.wait_for_import(timeout=10)
 #### Add signals to an imported dataset
 
 Upload lake-native parquet for additional signals (for example derived channels) on an existing dataset.
-Each signal is a DataFrame, Arrow table, or on-disk parquet with `time` and `value` and/or `value_text`.
+Each signal is a DataFrame, Arrow table, or on-disk parquet matching `LAKE_ARROW_SCHEMA`:
+columns `time` (int64 nanoseconds) plus `value` and/or `value_text`.
 Times must overlap the dataset time range. Use `overwrite=True` to replace an existing signal name;
 a conflict without overwrite raises `SignalsAlreadyExistError`.
 
 ```python
 import pandas as pd
+from marple.db import LAKE_ARROW_SCHEMA  # time + value and/or value_text
 
 speed = dataset.get_signal("car.speed").get_data()
 derived = pd.DataFrame({
@@ -169,7 +171,7 @@ if len(datasets) > 0:
 - **List streams**: `db.get_streams()`
 - **List datasets in a stream**: `stream.get_datasets()`
 - **Upload a file to a file-stream**: `stream.push_file(file_path, metadata={...}, concurrency=4)`
-- **Add signals to a dataset**: `dataset.add_signal(name, data, metadata=..., overwrite=False)` or `dataset.add_signals([{...}], concurrency=4)` (returns IDs)
+- **Add signals to a dataset**: `dataset.add_signal(name, data, ...)` / `dataset.add_signals([...])` — data matches `LAKE_ARROW_SCHEMA` (`time` + `value` and/or `value_text`)
 - **Wait until a signal is lake-cold**: `signal.wait_until_cold(timeout=60)`
 - **Fetch signals by ID**: `dataset.get_signals(signal_ids=[...], refresh=False)`
 - **Wait for a dataset to import**: `dataset.wait_for_import(timeout=60)`

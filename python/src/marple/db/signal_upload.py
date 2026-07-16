@@ -44,8 +44,9 @@ class SignalsAlreadyExistError(ValueError):
 class SignalUpload(BaseModel):
     """Input for :meth:`Dataset.add_signal` / :meth:`Dataset.add_signals`.
 
-    ``data`` is a DataFrame, Arrow table, or parquet path with ``time`` and
-    ``value`` and/or ``value_text``.
+    ``data`` is a DataFrame, Arrow table, or parquet path matching
+    :data:`marple.db.LAKE_ARROW_SCHEMA`: ``time`` (int64 ns) plus ``value``
+    and/or ``value_text``.
     """
 
     model_config = ConfigDict(arbitrary_types_allowed=True)
