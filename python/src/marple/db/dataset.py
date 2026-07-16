@@ -261,8 +261,8 @@ class Dataset(BaseModel):
     def add_signal(
         self,
         name: str,
-        data: pd.DataFrame | Path | str,
-        metadata: dict[str, Any] = {},
+        data: pa.Table | pd.DataFrame | Path | str,
+        metadata: dict[str, Any] | None = None,
         overwrite: bool = False,
         priority: Literal["default", "high"] = "default",
     ) -> Signal:
@@ -278,8 +278,11 @@ class Dataset(BaseModel):
         timeout: float = 60,
         concurrency: int = 4,
     ) -> list[Signal]:
-        if len(signals) == 0 or len(signals) > MAX_SIGNALS_PER_ADD:
+        if not signals:
+            return []
+        if len(signals) > MAX_SIGNALS_PER_ADD:
             raise ValueError(f"Provide at most {MAX_SIGNALS_PER_ADD} signals per call")
+
         signal_ids = run_signal_uploads(self, signals, concurrency=concurrency)
         if wait:
             return self.wait_until_signals_cold(signal_ids, timeout=timeout)

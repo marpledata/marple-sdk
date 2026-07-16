@@ -23,7 +23,7 @@ SCHEMA = pa.schema(
 # Lake / Iceberg parquet schema for signal upload (int64 signal IDs).
 ROW_GROUP_SIZE = 1_048_576  # ~1M rows per row group
 MAX_ROWS_PER_FILE = 16 * ROW_GROUP_SIZE  # ~16M rows per file
-MAX_SIGNALS_PER_ADD = 1000
+MAX_SIGNALS_PER_ADD = 10_000
 
 # Lake / Iceberg arrow schema during signal upload planning / validation.
 LAKE_ARROW_SCHEMA = pa.schema(

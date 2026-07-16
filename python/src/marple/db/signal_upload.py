@@ -49,19 +49,10 @@ class SignalUpload(BaseModel):
     overwrite: bool = False
     priority: Literal["default", "high"] = "default"
 
-    def to_request(self) -> dict[str, Any]:
-        return {
-            "name": self.name,
-            "metadata": self.metadata,
-            "files": [{"index": i, "rows": rows} for i, rows in enumerate(self.row_counts)],
-            "overwrite": self.overwrite,
-            "priority": self.priority,
-        }
-
     def validate_data(self) -> pa.Table:
         if isinstance(self.data, pa.Table):
             table = self.data
-        if isinstance(self.data, pd.DataFrame):
+        elif isinstance(self.data, pd.DataFrame):
             table = pa.Table.from_pandas(self.data, preserve_index=False)
         elif isinstance(self.data, (Path, str)):
             table = pq.read_table(self.data)
@@ -114,13 +105,24 @@ class SignalImportPriority(StrEnum):
 
 
 class PlannedUpload(BaseModel):
+    model_config = ConfigDict(arbitrary_types_allowed=True)
+
     name: str
     data: pa.Table
     metadata: dict[str, Any]
     overwrite: bool
     priority: SignalImportPriority
     row_counts: list[int]
-    frequency: float
+    frequency: float | None
+
+    def to_request(self) -> dict[str, Any]:
+        return {
+            "name": self.name,
+            "metadata": self.metadata,
+            "files": [{"index": i, "rows": rows} for i, rows in enumerate(self.row_counts)],
+            "overwrite": self.overwrite,
+            "priority": self.priority,
+        }
 
 
 class PresignedParquetFile(BaseModel):
@@ -142,13 +144,6 @@ class ParquetUploadMetadata(BaseModel):
     size: int
     footer: int
     """Footer size in bytes"""
-
-    @classmethod
-    def from_local_parquet(cls, remote: PresignedParquetFile, local_path: Path) -> Self:
-        with open(local_path, "rb") as f:
-            f.seek(-8, 2)
-            footer = int.from_bytes(f.read(4), "little")
-        return cls(path=remote.path, size=local_path.stat().st_size, footer=footer)
 
 
 class SignalUploadStats(BaseModel):
@@ -228,7 +223,7 @@ def _plan_row_counts(num_rows: int) -> list[int]:
     return [MAX_ROWS_PER_FILE] * full + ([remainder] if remainder else [])
 
 
-def _estimate_frequency(time_col: pa.ChunkedArray | pa.Array) -> float:
+def _estimate_frequency(time_col: pa.ChunkedArray | pa.Array) -> float | None:
     chunks = [time_col] if isinstance(time_col, pa.Array) else time_col.chunks
     median_diffs: list[float] = []
     for chunk in chunks:
@@ -238,9 +233,7 @@ def _estimate_frequency(time_col: pa.ChunkedArray | pa.Array) -> float:
         median_diff = pc.approximate_median(diff).as_py()
         if median_diff is not None and median_diff > 0:
             median_diffs.append(float(median_diff))
-    if not median_diffs:
-        raise ValueError("Signal frequency estimation failed: no valid differences found")
-    return 1e9 / min(median_diffs)
+    return 1e9 / min(median_diffs) if median_diffs else None
 
 
 def _run_signal_upload(
@@ -249,8 +242,9 @@ def _run_signal_upload(
     response: PresignedSignal,
 ) -> SignalUploadComplete:
     files = {file.index: file for file in response.files}
-    sum, metadata = 0, []
+    metadata, sums, offset = [], [], 0
     with tempfile.TemporaryDirectory() as signal_dir:
+        signal_dir = Path(signal_dir)
         for index, rows in enumerate(planned.row_counts):
             local_path = signal_dir / f"part_{index}.parquet"
             part = planned.data.slice(offset, rows)  # still 3 cols
@@ -266,13 +260,13 @@ def _run_signal_upload(
             )
             pq.write_table(lake, local_path, compression="zstd", row_group_size=ROW_GROUP_SIZE)
             metadata.append(_upload_parquet(dataset._client, files[index], local_path))
-            sum += lake.column(COL_VAL).sum().as_py()
+            sums.append(lake.column(COL_VAL).sum().as_py())
             offset += rows
 
     return SignalUploadComplete(
         id=response.signal_id,
         priority=planned.priority,
-        stats=SignalUploadStats(sum=sum, frequency=planned.frequency),
+        stats=SignalUploadStats(sum=sum((s for s in sums if s is not None), None), frequency=planned.frequency),
         files=metadata,
     )
 
