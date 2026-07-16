@@ -1,7 +1,7 @@
-from pathlib import Path
 import time
-from typing import Literal, Self
 import warnings
+from pathlib import Path
+from typing import Literal
 
 import pandas as pd
 from pydantic import BaseModel, PrivateAttr
@@ -83,7 +83,17 @@ class Signal(BaseModel):
         """
         return self._client.get_dataframe(self.dataset_id, self.id, dtype, refresh_cache)
 
-    def wait_until_cold(self, timeout: float = 60) -> Self:
+    def wait_until_cold(self, timeout: float = 60) -> "Signal":
+        """
+        Poll until this signal's ``storage_status`` is ``COLD``.
+
+        After :meth:`Dataset.add_signal` / :meth:`Dataset.add_signals`, the signal
+        may briefly be hot or transitioning. Wait here before calling
+        :meth:`get_data` if you need lake-cold parquet.
+
+        If the timeout elapses, a warning is issued and the latest signal state is
+        returned (status may still be non-cold).
+        """
         deadline = time.monotonic() + max(timeout, 0.1)
         while True:
             r = self._client.get(f"/stream/{self.datastream_id}/dataset/{self.dataset_id}/signal/{self.id}")

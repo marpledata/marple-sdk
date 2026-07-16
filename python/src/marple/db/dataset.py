@@ -148,6 +148,7 @@ class Dataset(BaseModel):
                     warnings.warn(f"Failed to create signal {response['name']} (id {response['id']}): {e}")
                     continue
                 self._signals[signal.id] = signal
+            self.n_signals = len(self._signals)
         return list(self._signals.values())
 
     def get_signals(
@@ -318,11 +319,29 @@ class Dataset(BaseModel):
         overwrite: bool = False,
         priority: Literal["default", "high"] = "default",
     ) -> Signal:
+        """
+        Upload one lake-native signal onto this dataset.
+
+        ``data`` must be a DataFrame, Arrow table, or parquet path with ``time`` and
+        ``value`` and/or ``value_text``. Times must overlap the dataset time range.
+
+        Returns the new signal immediately after upload completes. Call
+        :meth:`Signal.wait_until_cold` before reading data if the signal is still
+        transitioning to lake-cold storage.
+
+        Args:
+            name: Signal name.
+            data: Signal samples (DataFrame, Arrow table, or parquet path).
+            metadata: Optional signal metadata (for example ``unit``).
+            overwrite: If True, replace an existing signal with the same name.
+            priority: Import priority (``default`` or ``high``).
+        """
         signal_id = self.add_signals(
             [SignalUpload(name=name, data=data, metadata=metadata or {}, overwrite=overwrite, priority=priority)]
         )[0]
-        signal = self.get_signal(id=signal_id)
-        assert signal is not None
+        signal = self.get_signal(id=signal_id, refresh=True)
+        if signal is None:
+            raise RuntimeError(f"Failed to fetch signal {name} after upload (id {signal_id})")
         return signal
 
     def add_signals(
@@ -331,11 +350,27 @@ class Dataset(BaseModel):
         *,
         concurrency: int = 4,
     ) -> list[int]:
+        """
+        Upload multiple lake-native signals onto this dataset.
+
+        Each item is a :class:`SignalUpload` or a dict with at least ``name`` and
+        ``data``. Returns allocated signal IDs as soon as uploads complete (does
+        not wait until signals are lake-cold).
+
+        Args:
+            signals: Signals to upload (at most ``MAX_SIGNALS_PER_ADD``).
+            concurrency: Parallel storage PUT workers.
+        """
         if not signals:
             return []
         if len(signals) > MAX_SIGNALS_PER_ADD:
             raise ValueError(f"Provide at most {MAX_SIGNALS_PER_ADD} signals per call")
-        return run_signal_uploads(self, signals, concurrency=concurrency)
+        ids = run_signal_uploads(self, signals, concurrency=concurrency)
+        self._client.invalidate_signal_map()
+        self._signals.clear()
+        # Bump so the next get_signals() refetches; corrected after _get_all_signals.
+        self.n_signals = (self.n_signals or 0) + len(ids)
+        return ids
 
     def append(
         self,

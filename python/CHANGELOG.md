@@ -5,6 +5,15 @@ All notable changes to the Python SDK package `marpledata` will be documented in
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [3.4.0] - 2026-07-16
+
+### Added
+
+- `Dataset.add_signal` and `Dataset.add_signals` to upload lake-native signal parquet onto an existing dataset (presign → write → PUT → complete). Accepts DataFrame, Arrow table, or on-disk parquet with `time` and `value` and/or `value_text`; supports concurrent uploads, `overwrite`, import `priority`, and automatic ~1M-row groups / ~16M-row file splits.
+- `Signal.wait_until_cold` to poll until a signal's storage status is `COLD` (typical after `add_signal`).
+- `SignalUpload` input model and `SignalsAlreadyExistError` for HTTP 409 presign conflicts (duplicate / already exists).
+- `Dataset.get_signals(signal_ids=...)` to fetch signals by ID (order preserved), plus `refresh` on `get_signal` / `get_signals` to bypass the local cache.
+
 ## [3.3.0] - 2026-06-29
 
 ### Added

@@ -5,18 +5,17 @@ from typing import TYPE_CHECKING
 if TYPE_CHECKING:
     from marple.db.dataset import Dataset
 
-
-from enum import StrEnum
 import tempfile
 from concurrent.futures import ThreadPoolExecutor
+from enum import StrEnum
 from pathlib import Path
-from typing import Any, Literal
+from typing import Any, Literal, Sequence
 
 import pandas as pd
 import pyarrow as pa
+import pyarrow.compute as pc
 import pyarrow.parquet as pq
 from pydantic import BaseModel, ConfigDict, Field
-import pyarrow.compute as pc
 
 from marple.db.constants import (
     COL_DATASET,
@@ -43,6 +42,12 @@ class SignalsAlreadyExistError(ValueError):
 
 
 class SignalUpload(BaseModel):
+    """Input for :meth:`Dataset.add_signal` / :meth:`Dataset.add_signals`.
+
+    ``data`` is a DataFrame, Arrow table, or parquet path with ``time`` and
+    ``value`` and/or ``value_text``.
+    """
+
     model_config = ConfigDict(arbitrary_types_allowed=True)
 
     name: str
@@ -60,7 +65,7 @@ class SignalUpload(BaseModel):
             data=data,
             metadata=self.metadata,
             overwrite=self.overwrite,
-            priority=self.priority,
+            priority=SignalImportPriority(self.priority),
             row_counts=row_counts,
             frequency=frequency,
         )
@@ -210,7 +215,7 @@ class SignalUploadComplete(BaseModel):
 
 def run_signal_uploads(
     dataset: "Dataset",
-    signals: list[SignalUpload | dict[str, Any]],
+    signals: Sequence[SignalUpload | dict[str, Any]],
     *,
     concurrency: int = 4,
 ) -> list[int]:
@@ -266,8 +271,8 @@ def _run_signal_upload(
 ) -> SignalUploadComplete:
     files = {file.index: file for file in signal.files}
     metadata, sums, offset = [], [], 0
-    with tempfile.TemporaryDirectory() as signal_dir:
-        signal_dir = Path(signal_dir)
+    with tempfile.TemporaryDirectory() as tmp:
+        signal_dir = Path(tmp)
         for index, rows in enumerate(planned.row_counts):
             local_path = signal_dir / f"part_{index}.parquet"
             part = planned.data.slice(offset, rows)  # still 3 cols

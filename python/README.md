@@ -56,7 +56,8 @@ dataset = dataset.wait_for_import(timeout=10)
 
 Upload lake-native parquet for additional signals (for example derived channels) on an existing dataset.
 Each signal is a DataFrame, Arrow table, or on-disk parquet with `time` and `value` and/or `value_text`.
-Times must overlap the dataset time range.
+Times must overlap the dataset time range. Use `overwrite=True` to replace an existing signal name;
+a conflict without overwrite raises `SignalsAlreadyExistError`.
 
 ```python
 import pandas as pd
@@ -75,9 +76,11 @@ signal = dataset.add_signal(
 
 # Batch: returns IDs as soon as upload completes (no wait)
 ids = dataset.add_signals([
-    {"name": "car.speed_kmh", "data": derived, "metadata": {"unit": "km/h"}},
-])
+    {"name": "car.speed_kmh", "data": derived, "metadata": {"unit": "km/h"}, "overwrite": True},
+], concurrency=4)
 signals = dataset.get_signals(signal_ids=ids)
+for s in signals:
+    s.wait_until_cold()
 ```
 
 #### Upload large files
@@ -166,8 +169,9 @@ if len(datasets) > 0:
 - **List streams**: `db.get_streams()`
 - **List datasets in a stream**: `stream.get_datasets()`
 - **Upload a file to a file-stream**: `stream.push_file(file_path, metadata={...}, concurrency=4)`
-- **Add signals to a dataset**: `dataset.add_signal(name, data)` or `dataset.add_signals([{...}], concurrency=4)` (returns IDs)
+- **Add signals to a dataset**: `dataset.add_signal(name, data, metadata=..., overwrite=False)` or `dataset.add_signals([{...}], concurrency=4)` (returns IDs)
 - **Wait until a signal is lake-cold**: `signal.wait_until_cold(timeout=60)`
+- **Fetch signals by ID**: `dataset.get_signals(signal_ids=[...], refresh=False)`
 - **Wait for a dataset to import**: `dataset.wait_for_import(timeout=60)`
 - **Download original uploaded file**: `dataset.download(destination_folder=".")`
 - **Download parquet for a signal**: `dataset.get_signal(signal_name).download(destination_folder=".")`

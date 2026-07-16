@@ -16,6 +16,36 @@ Import a file and wait for import
    dataset = stream.push_file("examples_race.csv", metadata={"driver": "Mbaerto"})
    dataset = dataset.wait_for_import(timeout=10)
 
+Add signals to an imported dataset
+----------------------------------
+
+After a file import finishes, you can attach additional lake-native signals
+(for example derived channels). Provide a DataFrame, Arrow table, or parquet path
+with ``time`` and ``value`` and/or ``value_text``. Signal times must overlap the
+dataset time range. Call ``wait_until_cold`` before reading the new signal.
+
+.. code-block:: python
+
+   import pandas as pd
+
+   speed = dataset.get_signal("car.speed").get_data()
+   derived = pd.DataFrame({
+       "time": speed.index.asi8,
+       "value": speed["value"] * 3.6,
+   })
+   signal = dataset.add_signal(
+       "car.speed_kmh",
+       derived,
+       metadata={"unit": "km/h"},
+   ).wait_until_cold()
+
+   # Batch upload (returns IDs; use overwrite=True to replace an existing name)
+   ids = dataset.add_signals([
+       {"name": "car.speed_kmh", "data": derived, "metadata": {"unit": "km/h"}, "overwrite": True},
+   ])
+   for s in dataset.get_signals(signal_ids=ids):
+       s.wait_until_cold()
+
 Upload large files
 ------------------
 
