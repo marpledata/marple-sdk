@@ -6,7 +6,7 @@ from contextlib import contextmanager
 from datetime import datetime
 from pathlib import Path
 from types import SimpleNamespace
-from typing import Any, Iterator
+from typing import Any, Iterator, cast
 from unittest.mock import MagicMock
 
 import pandas as pd
@@ -51,15 +51,18 @@ def _fake_dataset(
     dataset_id: int = 1,
     timestamp_start: int = 0,
     timestamp_stop: int = 10_000_000_000,
-) -> SimpleNamespace:
+) -> Dataset:
     client = MagicMock()
     client.post.return_value = SimpleNamespace(status_code=200, json=lambda: {"status": "success"})
-    return SimpleNamespace(
-        id=dataset_id,
-        datastream_id=99,
-        timestamp_start=timestamp_start,
-        timestamp_stop=timestamp_stop,
-        _client=client,
+    return cast(
+        Dataset,
+        SimpleNamespace(
+            id=dataset_id,
+            datastream_id=99,
+            timestamp_start=timestamp_start,
+            timestamp_stop=timestamp_stop,
+            _client=client,
+        ),
     )
 
 
@@ -125,7 +128,7 @@ def test_run_signal_upload_writes_lake_parquet(monkeypatch: pytest.MonkeyPatch, 
         }
     )
 
-    ids = run_signal_uploads(dataset, [SignalUpload(name="sdk.test", data=df)])  # type: ignore[arg-type]
+    ids = run_signal_uploads(dataset, [SignalUpload(name="sdk.test", data=df)])
     assert ids == [7]
     assert len(captured) == 1
 
@@ -147,7 +150,7 @@ def test_run_signal_upload_writes_lake_parquet(monkeypatch: pytest.MonkeyPatch, 
             assert stats.max == expected
 
     # Complete payload should include a positive parquet footer length.
-    complete_body = dataset._client.post.call_args.kwargs["json"]
+    complete_body = dataset._client.post.call_args.kwargs["json"]  # type: ignore[attr-defined]
     assert complete_body["signals"][0]["files"][0]["footer"] > 0
 
 
@@ -157,7 +160,7 @@ def test_run_signal_upload_splits_files(monkeypatch: pytest.MonkeyPatch, tmp_pat
     dataset = _fake_dataset()
     df = pd.DataFrame({COL_TIME: list(range(12)), COL_VAL: [float(i) for i in range(12)]})
 
-    run_signal_uploads(dataset, [{"name": "sdk.split", "data": df}])  # type: ignore[arg-type]
+    run_signal_uploads(dataset, [{"name": "sdk.split", "data": df}])
     assert [pq.read_metadata(p).num_rows for p in captured] == [5, 5, 2]
 
 
@@ -165,37 +168,31 @@ def test_signal_upload_validation_errors() -> None:
     dataset = _fake_dataset()
 
     with pytest.raises(ValueError, match="at least one row"):
-        SignalUpload(name="empty", data=pd.DataFrame({COL_TIME: [], COL_VAL: []})).plan_upload(dataset)  # type: ignore[arg-type]
+        SignalUpload(name="empty", data=pd.DataFrame({COL_TIME: [], COL_VAL: []})).plan_upload(dataset)
 
     with pytest.raises(ValueError, match="time"):
-        SignalUpload(name="no_time", data=pd.DataFrame({COL_VAL: [1.0]})).plan_upload(dataset)  # type: ignore[arg-type]
+        SignalUpload(name="no_time", data=pd.DataFrame({COL_VAL: [1.0]})).plan_upload(dataset)
 
     with pytest.raises(ValueError, match="value"):
-        SignalUpload(name="no_value", data=pd.DataFrame({COL_TIME: [1]})).plan_upload(dataset)  # type: ignore[arg-type]
+        SignalUpload(name="no_value", data=pd.DataFrame({COL_TIME: [1]})).plan_upload(dataset)
 
     with pytest.raises(ValueError, match="nulls"):
         SignalUpload(
             name="null_time",
             data=pd.DataFrame({COL_TIME: [1, None], COL_VAL: [1.0, 2.0]}),
-        ).plan_upload(
-            dataset
-        )  # type: ignore[arg-type]
+        ).plan_upload(dataset)
 
     with pytest.raises(ValueError, match="greater than or equal to 0"):
         SignalUpload(
             name="neg_time",
             data=pd.DataFrame({COL_TIME: [-1], COL_VAL: [1.0]}),
-        ).plan_upload(
-            dataset
-        )  # type: ignore[arg-type]
+        ).plan_upload(dataset)
 
     with pytest.raises(ValueError, match="does not overlap"):
         SignalUpload(
             name="oob",
             data=pd.DataFrame({COL_TIME: [20_000_000_000], COL_VAL: [1.0]}),
-        ).plan_upload(
-            dataset
-        )  # type: ignore[arg-type]
+        ).plan_upload(dataset)
 
 
 def test_signal_upload_non_finite_becomes_null() -> None:
@@ -203,9 +200,7 @@ def test_signal_upload_non_finite_becomes_null() -> None:
     planned = SignalUpload(
         name="nan",
         data=pd.DataFrame({COL_TIME: [0, 1], COL_VAL: [1.0, float("nan")]}),
-    ).plan_upload(
-        dataset
-    )  # type: ignore[arg-type]
+    ).plan_upload(dataset)
     values = planned.data.column(COL_VAL).to_pylist()
     assert values[0] == 1.0
     assert values[1] is None
@@ -216,9 +211,7 @@ def test_signal_upload_value_text_only() -> None:
     planned = SignalUpload(
         name="text",
         data=pd.DataFrame({COL_TIME: [0, 1], COL_VAL_TEXT: ["a", "b"]}),
-    ).plan_upload(
-        dataset
-    )  # type: ignore[arg-type]
+    ).plan_upload(dataset)
     assert planned.data.column(COL_VAL).null_count == 2
     assert planned.data.column(COL_VAL_TEXT).to_pylist() == ["a", "b"]
 
