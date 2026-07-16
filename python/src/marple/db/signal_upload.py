@@ -58,7 +58,7 @@ class SignalUpload(BaseModel):
             "priority": self.priority,
         }
 
-    def _validate_data(self) -> pa.Table:
+    def validate_data(self) -> pa.Table:
         if isinstance(self.data, pa.Table):
             table = self.data
         if isinstance(self.data, pd.DataFrame):
@@ -193,13 +193,13 @@ def run_signal_uploads(
 
 def _plan_upload(dataset: Dataset, signal: SignalUpload | dict[str, Any]) -> PlannedUpload:
     upload = signal if isinstance(signal, SignalUpload) else SignalUpload.model_validate(signal)
-    table = upload._validate_data()
-    _validate_time_range(table, dataset)
-    row_counts = _plan_row_counts(table.num_rows)
-    frequency = _estimate_frequency(table.column(COL_TIME))
+    data = upload.validate_data()
+    _validate_time_range(data, dataset)
+    row_counts = _plan_row_counts(data.num_rows)
+    frequency = _estimate_frequency(data.column(COL_TIME))
     return PlannedUpload(
         name=upload.name,
-        data=table,
+        data=data,
         metadata=upload.metadata,
         overwrite=upload.overwrite,
         priority=upload.priority,
