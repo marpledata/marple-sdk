@@ -187,12 +187,12 @@ class Dataset(BaseModel):
         if not signal_ids:
             return []
 
-        if not refresh and all(i in self._signals for i in signal_ids):
+        to_refresh = list(set(signal_ids) if refresh else (set(signal_ids) - set(self._signals.keys())))
+        if not to_refresh:
             return [self._signals[i] for i in signal_ids]
 
-        by_id: dict[int, Signal] = {}
-        for start in range(0, len(signal_ids), SIGNAL_IDS_QUERY_CHUNK):
-            chunk = list(signal_ids[start : start + SIGNAL_IDS_QUERY_CHUNK])
+        for start in range(0, len(to_refresh), SIGNAL_IDS_QUERY_CHUNK):
+            chunk = list(to_refresh[start : start + SIGNAL_IDS_QUERY_CHUNK])
             r = self._client.get(
                 f"/stream/{self.datastream_id}/dataset/{self.id}/signals",
                 params={"signal_ids": chunk},
@@ -205,10 +205,9 @@ class Dataset(BaseModel):
                         f"Failed to create signal {response.get('name')} (id {response.get('id')}): {e}"
                     )
                     continue
-                by_id[signal.id] = signal
                 self._signals[signal.id] = signal
 
-        return [by_id[i] for i in signal_ids if i in by_id]
+        return [self._signals[i] for i in signal_ids if i in self._signals]
 
     def get_data(
         self,
