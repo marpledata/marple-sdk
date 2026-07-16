@@ -137,18 +137,17 @@ class Dataset(BaseModel):
 
         return self._signals[id]
 
-    def _get_all_signals(self, *, refresh: bool = False) -> list["Signal"]:
-        if refresh or self.n_signals is None or len(self._signals) < self.n_signals:
-            r = self._client.get(f"/stream/{self.datastream_id}/dataset/{self.id}/signals")
-            self._signals.clear()
-            for response in validate_response(r, "Failed to get signals"):
-                try:
-                    signal = Signal(self._client, self.datastream_id, self.id, **response)
-                except ValidationError as e:
-                    warnings.warn(f"Failed to create signal {response['name']} (id {response['id']}): {e}")
-                    continue
-                self._signals[signal.id] = signal
-            self.n_signals = len(self._signals)
+    def _get_all_signals(self) -> list["Signal"]:
+        r = self._client.get(f"/stream/{self.datastream_id}/dataset/{self.id}/signals")
+        self._signals.clear()
+        for response in validate_response(r, "Failed to get signals"):
+            try:
+                signal = Signal(self._client, self.datastream_id, self.id, **response)
+            except ValidationError as e:
+                warnings.warn(f"Failed to create signal {response['name']} (id {response['id']}): {e}")
+                continue
+            self._signals[signal.id] = signal
+        self.n_signals = len(self._signals)
         return list(self._signals.values())
 
     def get_signals(
@@ -177,7 +176,7 @@ class Dataset(BaseModel):
             return self._get_signals_by_ids(list(signal_ids), refresh=refresh)
 
         if signal_names is None:
-            return self._get_all_signals(refresh=refresh)
+            return self._get_all_signals()
 
         matched = self._client.find_matching_signals(signal_names)
         if not matched:
@@ -365,12 +364,12 @@ class Dataset(BaseModel):
             return []
         if len(signals) > MAX_SIGNALS_PER_ADD:
             raise ValueError(f"Provide at most {MAX_SIGNALS_PER_ADD} signals per call")
-        ids = run_signal_uploads(self, signals, concurrency=concurrency)
-        self._client.invalidate_signal_map()
-        self._signals.clear()
-        # Bump so the next get_signals() refetches; corrected after _get_all_signals.
-        self.n_signals = (self.n_signals or 0) + len(ids)
-        return ids
+
+        signal_ids = run_signal_uploads(self, signals, concurrency=concurrency)
+        for signal_id in signal_ids:
+            if signal_id in self._signals:
+                del self._signals[signal_id]
+        return signal_ids
 
     def append(
         self,

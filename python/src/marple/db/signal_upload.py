@@ -261,6 +261,9 @@ def _presign_signals(dataset: "Dataset", planned: list[PlannedUpload]) -> dict[s
     missing = {p.name for p in planned} - signals.keys()
     if missing:
         raise ValueError(f"Presign missing signals: {sorted(missing)}")
+    if dataset._client._signal_map is not None:
+        for name, signal in signals.items():
+            dataset._client._signal_map[name] = signal.signal_id
     return signals
 
 

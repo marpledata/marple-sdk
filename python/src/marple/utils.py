@@ -130,10 +130,6 @@ class DBClient:
             self._signal_map = validate_response(r, "Get signals failed")
         return self._signal_map
 
-    def invalidate_signal_map(self) -> None:
-        """Clear the cached datapool signal name→id map so the next lookup refetches."""
-        self._signal_map = None
-
     def find_matching_signals(self, signals: Iterable[str | re.Pattern]) -> dict[str, int]:
         all_signals = self.get_signal_map()
         matching = dict()
