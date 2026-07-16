@@ -26,7 +26,7 @@ from marple.db.constants import (
     MAX_SIGNALS_PER_ADD,
     ROW_GROUP_SIZE,
 )
-from marple.utils import DBClient, validate_response
+from marple.utils import DBClient, validate_response, validate_storage_response
 
 
 class SignalsAlreadyExistError(ValueError):
@@ -70,7 +70,6 @@ class WrittenParquet:
 class PlannedUpload:
     upload: SignalUpload
     row_counts: list[int]
-    total_rows: int
     frequency: float
 
 
@@ -109,6 +108,13 @@ def estimate_frequency(times: np.ndarray) -> float:
     if median_diff <= 0:
         return 1.0
     return 1e9 / median_diff
+
+
+def _require_signal_columns(names: set[str], *, kind: str) -> None:
+    if COL_TIME not in names:
+        raise ValueError(f"{kind} must include a {COL_TIME!r} column")
+    if COL_VAL not in names and COL_VAL_TEXT not in names:
+        raise ValueError(f"{kind} must include {COL_VAL!r} and/or {COL_VAL_TEXT!r}")
 
 
 class LakeParquetWriter:
@@ -173,10 +179,7 @@ class LakeParquetWriter:
     def _to_lake_table(self, table: pa.Table) -> pa.Table:
         n = table.num_rows
         names = set(table.column_names)
-        if COL_TIME not in names:
-            raise ValueError(f"Parquet/table must include a {COL_TIME!r} column")
-        if COL_VAL not in names and COL_VAL_TEXT not in names:
-            raise ValueError(f"Parquet/table must include {COL_VAL!r} and/or {COL_VAL_TEXT!r}")
+        _require_signal_columns(names, kind="Parquet/table")
 
         time = table.column(COL_TIME).combine_chunks().cast(pa.int64())
         value = (
@@ -191,8 +194,8 @@ class LakeParquetWriter:
         )
         return pa.table(
             {
-                COL_DATASET: pa.array([self._dataset_id] * n, type=pa.int64()),
-                COL_SIG: pa.array([self._signal_id] * n, type=pa.int64()),
+                COL_DATASET: pa.repeat(pa.scalar(self._dataset_id, type=pa.int64()), n),
+                COL_SIG: pa.repeat(pa.scalar(self._signal_id, type=pa.int64()), n),
                 COL_TIME: time,
                 COL_VAL: value,
                 COL_VAL_TEXT: value_text,
@@ -200,32 +203,34 @@ class LakeParquetWriter:
             schema=LAKE_PARQUET_SCHEMA,
         )
 
-    def _ensure_writer(self) -> None:
-        if self._writer is not None:
-            return
-        self._current_path = self._dest_dir / f"{self._prefix}_{self._file_index:04d}.parquet"
-        self._writer = pq.ParquetWriter(self._current_path, LAKE_PARQUET_SCHEMA, compression="zstd")
+    def _ensure_writer(self) -> pq.ParquetWriter:
+        if self._writer is None:
+            self._current_path = self._dest_dir / f"{self._prefix}_{self._file_index:04d}.parquet"
+            self._writer = pq.ParquetWriter(self._current_path, LAKE_PARQUET_SCHEMA, compression="zstd")
+        return self._writer
 
     def _flush_buffer(self) -> None:
         if not self._buffer:
             return
-        self._ensure_writer()
-        assert self._writer is not None
+        writer = self._ensure_writer()
         table = pa.concat_tables(self._buffer)
-        self._writer.write_table(table, row_group_size=table.num_rows)
+        writer.write_table(table, row_group_size=table.num_rows)
         self._buffer.clear()
         self._buffer_rows = 0
 
     def _close_writer(self) -> None:
         if self._writer is None or self._current_path is None:
             return
+        rows = self._file_rows
         self._writer.close()
         path = self._current_path
-        size = path.stat().st_size
-        # num_rows for this file = sum of previous closed? track via metadata
-        metadata = pq.read_metadata(path)
         self.files.append(
-            WrittenParquet(local_path=path, size=size, footer=parquet_footer_size(path), rows=metadata.num_rows)
+            WrittenParquet(
+                local_path=path,
+                size=path.stat().st_size,
+                footer=parquet_footer_size(path),
+                rows=rows,
+            )
         )
         self._writer = None
         self._current_path = None
@@ -237,20 +242,32 @@ class LakeParquetWriter:
         self._close_writer()
 
 
-def _count_source_rows(upload: SignalUpload) -> int:
+def _inspect_source(upload: SignalUpload, frequency_sample_limit: int = 10_000) -> tuple[int, np.ndarray]:
+    """Return (total_rows, time sample) with a single source open."""
     if upload.data is not None:
-        return len(upload.data)
+        times = upload.data[COL_TIME].to_numpy()
+        return len(upload.data), times[:frequency_sample_limit]
+
     assert upload.path is not None
-    return pq.ParquetFile(upload.path).metadata.num_rows
+    pf = pq.ParquetFile(upload.path)
+    total_rows = pf.metadata.num_rows
+    batches = []
+    rows = 0
+    for batch in pf.iter_batches(batch_size=min(frequency_sample_limit, ROW_GROUP_SIZE), columns=[COL_TIME]):
+        batches.append(batch.column(0))
+        rows += batch.num_rows
+        if rows >= frequency_sample_limit:
+            break
+    if not batches:
+        return total_rows, np.array([], dtype=np.int64)
+    sample = pa.chunked_array(batches).combine_chunks().slice(0, frequency_sample_limit).to_numpy()
+    return total_rows, sample
 
 
 def _iter_source_tables(upload: SignalUpload, batch_size: int = ROW_GROUP_SIZE) -> Iterator[pa.Table]:
     if upload.data is not None:
         df = upload.data
-        if COL_TIME not in df.columns:
-            raise ValueError(f"DataFrame must contain a {COL_TIME!r} column")
-        if COL_VAL not in df.columns and COL_VAL_TEXT not in df.columns:
-            raise ValueError(f"DataFrame must contain {COL_VAL!r} and/or {COL_VAL_TEXT!r}")
+        _require_signal_columns(set(df.columns), kind="DataFrame")
         for start in range(0, len(df), batch_size):
             chunk = df.iloc[start : start + batch_size]
             arrays: dict[str, Any] = {COL_TIME: pa.array(chunk[COL_TIME], type=pa.int64())}
@@ -265,10 +282,7 @@ def _iter_source_tables(upload: SignalUpload, batch_size: int = ROW_GROUP_SIZE) 
     assert upload.path is not None
     pf = pq.ParquetFile(upload.path)
     names = set(pf.schema_arrow.names)
-    if COL_TIME not in names:
-        raise ValueError(f"Parquet file must include a {COL_TIME!r} column")
-    if COL_VAL not in names and COL_VAL_TEXT not in names:
-        raise ValueError(f"Parquet file must include {COL_VAL!r} and/or {COL_VAL_TEXT!r}")
+    _require_signal_columns(names, kind="Parquet file")
     columns = [COL_TIME]
     if COL_VAL in names:
         columns.append(COL_VAL)
@@ -276,23 +290,6 @@ def _iter_source_tables(upload: SignalUpload, batch_size: int = ROW_GROUP_SIZE) 
         columns.append(COL_VAL_TEXT)
     for batch in pf.iter_batches(batch_size=batch_size, columns=columns):
         yield pa.Table.from_batches([batch])
-
-
-def _sample_times_for_frequency(upload: SignalUpload, limit: int = 10_000) -> np.ndarray:
-    if upload.data is not None:
-        return upload.data[COL_TIME].to_numpy()[:limit]
-    assert upload.path is not None
-    pf = pq.ParquetFile(upload.path)
-    batches = []
-    rows = 0
-    for batch in pf.iter_batches(batch_size=min(limit, ROW_GROUP_SIZE), columns=[COL_TIME]):
-        batches.append(batch.column(0))
-        rows += batch.num_rows
-        if rows >= limit:
-            break
-    if not batches:
-        return np.array([], dtype=np.int64)
-    return pa.chunked_array(batches).combine_chunks().slice(0, limit).to_numpy()
 
 
 def plan_uploads(signals: Sequence[SignalUpload]) -> list[PlannedUpload]:
@@ -303,11 +300,13 @@ def plan_uploads(signals: Sequence[SignalUpload]) -> list[PlannedUpload]:
 
     planned: list[PlannedUpload] = []
     for upload in signals:
-        total_rows = _count_source_rows(upload)
-        row_counts = plan_file_rows(total_rows)
-        frequency = estimate_frequency(_sample_times_for_frequency(upload))
+        total_rows, times = _inspect_source(upload)
         planned.append(
-            PlannedUpload(upload=upload, row_counts=row_counts, total_rows=total_rows, frequency=frequency)
+            PlannedUpload(
+                upload=upload,
+                row_counts=plan_file_rows(total_rows),
+                frequency=estimate_frequency(times),
+            )
         )
     return planned
 
@@ -344,7 +343,7 @@ def _validate_presign_response(response: requests.Response, failure_message: str
     if response.status_code == 409:
         try:
             body = response.json()
-        except Exception:
+        except ValueError:
             body = {}
         raise SignalsAlreadyExistError(
             body.get("signals") or [],
@@ -356,16 +355,14 @@ def _validate_presign_response(response: requests.Response, failure_message: str
     return result
 
 
-def _put_presigned(client: DBClient, url: str, path: Path) -> None:
-    size = path.stat().st_size
+def _put_presigned(client: DBClient, url: str, path: Path, size: int) -> None:
     with path.open("rb") as file:
         response = client.storage_session.put(
             url,
             data=file,
             headers={"Content-Length": str(size)},
         )
-    if not response.ok:
-        raise RuntimeError(f"Storage PUT failed: status {response.status_code}: {response.text}")
+    validate_storage_response(response, "Storage PUT failed")
 
 
 def run_signal_uploads(
@@ -377,7 +374,6 @@ def run_signal_uploads(
     concurrency: int = 4,
 ) -> list[int]:
     """Presign, write lake parquet, PUT, and complete. Returns allocated signal IDs."""
-    names = [p.upload.name for p in planned]
     body = {
         "signals": [
             {
@@ -390,21 +386,13 @@ def run_signal_uploads(
         ]
     }
     r = client.post(f"/stream/{stream_id}/dataset/{dataset_id}/signal/uploads", json=body)
-    try:
-        presigned = _validate_presign_response(r, "Presign signal uploads failed")
-    except SignalsAlreadyExistError:
-        raise
-    except ValueError as exc:
-        hint = ""
-        if "already" in str(exc).lower() or "exist" in str(exc).lower():
-            hint = f" (retry with overwrite=True if placeholders remain for {names})"
-        raise ValueError(f"{exc}{hint}") from exc
+    presigned = _validate_presign_response(r, "Presign signal uploads failed")
 
     if len(presigned) != len(planned):
         raise ValueError(f"Presign returned {len(presigned)} signals, expected {len(planned)}")
 
     signal_ids = [int(item["signal_id"]) for item in presigned]
-    put_jobs: list[tuple[str, Path]] = []
+    put_jobs: list[tuple[str, Path, int]] = []
     complete_payload: list[dict[str, Any]] = []
 
     with tempfile.TemporaryDirectory(prefix="mdb-signal-upload-") as tmp:
@@ -421,7 +409,7 @@ def run_signal_uploads(
                 )
             file_meta = []
             for local, remote in zip(written, remote_files):
-                put_jobs.append((remote["url"], local.local_path))
+                put_jobs.append((remote["url"], local.local_path, local.size))
                 file_meta.append({"path": remote["path"], "size": local.size, "footer": local.footer})
             complete_payload.append(
                 {
@@ -434,7 +422,7 @@ def run_signal_uploads(
 
         workers = max(concurrency, 1)
         with ThreadPoolExecutor(max_workers=workers) as executor:
-            futures = [executor.submit(_put_presigned, client, url, path) for url, path in put_jobs]
+            futures = [executor.submit(_put_presigned, client, url, path, size) for url, path, size in put_jobs]
             for future in as_completed(futures):
                 future.result()
 

@@ -41,6 +41,11 @@ def validate_response(response: requests.Response, failure_message: str) -> Any:
     return r_json
 
 
+def validate_storage_response(response: requests.Response, failure_message: str) -> None:
+    if not response.ok:
+        raise RuntimeError(f"{failure_message}: status {response.status_code}: {response.text}")
+
+
 class TimeoutHTTPAdapter(HTTPAdapter):
     def __init__(self, *args, timeout=None, **kwargs):
         self.timeout = timeout
