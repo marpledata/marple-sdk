@@ -41,29 +41,13 @@ class SignalsAlreadyExistError(ValueError):
 
 
 class SignalUpload(BaseModel):
-    """One signal to add via :meth:`~marple.db.dataset.Dataset.add_signals`."""
-
     model_config = ConfigDict(arbitrary_types_allowed=True)
 
     name: str
-    data: pd.DataFrame | Path | str | None = None
+    data: pd.DataFrame | pa.Table | Path | str
     metadata: dict[str, Any] = Field(default_factory=dict)
     overwrite: bool = False
     priority: Literal["default", "high"] = "default"
-
-    def plan(self) -> PlannedUpload:
-        table = self._validate_data()
-        row_counts = _plan_row_counts(table.num_rows)
-        frequency = _estimate_frequency(table.column(COL_TIME))
-        return PlannedUpload(
-            name=self.name,
-            data=table,
-            metadata=self.metadata,
-            overwrite=self.overwrite,
-            priority=self.priority,
-            row_counts=row_counts,
-            frequency=frequency,
-        )
 
     def to_request(self) -> dict[str, Any]:
         return {
@@ -75,6 +59,8 @@ class SignalUpload(BaseModel):
         }
 
     def _validate_data(self) -> pa.Table:
+        if isinstance(self.data, pa.Table):
+            table = self.data
         if isinstance(self.data, pd.DataFrame):
             table = pa.Table.from_pandas(self.data, preserve_index=False)
         elif isinstance(self.data, (Path, str)):
@@ -120,26 +106,6 @@ class SignalUpload(BaseModel):
             raise ValueError(f"{self.name}: {COL_VAL_TEXT!r} must be string-compatible: {exc}") from exc
 
         return pa.Table.from_arrays([time, value, value_text], schema=LAKE_ARROW_SCHEMA)
-
-
-def _plan_row_counts(num_rows: int) -> list[int]:
-    full, remainder = divmod(num_rows, MAX_ROWS_PER_FILE)
-    return [MAX_ROWS_PER_FILE] * full + ([remainder] if remainder else [])
-
-
-def _estimate_frequency(time_col: pa.ChunkedArray | pa.Array) -> float:
-    chunks = [time_col] if isinstance(time_col, pa.Array) else time_col.chunks
-    median_diffs: list[float] = []
-    for chunk in chunks:
-        if len(chunk) < 2:
-            continue
-        diff = pc.pairwise_diff(chunk)
-        median_diff = pc.approximate_median(diff).as_py()
-        if median_diff is not None and median_diff > 0:
-            median_diffs.append(float(median_diff))
-    if not median_diffs:
-        raise ValueError("Signal frequency estimation failed: no valid differences found")
-    return 1e9 / min(median_diffs)
 
 
 class SignalImportPriority(StrEnum):
@@ -199,17 +165,18 @@ class SignalUploadComplete(BaseModel):
 
 def run_signal_uploads(
     dataset: Dataset,
-    planned: list[PlannedUpload],
+    signals: list[SignalUpload | dict[str, Any]],
     *,
     concurrency: int = 4,
 ) -> list[int]:
     """Presign, write lake parquet, PUT, and complete. Returns allocated signal IDs."""
+    planned = [_plan_upload(dataset, signal) for signal in signals]
     body = {"signals": [p.to_request() for p in planned]}
     r = dataset._client.post(f"/stream/{dataset.datastream_id}/dataset/{dataset.id}/signal/uploads", json=body)
     response = _validate_presign_response(r, "Presign signal uploads failed")
 
     def _upload_one(plan: PlannedUpload) -> SignalUploadComplete:
-        return run_signal_upload(dataset, plan, response[plan.name])
+        return _run_signal_upload(dataset, plan, response[plan.name])
 
     workers = max(concurrency, 1)
     with ThreadPoolExecutor(max_workers=workers) as executor:
@@ -224,7 +191,59 @@ def run_signal_uploads(
     return [c.id for c in completed]
 
 
-def run_signal_upload(
+def _plan_upload(dataset: Dataset, signal: SignalUpload | dict[str, Any]) -> PlannedUpload:
+    upload = signal if isinstance(signal, SignalUpload) else SignalUpload.model_validate(signal)
+    table = upload._validate_data()
+    _validate_time_range(table, dataset)
+    row_counts = _plan_row_counts(table.num_rows)
+    frequency = _estimate_frequency(table.column(COL_TIME))
+    return PlannedUpload(
+        name=upload.name,
+        data=table,
+        metadata=upload.metadata,
+        overwrite=upload.overwrite,
+        priority=upload.priority,
+        row_counts=row_counts,
+        frequency=frequency,
+    )
+
+
+def _validate_time_range(table: pa.Table, dataset: Dataset) -> None:
+    if dataset.timestamp_start is None or dataset.timestamp_stop is None:
+        return
+
+    time = table.column(COL_TIME)
+    time_min = pc.min(time).as_py()
+    time_max = pc.max(time).as_py()
+    start, stop = dataset.timestamp_start, dataset.timestamp_stop
+
+    if time_max < start or time_min > stop:
+        raise ValueError(
+            f"Signal time range [{time_min}, {time_max}] does not overlap " f"dataset range [{start}, {stop}]"
+        )
+
+
+def _plan_row_counts(num_rows: int) -> list[int]:
+    full, remainder = divmod(num_rows, MAX_ROWS_PER_FILE)
+    return [MAX_ROWS_PER_FILE] * full + ([remainder] if remainder else [])
+
+
+def _estimate_frequency(time_col: pa.ChunkedArray | pa.Array) -> float:
+    chunks = [time_col] if isinstance(time_col, pa.Array) else time_col.chunks
+    median_diffs: list[float] = []
+    for chunk in chunks:
+        if len(chunk) < 2:
+            continue
+        diff = pc.pairwise_diff(chunk)
+        median_diff = pc.approximate_median(diff).as_py()
+        if median_diff is not None and median_diff > 0:
+            median_diffs.append(float(median_diff))
+    if not median_diffs:
+        raise ValueError("Signal frequency estimation failed: no valid differences found")
+    return 1e9 / min(median_diffs)
+
+
+def _run_signal_upload(
     dataset: Dataset,
     planned: PlannedUpload,
     response: PresignedSignal,

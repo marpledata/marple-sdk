@@ -18,8 +18,6 @@ from marple.db.constants import COL_SIG, COL_TIME, COL_VAL, COL_VAL_TEXT, MAX_SI
 from marple.db.signal import Signal
 from marple.db.signal_upload import (
     SignalUpload,
-    coerce_signal_uploads,
-    plan_uploads,
     run_signal_uploads,
 )
 from marple.utils import DBClient, validate_response
@@ -260,6 +258,18 @@ class Dataset(BaseModel):
         r = self._client.post(f"/stream/{self.datastream_id}/dataset/{self.id}/signals", json=signals)
         validate_response(r, "Upsert signals failed")
 
+    def add_signal(
+        self,
+        name: str,
+        data: pd.DataFrame | Path | str,
+        metadata: dict[str, Any] = {},
+        overwrite: bool = False,
+        priority: Literal["default", "high"] = "default",
+    ) -> Signal:
+        return self.add_signals(
+            [SignalUpload(name=name, data=data, metadata=metadata, overwrite=overwrite, priority=priority)]
+        )[0]
+
     def add_signals(
         self,
         signals: Sequence[SignalUpload | dict[str, Any]],
@@ -268,48 +278,9 @@ class Dataset(BaseModel):
         timeout: float = 60,
         concurrency: int = 4,
     ) -> list[Signal]:
-        """
-        Upload lake-native parquet and add signals to this dataset.
-
-        Typical flow after importing a measurement file::
-
-            dataset = stream.push_file("run.csv").wait_for_import()
-            dataset.add_signals([{"name": "derived", "data": df}])
-
-        Each item is a :class:`~marple.db.signal_upload.SignalUpload` (or dict) with:
-        - ``name``: signal name
-        - ``data`` or ``path``: DataFrame / parquet with ``time`` and ``value`` and/or ``value_text``
-        - ``metadata``, ``overwrite``, ``priority`` (optional)
-
-        At most 1000 signals per call. When this dataset has ``timestamp_start`` and
-        ``timestamp_stop``, each signal's time range must overlap that window.
-
-        If a previous attempt left placeholders, retry with ``overwrite=True``.
-
-        Args:
-            signals: Signals to upload (DataFrame or on-disk parquet source).
-            wait: If True, poll until signals reach ``COLD`` storage status.
-            timeout: Seconds to wait when ``wait`` is True.
-            concurrency: Max concurrent storage PUTs.
-
-        Returns:
-            The uploaded signals (refreshed; ``COLD`` when ``wait`` succeeds).
-        """
-
         if len(signals) == 0 or len(signals) > MAX_SIGNALS_PER_ADD:
             raise ValueError(f"Provide at most {MAX_SIGNALS_PER_ADD} signals per call")
-        planned = [
-            (signal if isinstance(signal, SignalUpload) else SignalUpload.model_validate(signal)).plan()
-            for signal in signals
-        ]
-        signal_ids = run_signal_uploads(
-            self._client,
-            self.datastream_id,
-            self.id,
-            planned,
-            concurrency=concurrency,
-        )
-        self._signals.clear()
+        signal_ids = run_signal_uploads(self, signals, concurrency=concurrency)
         if wait:
             return self.wait_until_signals_cold(signal_ids, timeout=timeout)
         return self._fetch_signals_by_ids(signal_ids)
@@ -320,30 +291,24 @@ class Dataset(BaseModel):
         *,
         timeout: float = 60,
     ) -> list["Signal"]:
-        """
-        Wait until the given signals reach ``COLD`` storage status.
-
-        Polls with a single ``GET .../signals?signal_ids=...`` per cycle for the
-        whole batch. On timeout, warns and returns the current signal state.
-        """
         ids = list(signal_ids)
         if not ids:
             return []
 
         deadline = time.monotonic() + max(timeout, 0.1)
-        signals: list[Signal] = []
-        while time.monotonic() < deadline:
+        while True:
             signals = self._fetch_signals_by_ids(ids)
             if len(signals) == len(ids) and all(s.storage_status == "COLD" for s in signals):
                 return signals
+            if time.monotonic() >= deadline:
+                warnings.warn(f"Signals did not all reach COLD after {timeout} seconds")
+                return signals
             time.sleep(0.5)
-
-        warnings.warn(f"Signals did not all reach COLD after {timeout} seconds")
-        return self._fetch_signals_by_ids(ids)
 
     def _fetch_signals_by_ids(self, signal_ids: Sequence[int]) -> list["Signal"]:
         if not signal_ids:
             return []
+
         r = self._client.get(
             f"/stream/{self.datastream_id}/dataset/{self.id}/signals",
             params={"signal_ids": list(signal_ids)},
