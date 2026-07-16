@@ -16,6 +16,27 @@ Import a file and wait for import
    dataset = stream.push_file("examples_race.csv", metadata={"driver": "Mbaerto"})
    dataset = dataset.wait_for_import(timeout=10)
 
+Add signals to an imported dataset
+----------------------------------
+
+After a file import finishes, you can attach additional lake-native signals
+(for example derived channels). Provide a DataFrame or parquet path with
+``time`` and ``value`` and/or ``value_text``. Signal times must overlap the
+dataset time range. At most 1000 signals are accepted per call.
+
+.. code-block:: python
+
+   import pandas as pd
+
+   speed = dataset.get_signal("car.speed").get_data()
+   derived = pd.DataFrame({
+       "time": speed.index.asi8,
+       "value": speed["value"] * 3.6,
+   })
+   signals = dataset.add_signals([
+       {"name": "car.speed_kmh", "data": derived, "metadata": {"unit": "km/h"}},
+   ])
+
 Upload large files
 ------------------
 

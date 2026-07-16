@@ -52,6 +52,25 @@ dataset = stream.push_file("examples_race.csv", metadata={"driver": "Mbaerto"})
 dataset = dataset.wait_for_import(timeout=10)
 ```
 
+#### Add signals to an imported dataset
+
+Upload lake-native parquet for additional signals (for example derived channels) on an existing dataset.
+Each signal is a DataFrame or on-disk parquet with `time` and `value` and/or `value_text`. Times must overlap the dataset time range. At most 1000 signals per call.
+
+```python
+import pandas as pd
+
+speed = dataset.get_signal("car.speed").get_data()
+derived = pd.DataFrame({
+    "time": speed.index.asi8,
+    "value": speed["value"] * 3.6,
+})
+signals = dataset.add_signals([
+    {"name": "car.speed_kmh", "data": derived, "metadata": {"unit": "km/h"}},
+])
+# signals wait until COLD by default; use wait=False for fire-and-forget
+```
+
 #### Upload large files
 
 `stream.push_file(...)` starts an ingestion and lets the Marple DB API choose the best upload mode. Depending on the deployment and file size, the SDK can upload through the API server, upload directly to Azure Blob Storage, use a single presigned URL, or split the file into multipart uploads.
@@ -138,6 +157,7 @@ if len(datasets) > 0:
 - **List streams**: `db.get_streams()`
 - **List datasets in a stream**: `stream.get_datasets()`
 - **Upload a file to a file-stream**: `stream.push_file(file_path, metadata={...}, concurrency=4)`
+- **Add signals to a dataset**: `dataset.add_signals([{...}], wait=True, concurrency=4)`
 - **Wait for a dataset to import**: `dataset.wait_for_import(timeout=60)`
 - **Download original uploaded file**: `dataset.download(destination_folder=".")`
 - **Download parquet for a signal**: `dataset.get_signal(signal_name).download(destination_folder=".")`

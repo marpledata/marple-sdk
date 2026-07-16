@@ -13,12 +13,22 @@ from marple.db.constants import SAAS_URL, SCHEMA
 from marple.db.dataset import Dataset, DatasetList
 from marple.db.datastream import DataStream
 from marple.db.signal import Signal
+from marple.db.signal_upload import SignalsAlreadyExistError, SignalUpload
 from marple.utils import DBClient, validate_response
 
 if TYPE_CHECKING:
     from trino.dbapi import Connection
 
-__all__ = ["DB", "DataStream", "Dataset", "DatasetList", "Signal", "SCHEMA"]
+__all__ = [
+    "DB",
+    "DataStream",
+    "Dataset",
+    "DatasetList",
+    "Signal",
+    "SignalUpload",
+    "SignalsAlreadyExistError",
+    "SCHEMA",
+]
 
 
 def deprecated(func):
