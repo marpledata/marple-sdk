@@ -14,7 +14,15 @@ import pyarrow.parquet as pq
 from pandas._typing import AggFuncType, Frequency
 from pydantic import BaseModel, ConfigDict, Field, PrivateAttr, ValidationError
 
-from marple.db.constants import COL_SIG, COL_TIME, COL_VAL, COL_VAL_TEXT, MAX_SIGNALS_PER_ADD, SCHEMA
+from marple.db.constants import (
+    COL_SIG,
+    COL_TIME,
+    COL_VAL,
+    COL_VAL_TEXT,
+    MAX_SIGNALS_PER_ADD,
+    SCHEMA,
+    SIGNAL_IDS_QUERY_CHUNK,
+)
 from marple.db.signal import Signal
 from marple.db.signal_upload import (
     SignalUpload,
@@ -92,8 +100,20 @@ class Dataset(BaseModel):
         r = client.get(f"/datapool/{client.datapool}/dataset", params={"id": dataset_id, "path": dataset_path})
         return cls(client=client, **validate_response(r, "Get dataset failed"))
 
-    def get_signal(self, name: str | None = None, id: int | None = None) -> Optional["Signal"]:
-        """Get a specific signal in this dataset by its name or ID."""
+    def get_signal(
+        self,
+        name: str | None = None,
+        id: int | None = None,
+        *,
+        refresh: bool = False,
+    ) -> Optional["Signal"]:
+        """Get a specific signal in this dataset by its name or ID.
+
+        Args:
+            name: Signal name (resolved via the datapool signal map).
+            id: Signal ID.
+            refresh: If True, refetch from the API even when cached.
+        """
         if name is None and id is None:
             raise ValueError("Either name or id must be provided.")
         if name is not None and id is not None:
@@ -105,7 +125,7 @@ class Dataset(BaseModel):
         if id is None:
             raise ValueError(f"Signal with name {name} not found in dataset with id {self.id}.")
 
-        if id not in self._signals:
+        if refresh or id not in self._signals:
             r = self._client.get(f"/stream/{self.datastream_id}/dataset/{self.id}/signal/{id}")
             try:
                 response = validate_response(r, f"Get signal data for signal ID {id} failed")
@@ -117,8 +137,8 @@ class Dataset(BaseModel):
 
         return self._signals[id]
 
-    def _get_all_signals(self) -> list["Signal"]:
-        if self.n_signals is None or len(self._signals) < self.n_signals:
+    def _get_all_signals(self, *, refresh: bool = False) -> list["Signal"]:
+        if refresh or self.n_signals is None or len(self._signals) < self.n_signals:
             r = self._client.get(f"/stream/{self.datastream_id}/dataset/{self.id}/signals")
             self._signals.clear()
             for response in validate_response(r, "Failed to get signals"):
@@ -130,33 +150,65 @@ class Dataset(BaseModel):
                 self._signals[signal.id] = signal
         return list(self._signals.values())
 
-    def get_signals(self, signal_names: Iterable[str | re.Pattern] | None = None) -> list["Signal"]:
+    def get_signals(
+        self,
+        signal_names: Iterable[str | re.Pattern] | None = None,
+        *,
+        signal_ids: Iterable[int] | None = None,
+        refresh: bool = False,
+    ) -> list["Signal"]:
         """
-        Get the signals in this dataset.
+        Get signals in this dataset.
 
-        If `signal_names` is provided, only signals with names matching any of the specified strings or regular expression patterns are returned.
-        If `signal_names` is None, all signals in the dataset are returned.
+        - If neither ``signal_names`` nor ``signal_ids`` is set: all signals.
+        - If ``signal_names`` is set: signals matching any of the names / patterns.
+        - If ``signal_ids`` is set: signals with those IDs (order preserved).
+
+        Provide only one of ``signal_names`` or ``signal_ids``.
+
+        Args:
+            refresh: If True, refetch from the API even when signals are cached.
         """
+        if signal_names is not None and signal_ids is not None:
+            raise ValueError("Provide only one of signal_names or signal_ids")
+
+        if signal_ids is not None:
+            return self._get_signals_by_ids(list(signal_ids), refresh=refresh)
+
         if signal_names is None:
-            return self._get_all_signals()
-        signal_ids = self._client.find_matching_signals(signal_names)
-        if len(signal_ids) == 0:
+            return self._get_all_signals(refresh=refresh)
+
+        matched = self._client.find_matching_signals(signal_names)
+        if not matched:
+            return []
+        return self._get_signals_by_ids(list(matched.values()), refresh=refresh)
+
+    def _get_signals_by_ids(self, signal_ids: Sequence[int], *, refresh: bool = False) -> list["Signal"]:
+        if not signal_ids:
             return []
 
-        r = self._client.get(
-            f"/stream/{self.datastream_id}/dataset/{self.id}/signals",
-            params={"signal_ids": list(signal_ids.values())},
-        )
-        result: list[Signal] = []
-        for response in validate_response(r, "Failed to get signals by name"):
-            try:
-                signal = Signal(self._client, self.datastream_id, self.id, **response)
-                result.append(signal)
-            except ValidationError as e:
-                warnings.warn(f"Failed to create signal {response['name']} (id {response['id']}): {e}")
-                continue
-            self._signals[signal.id] = signal
-        return result
+        if not refresh and all(i in self._signals for i in signal_ids):
+            return [self._signals[i] for i in signal_ids]
+
+        by_id: dict[int, Signal] = {}
+        for start in range(0, len(signal_ids), SIGNAL_IDS_QUERY_CHUNK):
+            chunk = list(signal_ids[start : start + SIGNAL_IDS_QUERY_CHUNK])
+            r = self._client.get(
+                f"/stream/{self.datastream_id}/dataset/{self.id}/signals",
+                params={"signal_ids": chunk},
+            )
+            for response in validate_response(r, "Failed to get signals by id"):
+                try:
+                    signal = Signal(self._client, self.datastream_id, self.id, **response)
+                except ValidationError as e:
+                    warnings.warn(
+                        f"Failed to create signal {response.get('name')} (id {response.get('id')}): {e}"
+                    )
+                    continue
+                by_id[signal.id] = signal
+                self._signals[signal.id] = signal
+
+        return [by_id[i] for i in signal_ids if i in by_id]
 
     def get_data(
         self,
@@ -266,66 +318,24 @@ class Dataset(BaseModel):
         overwrite: bool = False,
         priority: Literal["default", "high"] = "default",
     ) -> Signal:
-        return self.add_signals(
-            [SignalUpload(name=name, data=data, metadata=metadata, overwrite=overwrite, priority=priority)]
+        signal_id = self.add_signals(
+            [SignalUpload(name=name, data=data, metadata=metadata or {}, overwrite=overwrite, priority=priority)]
         )[0]
+        signal = self.get_signal(id=signal_id)
+        assert signal is not None
+        return signal
 
     def add_signals(
         self,
         signals: Sequence[SignalUpload | dict[str, Any]],
         *,
-        wait: bool = True,
-        timeout: float = 60,
         concurrency: int = 4,
-    ) -> list[Signal]:
+    ) -> list[int]:
         if not signals:
             return []
         if len(signals) > MAX_SIGNALS_PER_ADD:
             raise ValueError(f"Provide at most {MAX_SIGNALS_PER_ADD} signals per call")
-
-        signal_ids = run_signal_uploads(self, signals, concurrency=concurrency)
-        if wait:
-            return self.wait_until_signals_cold(signal_ids, timeout=timeout)
-        return self._fetch_signals_by_ids(signal_ids)
-
-    def wait_until_signals_cold(
-        self,
-        signal_ids: Sequence[int],
-        *,
-        timeout: float = 60,
-    ) -> list["Signal"]:
-        ids = list(signal_ids)
-        if not ids:
-            return []
-
-        deadline = time.monotonic() + max(timeout, 0.1)
-        while True:
-            signals = self._fetch_signals_by_ids(ids)
-            if len(signals) == len(ids) and all(s.storage_status == "COLD" for s in signals):
-                return signals
-            if time.monotonic() >= deadline:
-                warnings.warn(f"Signals did not all reach COLD after {timeout} seconds")
-                return signals
-            time.sleep(0.5)
-
-    def _fetch_signals_by_ids(self, signal_ids: Sequence[int]) -> list["Signal"]:
-        if not signal_ids:
-            return []
-
-        r = self._client.get(
-            f"/stream/{self.datastream_id}/dataset/{self.id}/signals",
-            params={"signal_ids": list(signal_ids)},
-        )
-        by_id: dict[int, Signal] = {}
-        for response in validate_response(r, "Failed to get signals by id"):
-            try:
-                signal = Signal(self._client, self.datastream_id, self.id, **response)
-            except ValidationError as e:
-                warnings.warn(f"Failed to create signal id {response.get('id')}: {e}")
-                continue
-            by_id[signal.id] = signal
-            self._signals[signal.id] = signal
-        return [by_id[i] for i in signal_ids if i in by_id]
+        return run_signal_uploads(self, signals, concurrency=concurrency)
 
     def append(
         self,

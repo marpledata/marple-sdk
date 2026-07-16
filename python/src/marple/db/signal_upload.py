@@ -15,7 +15,6 @@ from typing import Any, Literal
 import pandas as pd
 import pyarrow as pa
 import pyarrow.parquet as pq
-import requests
 from pydantic import BaseModel, ConfigDict, Field
 import pyarrow.compute as pc
 
@@ -220,12 +219,10 @@ def run_signal_uploads(
         (s if isinstance(s, SignalUpload) else SignalUpload.model_validate(s)).plan_upload(dataset)
         for s in signals
     ]
-    body = {"signals": [p.to_request() for p in planned]}
-    r = dataset._client.post(f"/stream/{dataset.datastream_id}/dataset/{dataset.id}/signal/uploads", json=body)
-    response = _validate_presign_response(r, "Presign signal uploads failed")
+    presigned_signals = _presign_signals(dataset, planned)
 
     def _upload_one(plan: PlannedUpload) -> SignalUploadComplete:
-        return _run_signal_upload(dataset, plan, response[plan.name])
+        return _run_signal_upload(dataset, plan, presigned_signals[plan.name])
 
     workers = max(concurrency, 1)
     with ThreadPoolExecutor(max_workers=workers) as executor:
@@ -240,12 +237,34 @@ def run_signal_uploads(
     return [c.id for c in completed]
 
 
+def _presign_signals(dataset: "Dataset", planned: list[PlannedUpload]) -> dict[str, PresignedSignal]:
+    body = {"signals": [p.to_request() for p in planned]}
+    r = dataset._client.post(f"/stream/{dataset.datastream_id}/dataset/{dataset.id}/signal/uploads", json=body)
+    if r.status_code == 409:
+        try:
+            body = r.json()
+        except ValueError:
+            body = {}
+        raise SignalsAlreadyExistError(
+            body.get("signals") or [],
+            message=f"Presign signal uploads failed: {body.get('error', 'signals_already_exist')}",
+        )
+    signals = {
+        item["name"]: PresignedSignal.model_validate(item)
+        for item in validate_response(r, "Presign signal uploads failed")
+    }
+    missing = {p.name for p in planned} - signals.keys()
+    if missing:
+        raise ValueError(f"Presign missing signals: {sorted(missing)}")
+    return signals
+
+
 def _run_signal_upload(
     dataset: "Dataset",
     planned: PlannedUpload,
-    response: PresignedSignal,
+    signal: PresignedSignal,
 ) -> SignalUploadComplete:
-    files = {file.index: file for file in response.files}
+    files = {file.index: file for file in signal.files}
     metadata, sums, offset = [], [], 0
     with tempfile.TemporaryDirectory() as signal_dir:
         signal_dir = Path(signal_dir)
@@ -255,7 +274,7 @@ def _run_signal_upload(
             lake = pa.table(
                 {
                     COL_DATASET: pa.repeat(pa.scalar(dataset.id, type=pa.int64()), rows),
-                    COL_SIG: pa.repeat(pa.scalar(response.signal_id, type=pa.int64()), rows),
+                    COL_SIG: pa.repeat(pa.scalar(signal.signal_id, type=pa.int64()), rows),
                     COL_TIME: part.column(COL_TIME),
                     COL_VAL: part.column(COL_VAL),
                     COL_VAL_TEXT: part.column(COL_VAL_TEXT),
@@ -269,7 +288,7 @@ def _run_signal_upload(
 
     sums = [s for s in sums if s is not None]
     return SignalUploadComplete(
-        id=response.signal_id,
+        id=signal.signal_id,
         priority=planned.priority,
         stats=SignalUploadStats(sum=sum(sums) if sums else None, frequency=planned.frequency),
         files=metadata,
@@ -283,19 +302,3 @@ def _upload_parquet(client: DBClient, remote: PresignedParquetFile, local_path: 
         footer = int.from_bytes(file.read(4), "little")
     validate_storage_response(response, "Storage PUT failed")
     return ParquetUploadMetadata(path=remote.path, size=local_path.stat().st_size, footer=footer)
-
-
-def _validate_presign_response(response: requests.Response, failure_message: str) -> dict[str, PresignedSignal]:
-    if response.status_code == 409:
-        try:
-            body = response.json()
-        except ValueError:
-            body = {}
-        raise SignalsAlreadyExistError(
-            body.get("signals") or [],
-            message=f"{failure_message}: {body.get('error', 'signals_already_exist')}",
-        )
-    return {
-        item["name"]: PresignedSignal.model_validate(item)
-        for item in validate_response(response, failure_message)
-    }

@@ -1,10 +1,12 @@
 from pathlib import Path
-from typing import Literal
+import time
+from typing import Literal, Self
+import warnings
 
 import pandas as pd
 from pydantic import BaseModel, PrivateAttr
 
-from marple.utils import DBClient
+from marple.utils import DBClient, validate_response
 
 
 class Signal(BaseModel):
@@ -80,3 +82,16 @@ class Signal(BaseModel):
             A pandas DataFrame containing the signal data.
         """
         return self._client.get_dataframe(self.dataset_id, self.id, dtype, refresh_cache)
+
+    def wait_until_cold(self, timeout: float = 60) -> Self:
+        deadline = time.monotonic() + max(timeout, 0.1)
+        while True:
+            r = self._client.get(f"/stream/{self.datastream_id}/dataset/{self.dataset_id}/signal/{self.id}")
+            data = validate_response(r, f"Get signal {self.id} failed")
+            fresh = Signal(self._client, self.datastream_id, self.dataset_id, **data)
+            if fresh.storage_status == "COLD":
+                return fresh
+            if time.monotonic() >= deadline:
+                warnings.warn(f"Signal {self.id} did not reach COLD after {timeout} seconds")
+                return fresh
+            time.sleep(0.5)

@@ -55,7 +55,8 @@ dataset = dataset.wait_for_import(timeout=10)
 #### Add signals to an imported dataset
 
 Upload lake-native parquet for additional signals (for example derived channels) on an existing dataset.
-Each signal is a DataFrame or on-disk parquet with `time` and `value` and/or `value_text`. Times must overlap the dataset time range. At most 1000 signals per call.
+Each signal is a DataFrame, Arrow table, or on-disk parquet with `time` and `value` and/or `value_text`.
+Times must overlap the dataset time range.
 
 ```python
 import pandas as pd
@@ -65,10 +66,18 @@ derived = pd.DataFrame({
     "time": speed.index.asi8,
     "value": speed["value"] * 3.6,
 })
-signals = dataset.add_signals([
+# Single signal: wait until lake-cold before reading
+signal = dataset.add_signal(
+    "car.speed_kmh",
+    derived,
+    metadata={"unit": "km/h"},
+).wait_until_cold()
+
+# Batch: returns IDs as soon as upload completes (no wait)
+ids = dataset.add_signals([
     {"name": "car.speed_kmh", "data": derived, "metadata": {"unit": "km/h"}},
 ])
-# signals wait until COLD by default; use wait=False for fire-and-forget
+signals = dataset.get_signals(signal_ids=ids)
 ```
 
 #### Upload large files
@@ -157,7 +166,8 @@ if len(datasets) > 0:
 - **List streams**: `db.get_streams()`
 - **List datasets in a stream**: `stream.get_datasets()`
 - **Upload a file to a file-stream**: `stream.push_file(file_path, metadata={...}, concurrency=4)`
-- **Add signals to a dataset**: `dataset.add_signals([{...}], wait=True, concurrency=4)`
+- **Add signals to a dataset**: `dataset.add_signal(name, data)` or `dataset.add_signals([{...}], concurrency=4)` (returns IDs)
+- **Wait until a signal is lake-cold**: `signal.wait_until_cold(timeout=60)`
 - **Wait for a dataset to import**: `dataset.wait_for_import(timeout=60)`
 - **Download original uploaded file**: `dataset.download(destination_folder=".")`
 - **Download parquet for a signal**: `dataset.get_signal(signal_name).download(destination_folder=".")`

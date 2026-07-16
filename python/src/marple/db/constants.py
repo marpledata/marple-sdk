@@ -24,6 +24,7 @@ SCHEMA = pa.schema(
 ROW_GROUP_SIZE = 1_048_576  # ~1M rows per row group
 MAX_ROWS_PER_FILE = 16 * ROW_GROUP_SIZE  # ~16M rows per file
 MAX_SIGNALS_PER_ADD = 10_000
+SIGNAL_IDS_QUERY_CHUNK = 200  # max signal_ids per GET to stay under typical URL limits
 
 # Lake / Iceberg arrow schema during signal upload planning / validation.
 LAKE_ARROW_SCHEMA = pa.schema(
