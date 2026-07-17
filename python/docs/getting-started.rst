@@ -36,7 +36,7 @@ Marple DB quickstart
    dataset = stream.push_file("examples_race.csv", metadata={"driver": "Mbaerto"})
    dataset = dataset.wait_for_import(timeout=10)
 
-After import, you can add derived lake-native signals with
+After import, you can add derived signals with
 ``dataset.add_signal(...)`` / ``dataset.add_signals([...])``. See
 :doc:`tutorials` for a full example.
 

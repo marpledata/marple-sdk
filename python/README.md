@@ -54,7 +54,7 @@ dataset = dataset.wait_for_import(timeout=10)
 
 #### Add signals to an imported dataset
 
-Upload lake-native parquet for additional signals (for example derived channels) on an existing dataset.
+Upload additional signals (for example derived channels) on an existing dataset.
 Each signal is a DataFrame, Arrow table, or on-disk parquet matching `LAKE_ARROW_SCHEMA`:
 columns `time` (int64 nanoseconds) plus `value` and/or `value_text`.
 Times must overlap the dataset time range. Use `overwrite=True` to replace an existing signal name;
@@ -81,8 +81,6 @@ ids = dataset.add_signals([
     {"name": "car.speed_kmh", "data": derived, "metadata": {"unit": "km/h"}, "overwrite": True},
 ], concurrency=4)
 signals = dataset.get_signals(signal_ids=ids)
-for s in signals:
-    s.wait_until_cold()
 ```
 
 #### Upload large files

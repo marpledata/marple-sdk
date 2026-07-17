@@ -19,11 +19,11 @@ Import a file and wait for import
 Add signals to an imported dataset
 ----------------------------------
 
-After a file import finishes, you can attach additional lake-native signals
+After a file import finishes, you can attach additional signals
 (for example derived channels). Input data must match
 :data:`marple.db.LAKE_ARROW_SCHEMA`: ``time`` (int64 nanoseconds) plus
 ``value`` and/or ``value_text``. Signal times must overlap the dataset time
-range. Call ``wait_until_cold`` before reading the new signal.
+range.
 
 .. code-block:: python
 
@@ -45,8 +45,6 @@ range. Call ``wait_until_cold`` before reading the new signal.
    ids = dataset.add_signals([
        {"name": "car.speed_kmh", "data": derived, "metadata": {"unit": "km/h"}, "overwrite": True},
    ])
-   for s in dataset.get_signals(signal_ids=ids):
-       s.wait_until_cold()
 
 Upload large files
 ------------------
