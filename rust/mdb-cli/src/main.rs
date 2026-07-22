@@ -86,8 +86,12 @@ enum Commands {
         extension: Option<String>,
 
         /// Skip existing datasets
-        #[arg(short, long)]
+        #[arg(short, long, conflicts_with = "overwrite")]
         skip_existing: bool,
+
+        /// Overwrite existing datasets
+        #[arg(long, conflicts_with = "skip_existing")]
+        overwrite: bool,
 
         /// Max concurrent direct-storage part uploads
         #[arg(long, default_value_t = 4)]
@@ -482,6 +486,7 @@ struct IngestOptions<'a> {
     recursive: bool,
     extension: Option<&'a str>,
     skip_existing: bool,
+    overwrite: bool,
     concurrency: usize,
     upload_mode: UploadModeOverride,
 }
@@ -591,6 +596,7 @@ async fn ingest_path(
                 .concurrency(options.concurrency)
                 .upload_mode(options.upload_mode)
                 .progress(progress)
+                .overwrite(options.overwrite)
                 .build(),
         )
         .await
@@ -676,6 +682,7 @@ async fn main() -> Result<()> {
             recursive,
             extension,
             skip_existing,
+            overwrite,
             concurrency,
             upload_mode,
         } => {
@@ -689,6 +696,7 @@ async fn main() -> Result<()> {
                     recursive,
                     extension: extension.as_deref(),
                     skip_existing,
+                    overwrite,
                     concurrency,
                     upload_mode: upload_mode.into(),
                 },
