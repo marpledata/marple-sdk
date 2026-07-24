@@ -255,15 +255,19 @@ def test_push_file_server_upload(db: DB) -> None:
 
 
 def test_push_file_overwrite(db: DB) -> None:
-    metadata = {"upload_mode": "server"}
+    metadata_v1 = {"version": "1"}
+    metadata_v2 = {"version": "2"}
     with _upload_test_stream(db, "overwrite") as stream:
-        _push_and_assert_upload(stream, EXAMPLE_CSV, metadata, upload_mode="server")
-        # Second push with overwrite=True should succeed
+        _push_and_assert_upload(stream, EXAMPLE_CSV, metadata_v1)
+        # Second push with overwrite=True should succeed, update metadata, and not duplicate the dataset
         dataset_overwritten = _push_and_assert_upload(
-            stream, EXAMPLE_CSV, metadata, upload_mode="server", overwrite=True
+            stream, EXAMPLE_CSV, metadata_v2, overwrite=True
         )
 
-    assert dataset_overwritten.import_status == "FINISHED"
+        assert dataset_overwritten.import_status == "FINISHED"
+        assert dataset_overwritten.metadata.get("version") == "2"
+        # Ensure it actually overwrote instead of duplicating
+        assert len(stream.get_datasets()) == 1
 
 
 def test_push_file_multipart_upload(db: DB) -> None:

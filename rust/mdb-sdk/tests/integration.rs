@@ -329,35 +329,40 @@ async fn run_server_upload_flow(db: &MarpleDB) -> anyhow::Result<()> {
 async fn run_overwrite_flow(db: &MarpleDB) -> anyhow::Result<()> {
     let csv_path = example_csv_path();
     let stream = create_test_stream(db, "overwrite").await?;
-    let upload_mode = "server";
 
     upload_and_assert_dataset(
         db,
         stream.id,
         &csv_path,
         PushFileOptions::builder()
-            .metadata([("upload_mode".to_string(), serde_json::json!(upload_mode))])
-            .upload_mode(UploadModeOverride::Server)
+            .metadata([("version".to_string(), serde_json::json!("1"))])
             .build(),
-        &[("upload_mode", upload_mode)],
+        &[("version", "1")],
         false,
     )
     .await?;
 
-    // Second upload with overwrite=true should succeed
+    // Second upload with overwrite=true should succeed, update metadata, and not duplicate the dataset
     upload_and_assert_dataset(
         db,
         stream.id,
         &csv_path,
         PushFileOptions::builder()
-            .metadata([("upload_mode".to_string(), serde_json::json!(upload_mode))])
-            .upload_mode(UploadModeOverride::Server)
+            .metadata([("version".to_string(), serde_json::json!("2"))])
             .overwrite(true)
             .build(),
-        &[("upload_mode", upload_mode)],
+        &[("version", "2")],
         false,
     )
     .await?;
+
+    // Ensure it actually overwrote instead of duplicating
+    let datasets = db.get_datasets(stream.id).await?;
+    anyhow::ensure!(
+        datasets.len() == 1,
+        "Expected exactly 1 dataset after overwrite, found {}",
+        datasets.len()
+    );
 
     Ok(())
 }
