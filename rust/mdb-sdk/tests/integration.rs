@@ -243,6 +243,17 @@ async fn test_sdk_server_upload_flow() -> anyhow::Result<()> {
 }
 
 #[tokio::test]
+async fn test_sdk_overwrite_flow() -> anyhow::Result<()> {
+    let Some((token, url)) = maybe_skip_integration() else {
+        eprintln!("Skipping Rust SDK integration test: missing env var MDB_TOKEN");
+        return Ok(());
+    };
+
+    let db = db(&token, &url)?;
+    run_with_cleanup(&db, || async { run_overwrite_flow(&db).await }).await
+}
+
+#[tokio::test]
 async fn test_sdk_multipart_upload_flow() -> anyhow::Result<()> {
     let Some((token, url)) = maybe_skip_integration() else {
         eprintln!("Skipping Rust SDK integration test: missing env var MDB_TOKEN");
@@ -306,6 +317,42 @@ async fn run_server_upload_flow(db: &MarpleDB) -> anyhow::Result<()> {
         PushFileOptions::builder()
             .metadata([("upload_mode".to_string(), json!(upload_mode))])
             .upload_mode(UploadModeOverride::Server)
+            .build(),
+        &[("upload_mode", upload_mode)],
+        false,
+    )
+    .await?;
+
+    Ok(())
+}
+
+async fn run_overwrite_flow(db: &MarpleDB) -> anyhow::Result<()> {
+    let csv_path = example_csv_path();
+    let stream = create_test_stream(db, "overwrite").await?;
+    let upload_mode = "server";
+
+    upload_and_assert_dataset(
+        db,
+        stream.id,
+        &csv_path,
+        PushFileOptions::builder()
+            .metadata([("upload_mode".to_string(), serde_json::json!(upload_mode))])
+            .upload_mode(UploadModeOverride::Server)
+            .build(),
+        &[("upload_mode", upload_mode)],
+        false,
+    )
+    .await?;
+
+    // Second upload with overwrite=true should succeed
+    upload_and_assert_dataset(
+        db,
+        stream.id,
+        &csv_path,
+        PushFileOptions::builder()
+            .metadata([("upload_mode".to_string(), serde_json::json!(upload_mode))])
+            .upload_mode(UploadModeOverride::Server)
+            .overwrite(true)
             .build(),
         &[("upload_mode", upload_mode)],
         false,

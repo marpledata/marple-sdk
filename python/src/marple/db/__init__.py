@@ -336,7 +336,7 @@ class DB:
         - `stream_key`: The name or ID of the stream to push the file to.
         - `file_path`: The path to the file to be pushed.
         - `metadata`: (optional) A dictionary of metadata to be associated with the file.
-        - `file_name`: (optional) The name of the file to be stored in the
+        - `file_name`: (optional) The name of the file to be stored in the stream.
         - `overwrite`: (optional) If true, existing dataset with the same name will be overwritten.
 
         Note:
