@@ -21,7 +21,6 @@ from marple.db.constants import (
     COL_VAL_TEXT,
     MAX_SIGNALS_PER_ADD,
     SCHEMA,
-    SIGNAL_IDS_QUERY_CHUNK,
 )
 from marple.db.signal import Signal
 from marple.db.signal_upload import (
@@ -37,6 +36,7 @@ BUSY_STATUSES = [
     "UPDATING_ICEBERG",
     "COOLING",
 ]
+GET_SIGNALS_CHUNK_SIZE = 200
 
 
 class Dataset(BaseModel):
@@ -191,8 +191,8 @@ class Dataset(BaseModel):
         if not to_refresh:
             return [self._signals[i] for i in signal_ids]
 
-        for start in range(0, len(to_refresh), SIGNAL_IDS_QUERY_CHUNK):
-            chunk = list(to_refresh[start : start + SIGNAL_IDS_QUERY_CHUNK])
+        for start in range(0, len(to_refresh), GET_SIGNALS_CHUNK_SIZE):
+            chunk = list(to_refresh[start : start + GET_SIGNALS_CHUNK_SIZE])
             r = self._client.get(
                 f"/stream/{self.datastream_id}/dataset/{self.id}/signals",
                 params={"signal_ids": chunk},
@@ -325,8 +325,7 @@ class Dataset(BaseModel):
         ``value_text``). Times must overlap the dataset time range.
 
         Returns the new signal immediately after upload completes. Call
-        :meth:`Signal.wait_until_cold` before reading data if the signal is still
-        transitioning to lake-cold storage.
+        :meth:`Signal.wait_until_available` to wait until the signal is available.
 
         Args:
             name: Signal name.
@@ -354,7 +353,7 @@ class Dataset(BaseModel):
 
         Each item is a :class:`SignalUpload` or a dict with at least ``name`` and
         ``data``. Returns allocated signal IDs as soon as uploads complete (does
-        not wait until signals are lake-cold).
+        not wait until signals are available).
 
         Args:
             signals: Signals to upload (at most ``MAX_SIGNALS_PER_ADD``).
@@ -366,7 +365,7 @@ class Dataset(BaseModel):
             raise ValueError(f"Provide at most {MAX_SIGNALS_PER_ADD} signals per call")
 
         signal_ids = run_signal_uploads(self, signals, concurrency=concurrency)
-        for signal_id in signal_ids:
+        for signal_id in signal_ids:  # Invalidate new signals from cache
             if signal_id in self._signals:
                 del self._signals[signal_id]
         return signal_ids

@@ -39,7 +39,7 @@ range.
        "car.speed_kmh",
        derived,
        metadata={"unit": "km/h"},
-   ).wait_until_cold()
+   ).wait_until_available()
 
    # Batch upload (returns IDs; use overwrite=True to replace an existing name)
    ids = dataset.add_signals([

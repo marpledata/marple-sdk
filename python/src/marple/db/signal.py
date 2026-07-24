@@ -83,16 +83,14 @@ class Signal(BaseModel):
         """
         return self._client.get_dataframe(self.dataset_id, self.id, dtype, refresh_cache)
 
-    def wait_until_cold(self, timeout: float = 60) -> "Signal":
+    def wait_until_available(self, timeout: float = 60) -> "Signal":
         """
         Poll until this signal's ``storage_status`` is ``COLD``.
 
-        After :meth:`Dataset.add_signal` / :meth:`Dataset.add_signals`, the signal
-        may briefly be hot or transitioning. Wait here before calling
-        :meth:`get_data` if you need lake-cold parquet.
+        After :meth:`Dataset.add_signal` / :meth:`Dataset.add_signals`, the signal will need to transition to queryable storage.
+        Wait here before calling :meth:`get_data`.
 
-        If the timeout elapses, a warning is issued and the latest signal state is
-        returned (status may still be non-cold).
+        If the timeout elapses, a warning is issued and the latest signal state is returned.
         """
         deadline = time.monotonic() + max(timeout, 0.1)
         while True:

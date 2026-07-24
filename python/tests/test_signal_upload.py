@@ -274,7 +274,7 @@ def test_add_signal_demo_csv_integration(db: DB, require_signal_upload_api: None
             "sdk.car.speed_kmh",
             derived,
             metadata={"unit": "km/h"},
-        ).wait_until_cold(timeout=180)
+        ).wait_until_available(timeout=180)
 
         assert signal.name == "sdk.car.speed_kmh"
         assert signal.storage_status == "COLD"
@@ -303,7 +303,7 @@ def test_add_signals_overwrite_and_conflict(db: DB, require_signal_upload_api: N
         times = [dataset.timestamp_start, dataset.timestamp_start + 1_000_000_000]
         df = pd.DataFrame({COL_TIME: times, COL_VAL: [1.0, 2.0]})
 
-        first = dataset.add_signal("sdk.from_df", df).wait_until_cold(timeout=180)
+        first = dataset.add_signal("sdk.from_df", df).wait_until_available(timeout=180)
         first_id = first.id
 
         with pytest.raises(SignalsAlreadyExistError) as exc:
@@ -311,7 +311,7 @@ def test_add_signals_overwrite_and_conflict(db: DB, require_signal_upload_api: N
         assert any(s.get("status") == "EXISTS" for s in exc.value.signals)
 
         df2 = pd.DataFrame({COL_TIME: times, COL_VAL: [10.0, 20.0]})
-        second = dataset.add_signal("sdk.from_df", df2, overwrite=True).wait_until_cold(timeout=180)
+        second = dataset.add_signal("sdk.from_df", df2, overwrite=True).wait_until_available(timeout=180)
         assert second.id == first_id
         assert second.storage_status == "COLD"
         data = second.get_data(refresh_cache=True)

@@ -21,11 +21,10 @@ SCHEMA = pa.schema(
 )
 """Arrow schema for :meth:`~marple.db.Dataset.append` (long-format realtime rows)."""
 
-# Lake / Iceberg parquet schema for signal upload (int64 signal IDs).
+# Lake / Iceberg parquet schema for signal upload (int64 signal IDs). Should be kept in sync with the API.
 ROW_GROUP_SIZE = 1_048_576  # ~1M rows per row group
 MAX_ROWS_PER_FILE = 16 * ROW_GROUP_SIZE  # ~16M rows per file
 MAX_SIGNALS_PER_ADD = 10_000
-SIGNAL_IDS_QUERY_CHUNK = 200  # max signal_ids per GET to stay under typical URL limits
 
 LAKE_ARROW_SCHEMA = pa.schema(
     [

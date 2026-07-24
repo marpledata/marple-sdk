@@ -69,12 +69,12 @@ derived = pd.DataFrame({
     "time": speed.index.asi8,
     "value": speed["value"] * 3.6,
 })
-# Single signal: wait until lake-cold before reading
+# Single signal: wait until available before reading
 signal = dataset.add_signal(
     "car.speed_kmh",
     derived,
     metadata={"unit": "km/h"},
-).wait_until_cold()
+).wait_until_available()
 
 # Batch: returns IDs as soon as upload completes (no wait)
 ids = dataset.add_signals([
@@ -170,7 +170,7 @@ if len(datasets) > 0:
 - **List datasets in a stream**: `stream.get_datasets()`
 - **Upload a file to a file-stream**: `stream.push_file(file_path, metadata={...}, concurrency=4)`
 - **Add signals to a dataset**: `dataset.add_signal(name, data, ...)` / `dataset.add_signals([...])` — data matches `LAKE_ARROW_SCHEMA` (`time` + `value` and/or `value_text`)
-- **Wait until a signal is lake-cold**: `signal.wait_until_cold(timeout=60)`
+- **Wait until a signal is available**: `signal.wait_until_available(timeout=60)`
 - **Fetch signals by ID**: `dataset.get_signals(signal_ids=[...], refresh=False)`
 - **Wait for a dataset to import**: `dataset.wait_for_import(timeout=60)`
 - **Download original uploaded file**: `dataset.download(destination_folder=".")`
