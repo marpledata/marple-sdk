@@ -318,7 +318,7 @@ class Dataset(BaseModel):
         priority: Literal["default", "high"] = "default",
     ) -> Signal:
         """
-        Upload one lake-native signal onto this dataset.
+        Upload one signal with data into this dataset.
 
         ``data`` must be a DataFrame, Arrow table, or parquet path matching
         :data:`~marple.db.LAKE_ARROW_SCHEMA` (``time`` plus ``value`` and/or
@@ -335,7 +335,8 @@ class Dataset(BaseModel):
             priority: Import priority (``default`` or ``high``).
         """
         signal_id = self.add_signals(
-            [SignalUpload(name=name, data=data, metadata=metadata or {}, overwrite=overwrite, priority=priority)]
+            [SignalUpload(name=name, data=data, metadata=metadata or {}, priority=priority)],
+            overwrite=overwrite,
         )[0]
         signal = self.get_signal(id=signal_id, refresh=True)
         if signal is None:
@@ -346,10 +347,11 @@ class Dataset(BaseModel):
         self,
         signals: Sequence[SignalUpload | dict[str, Any]],
         *,
+        overwrite: bool = False,
         concurrency: int = 4,
     ) -> list[int]:
         """
-        Upload multiple lake-native signals onto this dataset.
+        Upload multiple signals with data into this dataset.
 
         Each item is a :class:`SignalUpload` or a dict with at least ``name`` and
         ``data``. Returns allocated signal IDs as soon as uploads complete (does
@@ -357,6 +359,7 @@ class Dataset(BaseModel):
 
         Args:
             signals: Signals to upload (at most ``MAX_SIGNALS_PER_ADD``).
+            overwrite: If True, replace existing signals that share a name in this batch.
             concurrency: Parallel storage PUT workers.
         """
         if not signals:
@@ -364,7 +367,7 @@ class Dataset(BaseModel):
         if len(signals) > MAX_SIGNALS_PER_ADD:
             raise ValueError(f"Provide at most {MAX_SIGNALS_PER_ADD} signals per call")
 
-        signal_ids = run_signal_uploads(self, signals, concurrency=concurrency)
+        signal_ids = run_signal_uploads(self, signals, overwrite=overwrite, concurrency=concurrency)
         for signal_id in signal_ids:  # Invalidate new signals from cache
             if signal_id in self._signals:
                 del self._signals[signal_id]

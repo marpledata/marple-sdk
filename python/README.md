@@ -78,8 +78,8 @@ signal = dataset.add_signal(
 
 # Batch: returns IDs as soon as upload completes (no wait)
 ids = dataset.add_signals([
-    {"name": "car.speed_kmh", "data": derived, "metadata": {"unit": "km/h"}, "overwrite": True},
-], concurrency=4)
+    {"name": "car.speed_kmh", "data": derived, "metadata": {"unit": "km/h"}},
+], overwrite=True, concurrency=4)
 signals = dataset.get_signals(signal_ids=ids)
 ```
 

@@ -1,4 +1,4 @@
-"""Helpers for lake-native signal upload (presign → write → PUT → complete)."""
+"""Helpers for signal upload (presign → write → PUT → complete)."""
 
 from typing import TYPE_CHECKING
 
@@ -45,8 +45,7 @@ class SignalUpload(BaseModel):
     """Input for :meth:`Dataset.add_signal` / :meth:`Dataset.add_signals`.
 
     ``data`` is a DataFrame, Arrow table, or parquet path matching
-    :data:`marple.db.LAKE_ARROW_SCHEMA`: ``time`` (int64 ns) plus ``value``
-    and/or ``value_text``.
+    :data:`marple.db.LAKE_ARROW_SCHEMA` (``time`` plus ``value`` and/or ``value_text``).
     """
 
     model_config = ConfigDict(arbitrary_types_allowed=True)
@@ -54,7 +53,6 @@ class SignalUpload(BaseModel):
     name: str
     data: pd.DataFrame | pa.Table | Path | str
     metadata: dict[str, Any] = Field(default_factory=dict)
-    overwrite: bool = False
     priority: Literal["default", "high"] = "default"
 
     def plan_upload(self, dataset: "Dataset") -> "PlannedUpload":
@@ -65,7 +63,6 @@ class SignalUpload(BaseModel):
             name=self.name,
             data=data,
             metadata=self.metadata,
-            overwrite=self.overwrite,
             priority=SignalImportPriority(self.priority),
             row_counts=row_counts,
             frequency=frequency,
@@ -166,7 +163,6 @@ class PlannedUpload(BaseModel):
     name: str
     data: pa.Table
     metadata: dict[str, Any]
-    overwrite: bool
     priority: SignalImportPriority
     row_counts: list[int]
     frequency: float | None
@@ -176,7 +172,6 @@ class PlannedUpload(BaseModel):
             "name": self.name,
             "metadata": self.metadata,
             "files": [{"index": i, "rows": rows} for i, rows in enumerate(self.row_counts)],
-            "overwrite": self.overwrite,
             "priority": self.priority,
         }
 
@@ -218,6 +213,7 @@ def run_signal_uploads(
     dataset: "Dataset",
     signals: Sequence[SignalUpload | dict[str, Any]],
     *,
+    overwrite: bool = False,
     concurrency: int = 4,
 ) -> list[int]:
     """Presign, write lake parquet, PUT, and complete. Returns allocated signal IDs."""
@@ -225,7 +221,7 @@ def run_signal_uploads(
         (s if isinstance(s, SignalUpload) else SignalUpload.model_validate(s)).plan_upload(dataset)
         for s in signals
     ]
-    presigned_signals = _presign_signals(dataset, planned)
+    presigned_signals = _presign_signals(dataset, planned, overwrite=overwrite)
 
     def _upload_one(plan: PlannedUpload) -> SignalUploadComplete:
         return _run_signal_upload(dataset, plan, presigned_signals[plan.name])
@@ -243,8 +239,13 @@ def run_signal_uploads(
     return [c.id for c in completed]
 
 
-def _presign_signals(dataset: "Dataset", planned: list[PlannedUpload]) -> dict[str, PresignedSignal]:
-    body = {"signals": [p.to_request() for p in planned]}
+def _presign_signals(
+    dataset: "Dataset",
+    planned: list[PlannedUpload],
+    *,
+    overwrite: bool = False,
+) -> dict[str, PresignedSignal]:
+    body = {"signals": [p.to_request() for p in planned], "overwrite": overwrite}
     r = dataset._client.post(f"/stream/{dataset.datastream_id}/dataset/{dataset.id}/signal/uploads", json=body)
     if r.status_code == 409:
         try:

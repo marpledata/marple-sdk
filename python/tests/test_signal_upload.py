@@ -70,7 +70,7 @@ def _patch_upload_io(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> list[Pa
     """Stub presign + storage PUT; capture written parquet files for inspection."""
     captured: list[Path] = []
 
-    def fake_presign(dataset: Any, planned: list) -> dict[str, PresignedSignal]:
+    def fake_presign(dataset: Any, planned: list, *, overwrite: bool = False) -> dict[str, PresignedSignal]:
         return {
             plan.name: PresignedSignal(
                 name=plan.name,
@@ -214,6 +214,20 @@ def test_signal_upload_value_text_only() -> None:
     ).plan_upload(dataset)
     assert planned.data.column(COL_VAL).null_count == 2
     assert planned.data.column(COL_VAL_TEXT).to_pylist() == ["a", "b"]
+
+
+def test_planned_upload_to_request_omits_overwrite() -> None:
+    dataset = _fake_dataset()
+    planned = SignalUpload(
+        name="x",
+        data=pd.DataFrame({COL_TIME: [0, 1], COL_VAL: [1.0, 2.0]}),
+        metadata={"unit": "m/s"},
+    ).plan_upload(dataset)
+    req = planned.to_request()
+    assert "overwrite" not in req
+    assert req["name"] == "x"
+    assert req["metadata"] == {"unit": "m/s"}
+    assert req["files"] == [{"index": 0, "rows": 2}]
 
 
 def test_add_signals_rejects_too_many() -> None:

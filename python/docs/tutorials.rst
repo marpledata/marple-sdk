@@ -41,10 +41,10 @@ range.
        metadata={"unit": "km/h"},
    ).wait_until_available()
 
-   # Batch upload (returns IDs; use overwrite=True to replace an existing name)
+   # Batch upload (returns IDs; use overwrite=True to replace existing names)
    ids = dataset.add_signals([
-       {"name": "car.speed_kmh", "data": derived, "metadata": {"unit": "km/h"}, "overwrite": True},
-   ])
+       {"name": "car.speed_kmh", "data": derived, "metadata": {"unit": "km/h"}},
+   ], overwrite=True)
 
 Upload large files
 ------------------
