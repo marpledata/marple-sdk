@@ -253,7 +253,7 @@ def _presign_signals(
         except ValueError:
             body = {}
         raise SignalsAlreadyExistError(
-            body.get("signals") or [],
+            body.get("signals") or [],  # type: ignore[arg-type]
             message=f"Presign signal uploads failed: {body.get('error', 'signals_already_exist')}",
         )
     signals = {
