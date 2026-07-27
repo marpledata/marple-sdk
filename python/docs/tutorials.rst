@@ -19,16 +19,13 @@ Import a file and wait for import
 Add signals to an imported dataset
 ----------------------------------
 
-After a file import finishes, you can attach additional signals
-(for example derived channels). Input data must match
-:data:`marple.db.LAKE_ARROW_SCHEMA`: ``time`` (int64 nanoseconds) plus
-``value`` and/or ``value_text``. Signal times must overlap the dataset time
-range.
+Upload derived (or extra) signals onto a finished dataset. Data needs
+``time`` (int64 ns) plus ``value`` and/or ``value_text``
+(:data:`marple.db.LAKE_ARROW_SCHEMA`).
 
 .. code-block:: python
 
    import pandas as pd
-   from marple.db import LAKE_ARROW_SCHEMA  # time + value and/or value_text
 
    speed = dataset.get_signal("car.speed").get_data()
    derived = pd.DataFrame({
@@ -40,11 +37,6 @@ range.
        derived,
        metadata={"unit": "km/h"},
    ).wait_until_available()
-
-   # Batch upload (returns IDs; use overwrite=True to replace existing names)
-   ids = dataset.add_signals([
-       {"name": "car.speed_kmh", "data": derived, "metadata": {"unit": "km/h"}},
-   ], overwrite=True)
 
 Upload large files
 ------------------

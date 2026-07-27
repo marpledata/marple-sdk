@@ -150,7 +150,7 @@ class Dataset(BaseModel):
             r = self._client.get(f"/stream/{self.datastream_id}/dataset/{self.id}/signal/{id}")
             try:
                 response = validate_response(r, f"Get signal data for signal ID {id} failed")
-                signal = Signal(self._client, self.datastream_id, self.id, **response)
+                signal = Signal(self._client, self.datastream_id, self.id, dataset=self, **response)
             except Exception as e:
                 warnings.warn(f"Failed to get signal with id {id} and name {name}: {e}")
                 return None
@@ -163,7 +163,7 @@ class Dataset(BaseModel):
         self._signals.clear()
         for response in validate_response(r, "Failed to get signals"):
             try:
-                signal = Signal(self._client, self.datastream_id, self.id, **response)
+                signal = Signal(self._client, self.datastream_id, self.id, dataset=self, **response)
             except ValidationError as e:
                 warnings.warn(f"Failed to create signal {response['name']} (id {response['id']}): {e}")
                 continue
@@ -220,7 +220,7 @@ class Dataset(BaseModel):
             )
             for response in validate_response(r, "Failed to get signals by id"):
                 try:
-                    signal = Signal(self._client, self.datastream_id, self.id, **response)
+                    signal = Signal(self._client, self.datastream_id, self.id, dataset=self, **response)
                 except ValidationError as e:
                     warnings.warn(
                         f"Failed to create signal {response.get('name')} (id {response.get('id')}): {e}"

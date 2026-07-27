@@ -22,7 +22,7 @@ class StorageStatus(StrEnum):
     COLD_TO_HOT = "COLD_TO_HOT"
     """ Indicates the signal is being loaded into the hot cache."""
     HOT = "HOT"
-    """ Indiicates the signal is in the hot cache."""
+    """ Indicates the signal is in the hot cache."""
 
 
 class Signal(BaseModel):
@@ -33,6 +33,7 @@ class Signal(BaseModel):
         client: DB client used to make API calls.
         datastream_id: ID of the parent datastream.
         dataset_id: ID of the parent dataset.
+        dataset: Optional parent dataset; used to keep its signal cache in sync.
     """
 
     id: int
@@ -54,10 +55,19 @@ class Signal(BaseModel):
     dataset_id: int
 
     _client: DBClient = PrivateAttr()
+    _dataset: object | None = PrivateAttr(default=None)
 
-    def __init__(self, client: DBClient, datastream_id: int, dataset_id: int, **kwargs):
+    def __init__(
+        self,
+        client: DBClient,
+        datastream_id: int,
+        dataset_id: int,
+        dataset: object | None = None,
+        **kwargs,
+    ):
         super().__init__(datastream_id=datastream_id, dataset_id=dataset_id, **kwargs)
         self._client = client
+        self._dataset = dataset
         self.datastream_id = datastream_id
         self.dataset_id = dataset_id
 
@@ -101,13 +111,23 @@ class Signal(BaseModel):
 
     def wait_until_available(self, timeout_s: float = 60) -> "Signal":
         """
-        Poll until this signal is available for querying.
+        Poll until this signal is available for querying (storage status is not
+        :attr:`StorageStatus.FROZEN_TO_COLD`). Updates the parent dataset's signal
+        cache when a parent dataset is known.
         """
         deadline_s = time.monotonic() + max(timeout_s, 0.1)
         while True:
             r = self._client.get(f"/stream/{self.datastream_id}/dataset/{self.dataset_id}/signal/{self.id}")
             data = validate_response(r, f"Get signal {self.id} failed")
-            fresh = Signal(self._client, self.datastream_id, self.dataset_id, **data)
+            fresh = Signal(
+                self._client,
+                self.datastream_id,
+                self.dataset_id,
+                dataset=self._dataset,
+                **data,
+            )
+            if self._dataset is not None:
+                self._dataset._signals[fresh.id] = fresh  # type: ignore[attr-defined]
             if fresh.storage_status != StorageStatus.FROZEN_TO_COLD:
                 return fresh
             if time.monotonic() >= deadline_s:

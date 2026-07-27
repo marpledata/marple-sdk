@@ -10,7 +10,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Added
 
 - `Dataset.add_signal` and `Dataset.add_signals` to upload signal data onto an existing dataset (presign → write → PUT → complete). Accepts DataFrame, Arrow table, or on-disk parquet matching `LAKE_ARROW_SCHEMA` (`time` plus `value` and/or `value_text`); supports concurrent uploads, batch-level `overwrite`, import `priority`, and automatic ~1M-row groups / ~16M-row file splits.
-- `Signal.wait_until_available` to poll until a signal's storage status is `COLD` (typical after `add_signal`).
+- `Signal.wait_until_available` to poll until a signal is queryable (storage status is no longer `FROZEN_TO_COLD`; typical after `add_signal`).
 - `SignalUpload` input model and `SignalsAlreadyExistError` for HTTP 409 presign conflicts (duplicate / already exists).
 - Exported `LAKE_ARROW_SCHEMA` describing the input columns for signal upload (alongside existing realtime `SCHEMA` for `Dataset.append`).
 - `Dataset.get_signals(signal_ids=...)` to fetch signals by ID (order preserved), plus `refresh` on `get_signal` / `get_signals` to bypass the local cache.
