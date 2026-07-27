@@ -1,6 +1,6 @@
 [package]
 name = "parquet-transcode"
-version = "0.1.0"
+version = "0.2.0"
 edition = "2024"
 description = "MATLAB helper: ZSTD→Snappy download transcode and Iceberg lake upload preparation"
 license = "Apache-2.0"
@@ -20,4 +20,3 @@ walkdir = "2"
 
 [dev-dependencies]
 tempfile = "3"
-serde_json = "1"
