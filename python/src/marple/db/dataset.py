@@ -1,8 +1,8 @@
-from enum import StrEnum
 import re
 import time
 import warnings
 from collections import UserList
+from enum import StrEnum
 from io import BytesIO
 from pathlib import Path
 from typing import Any, Callable, Iterable, Literal, Optional, Sequence
