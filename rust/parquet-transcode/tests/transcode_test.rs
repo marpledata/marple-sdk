@@ -2,6 +2,8 @@ use std::fs;
 use std::path::Path;
 use std::process::Command;
 
+use arrow::array::RecordBatchReader;
+use parquet::arrow::arrow_reader::ParquetRecordBatchReaderBuilder;
 use parquet::basic::Compression;
 use parquet::file::reader::FileReader;
 use parquet::file::serialized_reader::SerializedFileReader;
@@ -44,6 +46,22 @@ fn bin() -> String {
     env!("CARGO_BIN_EXE_parquet-transcode").to_string()
 }
 
+fn read_table_columns(
+    path: &Path,
+) -> (
+    arrow::datatypes::SchemaRef,
+    Vec<arrow::record_batch::RecordBatch>,
+) {
+    let file = fs::File::open(path).unwrap();
+    let reader = ParquetRecordBatchReaderBuilder::try_new(file)
+        .unwrap()
+        .build()
+        .unwrap();
+    let schema = reader.schema();
+    let batches: Vec<_> = reader.map(|b| b.unwrap()).collect();
+    (schema, batches)
+}
+
 #[test]
 fn transcodes_zstd_to_snappy() {
     let tmp = tempfile::tempdir().unwrap();
@@ -58,7 +76,11 @@ fn transcodes_zstd_to_snappy() {
     );
 
     let output = Command::new(bin()).arg(&dst).output().unwrap();
-    assert!(output.status.success(), "failed: {}", String::from_utf8_lossy(&output.stderr));
+    assert!(
+        output.status.success(),
+        "failed: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
 
     assert_eq!(get_compression(&parquet_file), Compression::SNAPPY);
 }
@@ -83,7 +105,10 @@ fn skips_already_snappy() {
     assert!(output.status.success());
 
     let stderr = String::from_utf8_lossy(&output.stderr);
-    assert!(stderr.contains("transcoded 0"), "expected skip, got: {stderr}");
+    assert!(
+        stderr.contains("transcoded 0"),
+        "expected skip, got: {stderr}"
+    );
 
     let hash_after = file_hash(&parquet_file);
     assert_eq!(hash_before, hash_after, "file should not be modified");
@@ -91,35 +116,28 @@ fn skips_already_snappy() {
 
 #[test]
 fn preserves_data_after_transcode() {
-    use parquet::arrow::arrow_reader::ParquetRecordBatchReaderBuilder;
-    use arrow::array::RecordBatchReader;
-
     let tmp = tempfile::tempdir().unwrap();
     let src = std::path::Path::new("test_data/dataset=1/signal=2");
     let dst = tmp.path().join("signal=2");
     copy_parquet_dir(src, &dst);
 
     let parquet_file = dst.join("mdb_m.engineRate.parquet");
+    let (schema_before, batches_before) = read_table_columns(&parquet_file);
+    let rows_before: usize = batches_before.iter().map(|b| b.num_rows()).sum();
 
-    // Read row count and schema before transcode
-    let file_before = fs::File::open(&parquet_file).unwrap();
-    let reader_before = ParquetRecordBatchReaderBuilder::try_new(file_before).unwrap().build().unwrap();
-    let schema_before = reader_before.schema().clone();
-    let rows_before: usize = reader_before.map(|b| b.unwrap().num_rows()).sum();
-
-    // Transcode
     let output = Command::new(bin()).arg(&dst).output().unwrap();
     assert!(output.status.success());
 
-    // Read row count and schema after transcode
-    let file_after = fs::File::open(&parquet_file).unwrap();
-    let reader_after = ParquetRecordBatchReaderBuilder::try_new(file_after).unwrap().build().unwrap();
-    let schema_after = reader_after.schema().clone();
-    let rows_after: usize = reader_after.map(|b| b.unwrap().num_rows()).sum();
+    let (schema_after, batches_after) = read_table_columns(&parquet_file);
+    let rows_after: usize = batches_after.iter().map(|b| b.num_rows()).sum();
 
     assert_eq!(schema_before, schema_after, "schema should be preserved");
     assert_eq!(rows_before, rows_after, "row count should be preserved");
     assert!(rows_before > 0, "test fixture should have data");
+    assert_eq!(batches_before.len(), batches_after.len());
+    for (before, after) in batches_before.iter().zip(batches_after.iter()) {
+        assert_eq!(before, after, "logical batch data should be preserved");
+    }
 }
 
 #[test]
@@ -129,15 +147,15 @@ fn recursive_traversal() {
     let dst = tmp.path().join("test_data");
     copy_tree(src, &dst);
 
-    // dataset=1/signal=5 is already snappy, capture its bytes to verify it's untouched
     let snappy_file = dst.join("dataset=1/signal=5/mdb_m.speed.parquet");
     let snappy_hash = file_hash(&snappy_file);
 
-    // zstd files that should be transcoded
     let zstd_files = [
         dst.join("dataset=1/signal=2/mdb_m.engineRate.parquet"),
         dst.join("dataset=7/signal=2/mdb_m.engineRate.parquet"),
         dst.join("dataset=7/signal=5/mdb_m.speed.parquet"),
+        dst.join("dataset=8/signal=82/mdb_Load_Type.parquet"),
+        dst.join("dataset=8/signal=86/mdb_Usage_kWh.parquet"),
     ];
     for f in &zstd_files {
         assert!(
@@ -148,11 +166,21 @@ fn recursive_traversal() {
     }
 
     let output = Command::new(bin()).arg(&dst).output().unwrap();
-    assert!(output.status.success(), "failed: {}", String::from_utf8_lossy(&output.stderr));
+    assert!(
+        output.status.success(),
+        "failed: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
 
     let stderr = String::from_utf8_lossy(&output.stderr);
-    assert!(stderr.contains("transcoded 3"), "expected 3 transcoded, got: {stderr}");
-    assert!(stderr.contains("skipped 1"), "expected 1 skipped, got: {stderr}");
+    assert!(
+        stderr.contains("transcoded 5"),
+        "expected 5 transcoded, got: {stderr}"
+    );
+    assert!(
+        stderr.contains("skipped 1"),
+        "expected 1 skipped, got: {stderr}"
+    );
 
     for f in &zstd_files {
         assert_eq!(
@@ -163,6 +191,9 @@ fn recursive_traversal() {
         );
     }
 
-    // Snappy file should be byte-identical
-    assert_eq!(file_hash(&snappy_file), snappy_hash, "already-snappy file should be untouched");
+    assert_eq!(
+        file_hash(&snappy_file),
+        snappy_hash,
+        "already-snappy file should be untouched"
+    );
 }
