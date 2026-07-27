@@ -62,9 +62,10 @@ def _push_and_assert_upload(
     metadata: dict[str, str],
     upload_mode: Literal["auto", "server"] = "auto",
     overwrite: bool = False,
+    file_name: str | None = None,
 ) -> Dataset:
     dataset = stream.push_file(
-        str(file_path), metadata=metadata, upload_mode=upload_mode, overwrite=overwrite
+        str(file_path), metadata=metadata, upload_mode=upload_mode, overwrite=overwrite, file_name=file_name
     ).wait_for_import(timeout=180)
 
     assert dataset.import_status == "FINISHED"
@@ -257,11 +258,11 @@ def test_push_file_server_upload(db: DB) -> None:
 def test_push_file_overwrite(db: DB) -> None:
     metadata_v1 = {"version": "1"}
     metadata_v2 = {"version": "2"}
+    overwrite_file_name = "overwrite_test.csv"
     with _upload_test_stream(db, "overwrite") as stream:
-        _push_and_assert_upload(stream, EXAMPLE_CSV, metadata_v1)
-        # Second push with overwrite=True should succeed, update metadata, and not duplicate the dataset
+        _push_and_assert_upload(stream, EXAMPLE_CSV, metadata_v1, file_name=overwrite_file_name)
         dataset_overwritten = _push_and_assert_upload(
-            stream, EXAMPLE_CSV, metadata_v2, overwrite=True
+            stream, EXAMPLE_CSV, metadata_v2, overwrite=True, file_name=overwrite_file_name
         )
 
         assert dataset_overwritten.import_status == "FINISHED"

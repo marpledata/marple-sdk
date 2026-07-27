@@ -327,10 +327,12 @@ async fn run_server_upload_flow(db: &MarpleDB) -> anyhow::Result<()> {
 }
 
 async fn run_overwrite_flow(db: &MarpleDB) -> anyhow::Result<()> {
-    let csv_path = example_csv_path();
+    let tmp = tempfile::tempdir()?;
+    let csv_path = tmp.path().join("overwrite_test.csv");
+    fs::copy(example_csv_path(), &csv_path)?;
     let stream = create_test_stream(db, "overwrite").await?;
 
-    upload_and_assert_dataset(
+    let dataset = upload_and_assert_dataset(
         db,
         stream.id,
         &csv_path,
@@ -342,8 +344,7 @@ async fn run_overwrite_flow(db: &MarpleDB) -> anyhow::Result<()> {
     )
     .await?;
 
-    // Second upload with overwrite=true should succeed, update metadata, and not duplicate the dataset
-    upload_and_assert_dataset(
+    let dataset_overwritten = upload_and_assert_dataset(
         db,
         stream.id,
         &csv_path,
@@ -356,7 +357,7 @@ async fn run_overwrite_flow(db: &MarpleDB) -> anyhow::Result<()> {
     )
     .await?;
 
-    // Ensure it actually overwrote instead of duplicating
+    anyhow::ensure!(dataset_overwritten.id == dataset.id, "overwrite created a new dataset instead of updating");
     let datasets = db.get_datasets(stream.id).await?;
     anyhow::ensure!(
         datasets.len() == 1,

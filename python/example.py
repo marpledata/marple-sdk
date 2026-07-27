@@ -20,7 +20,9 @@ if stream_name not in [stream.name for stream in db.get_streams()]:
 
 stream = db.get_stream(stream_name)
 stream.push_file("examples_race.csv", metadata={"car_id": 1, "track": "track_1", "weather": "sunny"})
-stream.push_file("examples_race.csv", metadata={"car_id": 2, "track": "track_1", "weather": "cloudy"}, overwrite=True)
+stream.push_file(
+    "examples_race.csv", metadata={"car_id": 2, "track": "track_1", "weather": "cloudy"}, overwrite=True
+)
 stream.push_file("examples_race.csv", metadata={"car_id": 3, "track": "track_1", "weather": "rainy"})
 stream.push_file("examples_race.csv", metadata={"car_id": 1, "track": "track_2", "weather": "sunny"})
 stream.push_file("examples_race.csv", metadata={"car_id": 2, "track": "track_2", "weather": "sunny"})
