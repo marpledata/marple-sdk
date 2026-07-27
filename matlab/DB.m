@@ -240,10 +240,7 @@ classdef DB
       % Prefer FileProvider streaming; strip Content-Disposition which breaks
       % many presigned object-storage URLs. Fall back to raw uint8 Payload when
       % FileProvider/complete fails (not when the HTTP status is non-2xx).
-      % 'literal' stops URI() from re-encoding '%' in the already-encoded
-      % presigned path, which otherwise breaks the storage signature.
-      uri = URI(put_url, 'literal');
-    
+      uri = URI(put_url, 'literal'); % avoid re-encoding '%' in the presigned path
       try
         provider = FileProvider(local_path);
         header = HeaderField('Content-Type', 'application/octet-stream');
