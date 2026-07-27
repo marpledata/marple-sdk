@@ -9,8 +9,9 @@ classdef DB
   end
 
   properties (Constant, Access = private)
-    TRANSCODE_VERSION = 'v0.1.0'
+    TRANSCODE_VERSION = 'v0.2.0'
     TRANSCODE_BASE_URL = 'https://github.com/marpledata/marple-sdk/releases/download/parquet-transcode'
+    MAX_ROWS_PER_FILE = 16 * 1048576
   end
 
   methods (Static, Access = private)
@@ -69,6 +70,220 @@ classdef DB
         error('Parquet transcode failed: %s', msg);
       end
     end
+
+    function meta = prepare_upload_file(input_path, output_path, dataset_id, signal_id, expected_rows)
+      bin_path = DB.ensure_binary();
+      stderr_path = [tempname '.err'];
+      cmd = sprintf( ...
+        '"%s" prepare-upload --input "%s" --output "%s" --dataset-id %d --signal-id %d --expected-rows %d 2>"%s"', ...
+        bin_path, input_path, output_path, dataset_id, signal_id, expected_rows, stderr_path);
+      [status, out] = system(cmd);
+      err_txt = '';
+      if isfile(stderr_path)
+        try
+          err_txt = fileread(stderr_path);
+        catch
+        end
+        try
+          delete(stderr_path);
+        catch
+        end
+      end
+      if status ~= 0
+        detail = strtrim(out);
+        if ~isempty(strtrim(err_txt))
+          detail = strtrim(sprintf('%s\n%s', detail, err_txt));
+        end
+        error('parquet-transcode prepare-upload failed: %s', detail);
+      end
+      try
+        meta = jsondecode(strtrim(out));
+      catch ME
+        error('Failed to parse prepare-upload JSON from stdout: %s\nOutput was: %s\nStderr: %s', ...
+          ME.message, out, err_txt);
+      end
+      if ~isfield(meta, 'rows') || ~isfield(meta, 'size') || ~isfield(meta, 'footer')
+        error('prepare-upload JSON missing rows/size/footer: %s', out);
+      end
+      if double(meta.rows) ~= double(expected_rows)
+        error('prepare-upload row count %d does not match expected %d', ...
+          meta.rows, expected_rows);
+      end
+    end
+
+    function T = normalize_signal_table(data, name)
+      if istimetable(data)
+        row_times = data.Properties.RowTimes;
+        if isduration(row_times)
+          error('%s: timetable RowTimes must be datetime, not duration', name);
+        end
+        % Convert datetime to signed int64 Unix nanoseconds.
+        epoch = datetime(1970, 1, 1, 0, 0, 0, 'TimeZone', 'UTC');
+        row_times.TimeZone = 'UTC';
+        time_ns = int64(floor(seconds(row_times - epoch) * 1e9));
+        vars = data.Properties.VariableNames;
+        T = table(time_ns, 'VariableNames', {'time'});
+        for i = 1:numel(vars)
+          T.(vars{i}) = data.(vars{i});
+        end
+      elseif istable(data)
+        T = data;
+      else
+        error('%s: data must be a table or timetable', name);
+      end
+
+      if height(T) < 1
+        error('%s: Signal must have at least one row', name);
+      end
+
+      vars = T.Properties.VariableNames;
+      if ~ismember('time', vars)
+        error('%s: Data must include a ''time'' column', name);
+      end
+      if ~ismember('value', vars) && ~ismember('value_text', vars)
+        error('%s: Data must include ''value'' and/or ''value_text''', name);
+      end
+
+      raw_time = T.time;
+      if any(ismissing(raw_time)) || (isfloat(raw_time) && any(~isfinite(raw_time)))
+        error('%s: ''time'' must not contain nulls', name);
+      end
+      try
+        time = int64(raw_time);
+      catch ME
+        error('%s: ''time'' must be int64-compatible: %s', name, ME.message);
+      end
+      if any(time < 0)
+        error('%s: ''time'' must be greater than or equal to 0', name);
+      end
+
+      n = height(T);
+      if ismember('value', vars)
+        try
+          value = double(T.value);
+        catch ME
+          error('%s: ''value'' must be float64-compatible: %s', name, ME.message);
+        end
+        value(~isfinite(value)) = NaN;
+      else
+        value = NaN(n, 1);
+      end
+
+      if ismember('value_text', vars)
+        try
+          value_text = string(T.value_text);
+        catch ME
+          error('%s: ''value_text'' must be string-compatible: %s', name, ME.message);
+        end
+      else
+        value_text = strings(n, 1);
+        value_text(:) = missing;
+      end
+
+      T = table(time, value, value_text, 'VariableNames', {'time', 'value', 'value_text'});
+    end
+
+    function row_counts = plan_row_counts(num_rows)
+      full = floor(num_rows / DB.MAX_ROWS_PER_FILE);
+      remainder = mod(num_rows, DB.MAX_ROWS_PER_FILE);
+      row_counts = repmat(DB.MAX_ROWS_PER_FILE, 1, full);
+      if remainder > 0
+        row_counts(end+1) = remainder; %#ok<AGROW>
+      end
+    end
+
+    function frequency = estimate_frequency(time)
+      frequency = [];
+      if numel(time) < 2
+        return;
+      end
+      diffs = diff(double(time));
+      diffs = diffs(diffs > 0);
+      if isempty(diffs)
+        return;
+      end
+      frequency = 1e9 / median(diffs);
+    end
+
+    function s = value_sum(value)
+      finite = value(isfinite(value));
+      if isempty(finite)
+        s = [];
+      else
+        s = sum(finite);
+      end
+    end
+
+    function json = encode_json_object(s)
+      % jsonencode(struct()) yields [] on many MATLAB releases; force {}.
+      if isempty(s) || (isstruct(s) && isempty(fieldnames(s)))
+        json = '{}';
+      else
+        json = jsonencode(s);
+      end
+    end
+
+    function json = encode_json_nullable_number(x)
+      if isempty(x) || (isnumeric(x) && ~isfinite(x))
+        json = 'null';
+      else
+        json = jsonencode(x);
+      end
+    end
+
+    function put_storage_file(local_path, put_url)
+      import matlab.net.http.*
+      import matlab.net.http.io.*
+
+      % Prefer FileProvider streaming; strip Content-Disposition which breaks
+      % many presigned object-storage URLs. Fall back to raw uint8 Payload.
+      uri = URI(put_url);
+      try
+        provider = FileProvider(local_path);
+        header = HeaderField('Content-Type', 'application/octet-stream');
+        req = RequestMessage(RequestMethod.Put, header, provider);
+        [completed, ~] = complete(req, uri);
+        if ~isempty(completed.Header.getFields('Content-Disposition'))
+          completed.Header = completed.Header.removeFields('Content-Disposition');
+        end
+        % Re-assert Content-Type in case complete replaced it from the file suffix.
+        completed.Header = replaceFields(completed.Header, ...
+          HeaderField('Content-Type', 'application/octet-stream'));
+        resp = send(completed, uri);
+      catch
+        fid = fopen(local_path, 'rb');
+        if fid < 0
+          error('Storage PUT failed: could not open %s', local_path);
+        end
+        cleaner = onCleanup(@() fclose(fid));
+        bytes = fread(fid, Inf, '*uint8');
+        clear cleaner;
+        body = MessageBody();
+        body.Payload = bytes;
+        header = HeaderField('Content-Type', 'application/octet-stream');
+        req = RequestMessage(RequestMethod.Put, header, body);
+        resp = req.send(uri);
+      end
+
+      code = double(resp.StatusCode);
+      if code < 200 || code >= 300
+        reason = '';
+        try
+          reason = char(resp.StatusLine.ReasonPhrase);
+        catch
+        end
+        error('Storage PUT failed: HTTP %d %s', code, reason);
+      end
+    end
+
+    function delete_temp_dir(temp_dir)
+      if isfolder(temp_dir)
+        try
+          rmdir(temp_dir, 's');
+        catch
+        end
+      end
+    end
   end
 
   methods (Static)
@@ -119,6 +334,62 @@ classdef DB
       end
     end
 
+    function response = post_json(obj, endpoint, json_body)
+      import matlab.net.http.*
+
+      headers = [
+        HeaderField('Authorization', ['Bearer ' obj.api_key])
+        HeaderField('X-Request-Source', 'sdk/matlab')
+        HeaderField('Content-Type', 'application/json')
+      ];
+      body = MessageBody();
+      body.Payload = unicode2native(char(json_body), 'UTF-8');
+      req = RequestMessage(RequestMethod.Post, headers, body);
+      url = [obj.api_url endpoint];
+      try
+        resp = req.send(URI(url));
+      catch ME
+        error('API request failed: %s', ME.message);
+      end
+
+      code = double(resp.StatusCode);
+      raw = '';
+      try
+        if ~isempty(resp.Body) && ~isempty(resp.Body.Payload)
+          raw = native2unicode(resp.Body.Payload(:)', 'UTF-8');
+        elseif ~isempty(resp.Body) && ~isempty(resp.Body.Data)
+          if ischar(resp.Body.Data) || isstring(resp.Body.Data)
+            raw = char(resp.Body.Data);
+          else
+            response = resp.Body.Data;
+            if code < 200 || code >= 300
+              error('API request failed: HTTP %d', code);
+            end
+            return;
+          end
+        end
+      catch
+      end
+
+      if code < 200 || code >= 300
+        detail = strtrim(raw);
+        if isempty(detail)
+          error('API request failed: HTTP %d', code);
+        end
+        error('API request failed: HTTP %d: %s', code, detail);
+      end
+
+      if isempty(strtrim(raw))
+        response = [];
+        return;
+      end
+      try
+        response = jsondecode(raw);
+      catch ME
+        error('API request failed: could not decode JSON response: %s', ME.message);
+      end
+    end
+
     function stream_id = find_stream_id(obj, stream_name)
       for i = 1:length(obj.streams)
         if strcmpi(obj.streams{i}.name, stream_name)
@@ -142,6 +413,95 @@ classdef DB
       endpoint = sprintf('/datapool/%s/dataset/%d/signal', obj.datapool, dataset_id);
       res = obj.make_request('GET', endpoint, [], struct('name', signal_name));
       signal_id = res.id;
+    end
+
+    function dataset = find_dataset(obj, stream_name, dataset_id)
+      datasets = obj.get_datasets(stream_name);
+      if iscell(datasets)
+        for i = 1:numel(datasets)
+          if double(datasets{i}.id) == double(dataset_id)
+            dataset = datasets{i};
+            return;
+          end
+        end
+      else
+        for i = 1:numel(datasets)
+          if double(datasets(i).id) == double(dataset_id)
+            dataset = datasets(i);
+            return;
+          end
+        end
+      end
+      error('Dataset id %d not found in stream "%s"', dataset_id, stream_name);
+    end
+
+    function assert_time_overlap(~, name, time, dataset)
+      has_start = isfield(dataset, 'timestamp_start') && ~isempty(dataset.timestamp_start);
+      has_stop = isfield(dataset, 'timestamp_stop') && ~isempty(dataset.timestamp_stop);
+      if ~(has_start && has_stop)
+        return;
+      end
+      time_min = double(min(time));
+      time_max = double(max(time));
+      ds_start = double(dataset.timestamp_start);
+      ds_stop = double(dataset.timestamp_stop);
+      if time_max < ds_start || time_min > ds_stop
+        error( ...
+          '%s: Signal time range [%g, %g] does not overlap dataset range [%g, %g]', ...
+          name, time_min, time_max, ds_start, ds_stop);
+      end
+    end
+
+    function staging_paths = write_staging_files(~, T, row_counts, temp_dir)
+      staging_paths = cell(1, numel(row_counts));
+      offset = 0;
+      for i = 1:numel(row_counts)
+        rows = row_counts(i);
+        part = T(offset+1:offset+rows, :);
+        path = fullfile(temp_dir, sprintf('staging_%d.parquet', i-1));
+        % Snappy staging only; lake format is owned by parquet-transcode.
+        parquetwrite(path, part);
+        staging_paths{i} = path;
+        offset = offset + rows;
+      end
+    end
+
+    function format_upload_statuses(~, signals)
+      parts = {};
+      if iscell(signals)
+        items = signals;
+      elseif isstruct(signals)
+        items = num2cell(signals);
+      else
+        return;
+      end
+      for i = 1:numel(items)
+        s = items{i};
+        label = '';
+        if isfield(s, 'name') && ~isempty(s.name)
+          label = char(string(s.name));
+        elseif isfield(s, 'id') && ~isempty(s.id)
+          label = sprintf('id=%s', string(s.id));
+        else
+          label = sprintf('signal[%d]', i);
+        end
+        status = '';
+        if isfield(s, 'status')
+          status = char(string(s.status));
+        end
+        message = '';
+        if isfield(s, 'message') && ~isempty(s.message)
+          message = char(string(s.message));
+        end
+        if isempty(message)
+          parts{end+1} = sprintf('%s: %s', label, status); %#ok<AGROW>
+        else
+          parts{end+1} = sprintf('%s: %s (%s)', label, status, message); %#ok<AGROW>
+        end
+      end
+      if ~isempty(parts)
+        error('Signal upload failed: %s', strjoin(parts, '; '));
+      end
     end
   end
 
@@ -183,6 +543,179 @@ classdef DB
       stream_id = obj.find_stream_id(stream_name);
       endpoint = sprintf('/stream/%d/dataset/%d/signals', stream_id, dataset_id);
       signals = obj.make_request('GET', endpoint);
+    end
+
+    function signal = add_signal(obj, stream_name, dataset_id, name, data, opts)
+      %ADD_SIGNAL Upload one signal onto an existing imported dataset.
+      %
+      %   signal = mdb.add_signal(stream_name, dataset_id, name, data)
+      %   signal = mdb.add_signal(..., Metadata=struct(), Overwrite=false, Priority="default")
+      %
+      %   data must be a table or timetable with time plus value and/or value_text.
+      %   Returns the signal object after upload completion is accepted; the
+      %   asynchronous Iceberg commit may still be in progress.
+      arguments
+        obj
+        stream_name
+        dataset_id (1,1) double
+        name
+        data
+        opts.Metadata = struct()
+        opts.Overwrite (1,1) logical = false
+        opts.Priority (1,1) string {mustBeMember(opts.Priority, ["default","high"])} = "default"
+      end
+
+      name = char(string(name));
+      if strlength(strtrim(string(name))) == 0
+        error('Signal name must be non-empty');
+      end
+      stream_name = char(string(stream_name));
+      priority = char(opts.Priority);
+
+      if isempty(obj.streams)
+        obj.streams = obj.get_streams();
+      end
+      stream_id = obj.find_stream_id(stream_name);
+      dataset = obj.find_dataset(stream_name, dataset_id);
+
+      T = DB.normalize_signal_table(data, name);
+      obj.assert_time_overlap(name, T.time, dataset);
+
+      row_counts = DB.plan_row_counts(height(T));
+      frequency = DB.estimate_frequency(T.time);
+      sum_value = DB.value_sum(T.value);
+
+      temp_dir = tempname;
+      mkdir(temp_dir);
+      cleaner = onCleanup(@() DB.delete_temp_dir(temp_dir)); %#ok<NASGU>
+
+      staging_paths = obj.write_staging_files(T, row_counts, temp_dir);
+
+      files_json_parts = cell(1, numel(row_counts));
+      for i = 1:numel(row_counts)
+        files_json_parts{i} = sprintf('{"index":%d,"rows":%d}', i-1, row_counts(i));
+      end
+      overwrite_json = 'false';
+      if opts.Overwrite
+        overwrite_json = 'true';
+      end
+      presign_body = sprintf( ...
+        '{"signals":[{"name":%s,"metadata":%s,"files":[%s],"priority":%s}],"overwrite":%s}', ...
+        jsonencode(name), ...
+        DB.encode_json_object(opts.Metadata), ...
+        strjoin(files_json_parts, ','), ...
+        jsonencode(priority), ...
+        overwrite_json);
+
+      endpoint_presign = sprintf('/stream/%d/dataset/%d/signal/uploads', stream_id, dataset_id);
+      try
+        presign_resp = obj.post_json(endpoint_presign, presign_body);
+      catch ME
+        error('Presign signal upload failed for "%s": %s', name, ME.message);
+      end
+
+      if iscell(presign_resp)
+        presigned_list = presign_resp;
+      elseif isstruct(presign_resp)
+        presigned_list = num2cell(presign_resp);
+      else
+        error('Unexpected presign response for "%s"', name);
+      end
+
+      presigned = [];
+      for i = 1:numel(presigned_list)
+        item = presigned_list{i};
+        if isfield(item, 'name') && strcmp(char(string(item.name)), name)
+          presigned = item;
+          break;
+        end
+      end
+      if isempty(presigned)
+        error('Presign response missing signal "%s"', name);
+      end
+      signal_id = double(presigned.signal_id);
+
+      if iscell(presigned.files)
+        file_list = presigned.files;
+      else
+        file_list = num2cell(presigned.files);
+      end
+      files_by_index = containers.Map('KeyType', 'double', 'ValueType', 'any');
+      for i = 1:numel(file_list)
+        f = file_list{i};
+        files_by_index(double(f.index)) = f;
+      end
+
+      uploaded_files = cell(1, numel(row_counts));
+      try
+        for i = 1:numel(row_counts)
+          idx = i - 1;
+          if ~isKey(files_by_index, idx)
+            error('Presign response missing file index %d for "%s"', idx, name);
+          end
+          remote = files_by_index(idx);
+          upload_path = fullfile(temp_dir, sprintf('upload_%d.parquet', idx));
+          meta = DB.prepare_upload_file( ...
+            staging_paths{i}, upload_path, dataset_id, signal_id, row_counts(i));
+          DB.put_storage_file(upload_path, char(string(remote.url)));
+          uploaded_files{i} = struct( ...
+            'path', char(string(remote.path)), ...
+            'size', double(meta.size), ...
+            'footer', double(meta.footer));
+        end
+      catch ME
+        error( ...
+          ['Signal upload failed after presign for "%s" (signal_id=%d). ', ...
+           'Complete was not called; a FROZEN_TO_COLD placeholder may remain server-side. ', ...
+           'Cause: %s'], name, signal_id, ME.message);
+      end
+
+      file_complete_parts = cell(1, numel(uploaded_files));
+      for i = 1:numel(uploaded_files)
+        f = uploaded_files{i};
+        file_complete_parts{i} = sprintf( ...
+          '{"path":%s,"size":%d,"footer":%d}', ...
+          jsonencode(f.path), f.size, f.footer);
+      end
+      complete_body = sprintf( ...
+        '{"signals":[{"id":%d,"priority":%s,"stats":{"sum":%s,"frequency":%s},"files":[%s]}]}', ...
+        signal_id, ...
+        jsonencode(priority), ...
+        DB.encode_json_nullable_number(sum_value), ...
+        DB.encode_json_nullable_number(frequency), ...
+        strjoin(file_complete_parts, ','));
+
+      endpoint_complete = sprintf( ...
+        '/stream/%d/dataset/%d/signal/uploads/complete', stream_id, dataset_id);
+      try
+        complete_resp = obj.post_json(endpoint_complete, complete_body);
+      catch ME
+        error('Complete signal upload failed for "%s" (id=%d): %s', name, signal_id, ME.message);
+      end
+
+      if iscell(complete_resp)
+        statuses = complete_resp;
+      elseif isstruct(complete_resp)
+        statuses = num2cell(complete_resp);
+      else
+        statuses = {complete_resp};
+      end
+      for i = 1:numel(statuses)
+        st = statuses{i};
+        status_ok = isfield(st, 'status') && strcmp(char(string(st.status)), 'OK');
+        if ~status_ok
+          obj.format_upload_statuses(statuses);
+        end
+      end
+
+      endpoint_get = sprintf( ...
+        '/stream/%d/dataset/%d/signal/%d', stream_id, dataset_id, signal_id);
+      try
+        signal = obj.make_request('GET', endpoint_get);
+      catch ME
+        error('Failed to fetch signal "%s" after upload (id=%d): %s', ...
+          name, signal_id, ME.message);
+      end
     end
 
     function T = get_data(obj, dataset_path, signal_name, is_text)

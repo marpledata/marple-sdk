@@ -56,3 +56,25 @@ ylabel('Chlorophyll');
 zlabel('pH');
 cb = colorbar;
 ylabel(cb,'Temperature');
+
+%% Example 4: add_signal (commented — mutates a dataset)
+%
+% Uploads a small numeric signal onto an existing imported dataset.
+% Uncomment and set stream_name / dataset_id for a dataset you own.
+%
+% stream_name = 'Charles river measurements';
+% datasets = mdb.get_datasets(stream_name);
+% dataset_id = datasets(1).id;
+% n = 100;
+% t0 = int64(datasets(1).timestamp_start);
+% if isempty(t0)
+%   t0 = int64(1.577e18); % fallback ~2020-01-01 UTC in ns
+% end
+% data = table( ...
+%   t0 + int64((0:n-1)' * 1e9), ...
+%   rand(n, 1), ...
+%   'VariableNames', {'time', 'value'});
+% signal = mdb.add_signal( ...
+%   stream_name, dataset_id, 'sdk.matlab.demo', data, ...
+%   Metadata=struct('unit', '1'), Overwrite=true);
+% disp(signal);

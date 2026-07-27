@@ -19,10 +19,10 @@ signal = mdb.add_signal( ...
   `get_signals`.
 - `dataset_id`: numeric ID of an existing imported dataset in the stream.
 - `name`: non-empty signal name.
-- `data`: either:
-  - a MATLAB table with `time` and at least one of `value` or
-    `value_text`; or
-  - a path to a Parquet file with those columns.
+- `data`: a MATLAB `table` or `timetable` with `time` semantics and at
+  least one of `value` or `value_text`. For a `timetable`, `RowTimes`
+  become `time` (Unix nanoseconds). Parquet paths are not accepted;
+  staging Parquet is written internally only.
 - `Metadata`: a value that `jsonencode` serializes as a JSON object.
   Signal metadata such as `unit` belongs here. The backend promotes
   `unit` and `description` to dedicated signal fields. Reserved
@@ -31,7 +31,8 @@ signal = mdb.add_signal( ...
   conflict. When `true`, it is replaced.
 - `Priority`: `"default"` or `"high"`.
 
-`time` is signed `int64` Unix time in nanoseconds. It must contain no
+`time` is signed `int64` Unix time in nanoseconds (for a `timetable`,
+`RowTimes` are converted to this representation). It must contain no
 missing values and must be non-negative. `value` must be convertible to
 `double`; non-finite values are stored as null. `value_text` must be
 convertible to strings. Extra input columns are ignored. The table must
