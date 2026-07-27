@@ -11,7 +11,7 @@ parent Rust workspace.
 - `src/prepare_upload.rs`: staging → Iceberg lake upload conversion.
 - `tests/transcode_test.rs`: download-path regression tests.
 - `tests/prepare_upload_test.rs`: prepare-upload smoke tests.
-- `tests/oracle_prepare_upload.py`: independent PyArrow 24 oracle.
+- `tests/oracle_prepare_upload.py`: PyArrow oracle using `marple.db.constants`.
 - `test_data/`: lake Parquet fixtures (directory names are labels).
 - `README.md`: usage and release binary naming.
 - `analyze.py`: ad-hoc Parquet inspection helper.
@@ -23,7 +23,7 @@ Run from `rust/parquet-transcode/`:
 - Build: `cargo build`
 - Release binary: `cargo build --release`
 - Rust tests: `cargo test --locked`
-- Oracle: `PARQUET_TRANSCODE_BIN=target/debug/parquet-transcode uv run --with 'pyarrow==24.0.0' tests/oracle_prepare_upload.py`
+- Oracle: `PARQUET_TRANSCODE_BIN=target/debug/parquet-transcode uv run --project ../../python --with 'pyarrow==24.0.0' tests/oracle_prepare_upload.py`
 - Manual directory mode: `cargo run -- <directory>`
 - Manual upload mode: `cargo run -- prepare-upload --input ... --output ... --dataset-id ... --signal-id ...`
 

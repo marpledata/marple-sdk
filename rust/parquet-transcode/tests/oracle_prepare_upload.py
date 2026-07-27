@@ -1,9 +1,3 @@
-# /// script
-# requires-python = ">=3.11"
-# dependencies = [
-#     "pyarrow==24.0.0",
-# ]
-# ///
 """Oracle for parquet-transcode prepare-upload.
 
 Derives temporary MATLAB-like Snappy staging files from canonical lake
@@ -15,6 +9,14 @@ fixtures under test_data/dataset=8, runs prepare-upload, and checks:
 - Semantic table equality against the original lake fixture
 - JSON stdout size / rows / footer
 - One ZSTD -> Snappy round trip via the legacy directory mode
+
+Run from ``rust/parquet-transcode`` against the Python SDK project so
+``LAKE_PARQUET_SCHEMA`` / ``ROW_GROUP_SIZE`` come from
+``marple.db.constants``::
+
+    PARQUET_TRANSCODE_BIN=target/debug/parquet-transcode \\
+      uv run --project ../../python --with 'pyarrow==24.0.0' \\
+      tests/oracle_prepare_upload.py
 """
 
 from __future__ import annotations
@@ -29,22 +31,13 @@ from pathlib import Path
 import pyarrow as pa
 import pyarrow.parquet as pq
 
+from marple.db.constants import LAKE_PARQUET_SCHEMA, ROW_GROUP_SIZE
+
 ROOT = Path(__file__).resolve().parents[1]
 FIXTURES = [
     ROOT / "test_data/dataset=8/signal=86/mdb_Usage_kWh.parquet",
     ROOT / "test_data/dataset=8/signal=82/mdb_Load_Type.parquet",
 ]
-ROW_GROUP_SIZE = 1_048_576
-
-LAKE_SCHEMA = pa.schema(
-    [
-        pa.field("dataset", pa.int64(), nullable=False, metadata={"PARQUET:field_id": "1"}),
-        pa.field("signal", pa.int64(), nullable=False, metadata={"PARQUET:field_id": "2"}),
-        pa.field("time", pa.int64(), nullable=False, metadata={"PARQUET:field_id": "3"}),
-        pa.field("value", pa.float64(), nullable=True, metadata={"PARQUET:field_id": "4"}),
-        pa.field("value_text", pa.string(), nullable=True, metadata={"PARQUET:field_id": "5"}),
-    ]
-)
 
 
 def find_binary() -> Path:
@@ -95,7 +88,7 @@ def footer_length(path: Path) -> int:
 def assert_lake_metadata(path: Path, expected: pa.Table, meta: dict) -> None:
     pf = pq.ParquetFile(path)
     table = pf.read()
-    assert table.schema.equals(LAKE_SCHEMA, check_metadata=True), table.schema
+    assert table.schema.equals(LAKE_PARQUET_SCHEMA, check_metadata=True), table.schema
     assert table.schema.equals(expected.schema, check_metadata=True)
     assert table.equals(expected), "logical table does not match canonical fixture"
 

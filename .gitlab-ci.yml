@@ -116,7 +116,7 @@ rust:parquet-transcode:
     - cargo test --locked
     - export PARQUET_TRANSCODE_BIN="$PWD/target/debug/parquet-transcode"
     - test -x "$PARQUET_TRANSCODE_BIN"
-    - uv run --with 'pyarrow==24.0.0' tests/oracle_prepare_upload.py
+    - uv run --project ../../python --with 'pyarrow==24.0.0' tests/oracle_prepare_upload.py
   rules:
     - if: $CI_COMMIT_BRANCH
       changes:

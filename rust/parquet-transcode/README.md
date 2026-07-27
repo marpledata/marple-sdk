@@ -63,5 +63,5 @@ binary on first use.
 cargo build --release
 cargo test --locked
 PARQUET_TRANSCODE_BIN=target/debug/parquet-transcode \
-  uv run --with 'pyarrow==24.0.0' tests/oracle_prepare_upload.py
+  uv run --project ../../python --with 'pyarrow==24.0.0' tests/oracle_prepare_upload.py
 ```
