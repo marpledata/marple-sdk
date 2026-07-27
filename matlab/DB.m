@@ -235,15 +235,19 @@ classdef DB
     function put_storage_file(local_path, put_url)
       import matlab.net.http.*
       import matlab.net.http.io.*
+      import matlab.net.URI
 
       % Prefer FileProvider streaming; strip Content-Disposition which breaks
       % many presigned object-storage URLs. Fall back to raw uint8 Payload when
       % FileProvider/complete fails (not when the HTTP status is non-2xx).
-      uri = URI(put_url);
+      % 'literal' stops URI() from re-encoding '%' in the already-encoded
+      % presigned path, which otherwise breaks the storage signature.
+      uri = URI(put_url, 'literal');
+    
       try
         provider = FileProvider(local_path);
         header = HeaderField('Content-Type', 'application/octet-stream');
-        req = RequestMessage(RequestMethod.Put, header, provider);
+        req = RequestMessage(RequestMethod.PUT, header, provider);
         [completed, ~] = complete(req, uri);
         if ~isempty(completed.Header.getFields('Content-Disposition'))
           completed.Header = completed.Header.removeFields('Content-Disposition');
@@ -263,7 +267,7 @@ classdef DB
         body = MessageBody();
         body.Payload = bytes;
         header = HeaderField('Content-Type', 'application/octet-stream');
-        req = RequestMessage(RequestMethod.Put, header, body);
+        req = RequestMessage(RequestMethod.PUT, header, body);
         resp = req.send(uri);
       end
 
@@ -338,15 +342,16 @@ classdef DB
 
     function response = post_json(obj, endpoint, json_body)
       import matlab.net.http.*
+      import matlab.net.URI
 
       headers = [
-        HeaderField('Authorization', ['Bearer ' obj.api_key])
-        HeaderField('X-Request-Source', 'sdk/matlab')
+        HeaderField('Authorization', ['Bearer ' obj.api_key]), ...
+        HeaderField('X-Request-Source', 'sdk/matlab'), ...
         HeaderField('Content-Type', 'application/json')
       ];
       body = MessageBody();
       body.Payload = unicode2native(char(json_body), 'UTF-8');
-      req = RequestMessage(RequestMethod.Post, headers, body);
+      req = RequestMessage(RequestMethod.POST, headers, body);
       url = [obj.api_url endpoint];
       try
         resp = req.send(URI(url));

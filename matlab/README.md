@@ -33,7 +33,7 @@ This folder contains a small MATLAB client for Marple DB.
    (edit `STREAM_NAME` / `DATASET_ID` at the top first):
 
    ```matlab
-   run(fullfile('matlab', 'add-signal-test.m'));
+   run(fullfile('matlab', 'add_signal_test.m'));
    ```
 
 ## Notes

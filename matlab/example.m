@@ -61,7 +61,7 @@ ylabel(cb,'Temperature');
 %
 % Uploads a small numeric signal onto an existing imported dataset.
 % Uncomment and set stream_name / dataset_id for a dataset you own.
-% For a fuller wind-turbine demo, see add-signal-test.m.
+% For a fuller wind-turbine demo, see add_signal_test.m.
 %
 % stream_name = 'Charles river measurements';
 % datasets = mdb.get_datasets(stream_name);

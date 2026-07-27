@@ -6,7 +6,7 @@ This directory contains a small MATLAB client for Marple DB.
 
 - `DB.m`: MATLAB DB client implementation.
 - `example.m`: example usage script.
-- `add-signal-test.m`: manual wind-turbine `add_signal` smoke test.
+- `add_signal_test.m`: manual wind-turbine `add_signal` smoke test.
 - `config.json`: local configuration read by `DB.from_config()`.
 - `README.md`: setup, quickstart, cache, and compatibility notes.
 

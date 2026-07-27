@@ -1,4 +1,4 @@
-%% add-signal-test.m
+%% add_signal_test.m
 % Generate a short wind-turbine SCADA burst and upload it with add_signal.
 % Inspired by python/ingest-ibiza.py (synthetic/derived signals + overwrite).
 %
@@ -10,7 +10,7 @@
 %
 % Run from the repo root:
 %   addpath(genpath(fullfile(pwd, 'matlab')))
-%   run(fullfile('matlab', 'add-signal-test.m'))
+%   run(fullfile('matlab', 'add_signal_test.m'))
 
 %% Config — edit these
 STREAM_NAME = 'Charles river measurements';
@@ -150,7 +150,7 @@ for i = 1:numel(uploads)
     'unit', u.unit, ...
     'description', u.description, ...
     'turbine_id', TURBINE_ID, ...
-    'source', 'matlab/add-signal-test.m');
+    'source', 'matlab/add_signal_test.m');
   fprintf('  [%d/%d] %s ...\n', i, numel(uploads), u.name);
   signal = mdb.add_signal( ...
     STREAM_NAME, dataset_id, u.name, u.data, ...
