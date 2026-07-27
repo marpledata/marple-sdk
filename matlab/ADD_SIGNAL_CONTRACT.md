@@ -145,7 +145,9 @@ files followed by at most one smaller final file, satisfying the backend
 rule that at most one file may contain fewer than `8,388,608` rows.
 
 Estimate frequency in hertz as `1e9 / median(diff(time))` for positive
-time differences. Use `null` when it cannot be estimated. Compute
+time differences (diffs computed in int64, then converted). Use `null`
+when it cannot be estimated. This matches the MATLAB contract; the Python
+SDK uses a closely related but not identical estimator. Compute
 `sum(value)` over non-null numeric values, or `null` when there are none.
 
 Before calling the API, MATLAB writes one temporary Snappy staging

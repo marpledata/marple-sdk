@@ -197,12 +197,13 @@ classdef DB
       if numel(time) < 2
         return;
       end
-      diffs = diff(double(time));
+      % Keep int64 diffs — double(time) loses ~256 ns near Unix-ns epoch values.
+      diffs = diff(time);
       diffs = diffs(diffs > 0);
       if isempty(diffs)
         return;
       end
-      frequency = 1e9 / median(diffs);
+      frequency = 1e9 / double(median(diffs));
     end
 
     function s = value_sum(value)
@@ -236,7 +237,8 @@ classdef DB
       import matlab.net.http.io.*
 
       % Prefer FileProvider streaming; strip Content-Disposition which breaks
-      % many presigned object-storage URLs. Fall back to raw uint8 Payload.
+      % many presigned object-storage URLs. Fall back to raw uint8 Payload when
+      % FileProvider/complete fails (not when the HTTP status is non-2xx).
       uri = URI(put_url);
       try
         provider = FileProvider(local_path);
@@ -441,13 +443,13 @@ classdef DB
       if ~(has_start && has_stop)
         return;
       end
-      time_min = double(min(time));
-      time_max = double(max(time));
-      ds_start = double(dataset.timestamp_start);
-      ds_stop = double(dataset.timestamp_stop);
+      time_min = min(time);
+      time_max = max(time);
+      ds_start = int64(dataset.timestamp_start);
+      ds_stop = int64(dataset.timestamp_stop);
       if time_max < ds_start || time_min > ds_stop
         error( ...
-          '%s: Signal time range [%g, %g] does not overlap dataset range [%g, %g]', ...
+          '%s: Signal time range [%d, %d] does not overlap dataset range [%d, %d]', ...
           name, time_min, time_max, ds_start, ds_stop);
       end
     end
@@ -460,7 +462,7 @@ classdef DB
         part = T(offset+1:offset+rows, :);
         path = fullfile(temp_dir, sprintf('staging_%d.parquet', i-1));
         % Snappy staging only; lake format is owned by parquet-transcode.
-        parquetwrite(path, part);
+        parquetwrite(path, part, 'VariableCompression', 'snappy');
         staging_paths{i} = path;
         offset = offset + rows;
       end
@@ -699,6 +701,9 @@ classdef DB
         statuses = num2cell(complete_resp);
       else
         statuses = {complete_resp};
+      end
+      if isempty(statuses)
+        error('Complete signal upload returned empty status list for id=%d', signal_id);
       end
       for i = 1:numel(statuses)
         st = statuses{i};

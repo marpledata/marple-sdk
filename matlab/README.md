@@ -29,6 +29,13 @@ This folder contains a small MATLAB client for Marple DB.
    run(fullfile('matlab', 'example.m'));
    ```
 
+5. Optional: upload a synthetic wind-turbine SCADA burst with `add_signal`
+   (edit `STREAM_NAME` / `DATASET_ID` at the top first):
+
+   ```matlab
+   run(fullfile('matlab', 'add-signal-test.m'));
+   ```
+
 ## Notes
 
 - `DB.from_config()` reads `config.json` next to `DB.m`. `api_key` is sent as a Bearer token to the Marple DB API.
