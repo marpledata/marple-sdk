@@ -1,3 +1,4 @@
+from enum import StrEnum
 import re
 import time
 import warnings
@@ -29,13 +30,33 @@ from marple.db.signal_upload import (
 )
 from marple.utils import DBClient, validate_response
 
-BUSY_STATUSES = [
-    "WAITING",
-    "IMPORTING",
-    "POST_PROCESSING",
-    "UPDATING_ICEBERG",
-    "COOLING",
+
+class ImportStatus(StrEnum):
+    """
+    Import statuses for a dataset.
+    """
+
+    UPLOADING = "UPLOADING"
+    WAITING = "WAITING"
+    IMPORTING = "IMPORTING"
+    POSTPROCESSING = "POSTPROCESSING"
+    POSTPROCESSING_FAILED = "POSTPROCESSING_FAILED"
+    COOLING = "COOLING"
+    COOLING_FAILED = "COOLING_FAILED"
+    FINISHED = "FINISHED"
+    LIVE = "LIVE"
+    FAILED = "FAILED"
+
+
+STABLE_STATUSES = [
+    ImportStatus.FINISHED,
+    ImportStatus.LIVE,
+    ImportStatus.FAILED,
+    ImportStatus.COOLING_FAILED,
+    ImportStatus.POSTPROCESSING_FAILED,
 ]
+BUSY_STATUSES = [v for v in ImportStatus if v not in STABLE_STATUSES]
+
 GET_SIGNALS_CHUNK_SIZE = 200
 
 
@@ -366,6 +387,8 @@ class Dataset(BaseModel):
             return []
         if len(signals) > MAX_SIGNALS_PER_ADD:
             raise ValueError(f"Provide at most {MAX_SIGNALS_PER_ADD} signals per call")
+        if self.import_status != ImportStatus.FINISHED:
+            raise ValueError(f"Dataset {self.id} is not in a writable state (status: {self.import_status})")
 
         signal_ids = run_signal_uploads(self, signals, overwrite=overwrite, concurrency=concurrency)
         for signal_id in signal_ids:  # Invalidate new signals from cache
