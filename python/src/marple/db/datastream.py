@@ -79,12 +79,10 @@ class DataStream(BaseModel):
 
     def add_dataset(self, dataset_name: str, metadata: dict | None = None) -> Dataset:
         """
-        Create a new empty dataset in this realtime stream.
-
-        Use :meth:`~marple.db.dataset.Dataset.append` to add data and
-        :meth:`~marple.db.dataset.Dataset.cool` to finalize the dataset.
-
-        To add datasets from a file to a file stream, use :meth:`push_file` instead.
+        Create a new empty dataset in this stream (works for both "files"
+        and "realtime" streams). Use :meth:`~marple.db.dataset.Dataset.append`
+        and :meth:`~marple.db.dataset.Dataset.cool` afterward on realtime
+        streams, or :meth:`push_file` to ingest a whole file at once.
         """
         r = self._client.post(
             f"/stream/{self.id}/dataset/add",

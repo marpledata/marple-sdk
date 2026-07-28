@@ -549,6 +549,56 @@ classdef DB
       signals = obj.make_request('GET', endpoint);
     end
 
+    function dataset = add_dataset(obj, stream_name, dataset_name, opts)
+      %ADD_DATASET Create a new empty dataset in a stream.
+      %
+      %   dataset = mdb.add_dataset(stream_name, dataset_name)
+      %   dataset = mdb.add_dataset(stream_name, dataset_name, Metadata=struct())
+      %
+      %   Works on both "files" and "realtime" streams. The new dataset has
+      %   no signals and no known time range until a signal is added to it.
+      arguments
+        obj
+        stream_name
+        dataset_name
+        opts.Metadata = struct()
+      end
+
+      dataset_name = char(string(dataset_name));
+      if strlength(strtrim(string(dataset_name))) == 0
+        error('Dataset name must be non-empty');
+      end
+      stream_name = char(string(stream_name));
+
+      if isempty(obj.streams)
+        obj.streams = obj.get_streams();
+      end
+      stream_id = obj.find_stream_id(stream_name);
+
+      body = sprintf('{"dataset_name":%s,"metadata":%s}', ...
+        jsonencode(dataset_name), DB.encode_json_object(opts.Metadata));
+
+      endpoint = sprintf('/stream/%d/dataset/add', stream_id);
+      try
+        resp = obj.post_json(endpoint, body);
+      catch ME
+        error('Add dataset failed for "%s": %s', dataset_name, ME.message);
+      end
+
+      if ~isfield(resp, 'dataset_id')
+        error('Add dataset response missing dataset_id for "%s"', dataset_name);
+      end
+      dataset_id = double(resp.dataset_id);
+
+      endpoint_get = sprintf('/datapool/%s/dataset', obj.datapool);
+      try
+        dataset = obj.make_request('GET', endpoint_get, [], struct('id', dataset_id));
+      catch ME
+        error('Failed to fetch dataset "%s" after creation (id=%d): %s', ...
+          dataset_name, dataset_id, ME.message);
+      end
+    end
+
     function signal = add_signal(obj, stream_name, dataset_id, name, data, opts)
       %ADD_SIGNAL Upload one signal onto an existing imported dataset.
       %
