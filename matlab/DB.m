@@ -555,8 +555,9 @@ classdef DB
       %   dataset = mdb.add_dataset(stream_name, dataset_name)
       %   dataset = mdb.add_dataset(stream_name, dataset_name, Metadata=struct())
       %
-      %   Works on both "files" and "realtime" streams. The new dataset has
-      %   no signals and no known time range until a signal is added to it.
+      %   Live stream: append data, then cool to cold Parquet/Iceberg storage.
+      %   File stream: prefer file upload; use add_dataset + add_signal for
+      %   custom lake writes without file parsing.
       arguments
         obj
         stream_name

@@ -24,6 +24,8 @@ This directory contains a small MATLAB client for Marple DB.
 - `DB.from_config()` should continue reading `config.json` next to `DB.m`.
 - `get_data(dataset_path, signal_name)` downloads parquet files into
   `_marplecache/<workspace>/<datapool>/dataset=<id>/signal=<id>/`.
+- `add_dataset` creates an empty dataset; on file streams pair it with
+  `add_signal` for custom lake writes (prefer file upload otherwise).
 - `add_signal(stream_name, dataset_id, name, data, ...)` accepts a table or
   timetable only; it stages Snappy Parquet locally and uses
   `parquet-transcode prepare-upload` before the storage PUT.

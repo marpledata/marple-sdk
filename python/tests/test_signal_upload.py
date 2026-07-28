@@ -330,3 +330,34 @@ def test_add_signals_overwrite_and_conflict(db: DB, require_signal_upload_api: N
         assert second.storage_status == "COLD"
         data = second.get_data(refresh_cache=True)
         assert list(data["value"]) == [10.0, 20.0]
+
+
+def test_add_dataset_then_add_signals(db: DB, require_signal_upload_api: None) -> None:
+    """Custom file-stream ingest: empty dataset via add_dataset, then add_signals."""
+    with _signal_upload_stream(db, "custom-ingest") as stream:
+        dataset = stream.add_dataset("pytest-custom", metadata={"test": "add_dataset_add_signals"})
+        t0 = 1_700_000_000_000_000_000
+        df_a = pd.DataFrame({COL_TIME: [t0, t0 + 1_000_000_000], COL_VAL: [1.0, 2.0]})
+        df_b = pd.DataFrame({COL_TIME: [t0, t0 + 1_000_000_000], COL_VAL: [3.0, 4.0]})
+
+        ids = dataset.add_signals(
+            [
+                {"name": "sdk.custom.a", "data": df_a, "metadata": {"unit": "1"}},
+                {"name": "sdk.custom.b", "data": df_b},
+            ],
+            concurrency=2,
+        )
+        assert len(ids) == 2
+
+        signals = dataset.get_signals(signal_ids=ids, refresh=True)
+        assert [s.id for s in signals] == ids
+        for signal in signals:
+            signal.wait_until_available(timeout=180)
+
+        a = dataset.get_signal("sdk.custom.a", refresh=True)
+        b = dataset.get_signal("sdk.custom.b", refresh=True)
+        assert a is not None and b is not None
+        assert a.storage_status == "COLD"
+        assert b.storage_status == "COLD"
+        assert list(a.get_data(refresh_cache=True)["value"]) == [1.0, 2.0]
+        assert list(b.get_data(refresh_cache=True)["value"]) == [3.0, 4.0]

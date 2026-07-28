@@ -91,11 +91,11 @@ plotly
 pip install -r requirements.txt && python analyze.py
 ```
 
-## Recipe 4: uploading large files and realtime (brief)
+## Recipe 4: ingest paths
 
-For large uploads and realtime streaming, consult the docs rather than inlining here:
-
-- Upload large files: https://docs.marpledata.com/docs/sdk/overview/python-sdk
-- Realtime stream via DB SDK: https://docs.marpledata.com/docs/sdk/advanced/realtime-stream
+- File stream (plugin defined): `stream.push_file(...)` then `wait_for_import`
+- File stream (custom): `stream.add_dataset(...)` then `dataset.add_signal(...)`
+- Live stream: `add_dataset` → `upsert_signals` / `append` → `cool` → `wait_for_import`
+- Large uploads / realtime details: https://docs.marpledata.com/docs/sdk/overview/python-sdk and https://docs.marpledata.com/docs/sdk/advanced/realtime-stream
 
 When unsure of the exact method, introspect the package or query `<doc-url>.md?ask=<question>` (see `reference.md`).

@@ -16,11 +16,12 @@ Import a file and wait for import
    dataset = stream.push_file("examples_race.csv", metadata={"driver": "Mbaerto"})
    dataset = dataset.wait_for_import(timeout=10)
 
-Add signals to an imported dataset
-----------------------------------
+Add signals to a dataset
+------------------------
 
-Upload derived (or extra) signals onto a finished dataset. Data needs
-``time`` (int64 ns) plus ``value`` and/or ``value_text``
+Upload signals onto a dataset — derived channels after ``push_file``, or
+custom lake ingest after ``stream.add_dataset``. Data needs ``time``
+(int64 ns) plus ``value`` and/or ``value_text``
 (:data:`marple.db.LAKE_ARROW_SCHEMA`).
 
 .. code-block:: python
