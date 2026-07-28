@@ -1,6 +1,6 @@
 import re
 from pathlib import Path
-from typing import Iterable, Literal
+from typing import Any, Iterable, Literal
 from urllib import parse, request
 
 import pandas as pd
@@ -20,7 +20,7 @@ from marple.db.constants import (
 )
 
 
-def validate_response(response: requests.Response, failure_message: str) -> dict:
+def validate_response(response: requests.Response, failure_message: str) -> Any:
     if response.status_code == 400:
         raise ValueError(f"{failure_message}: Bad request. {response.json().get('error', 'Unknown error')}")
     if response.status_code == 403:
@@ -39,6 +39,11 @@ def validate_response(response: requests.Response, failure_message: str) -> dict
     if isinstance(r_json, dict) and r_json.get("status", "success") not in ["success", "healthy"]:
         raise ValueError(failure_message)
     return r_json
+
+
+def validate_storage_response(response: requests.Response, failure_message: str) -> None:
+    if not response.ok:
+        raise RuntimeError(f"{failure_message}: status {response.status_code}: {response.text}")
 
 
 class TimeoutHTTPAdapter(HTTPAdapter):

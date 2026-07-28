@@ -16,6 +16,28 @@ Import a file and wait for import
    dataset = stream.push_file("examples_race.csv", metadata={"driver": "Mbaerto"})
    dataset = dataset.wait_for_import(timeout=10)
 
+Add signals to an imported dataset
+----------------------------------
+
+Upload derived (or extra) signals onto a finished dataset. Data needs
+``time`` (int64 ns) plus ``value`` and/or ``value_text``
+(:data:`marple.db.LAKE_ARROW_SCHEMA`).
+
+.. code-block:: python
+
+   import pandas as pd
+
+   speed = dataset.get_signal("car.speed").get_data()
+   derived = pd.DataFrame({
+       "time": speed.index.asi8,
+       "value": speed["value"] * 3.6,
+   })
+   signal = dataset.add_signal(
+       "car.speed_kmh",
+       derived,
+       metadata={"unit": "km/h"},
+   ).wait_until_available()
+
 Upload large files
 ------------------
 

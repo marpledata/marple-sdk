@@ -5,11 +5,10 @@ from pathlib import Path
 from threading import Lock
 from typing import Literal, Optional
 
-import requests
 from pydantic import BaseModel, PrivateAttr
 
 from marple.db.dataset import Dataset, DatasetList
-from marple.utils import DBClient, validate_response
+from marple.utils import DBClient, validate_response, validate_storage_response
 
 
 class IngestionInit(BaseModel):
@@ -178,7 +177,7 @@ class DataStream(BaseModel):
                 data=file,
                 headers={"Content-Length": str(file_size)},
             )
-        _validate_storage_response(response, "Storage PUT failed")
+        validate_storage_response(response, "Storage PUT failed")
 
     def _upload_multipart(
         self,
@@ -212,7 +211,7 @@ class DataStream(BaseModel):
                         data=chunk,
                         headers={"Content-Length": str(part_len)},
                     )
-                    _validate_storage_response(response, f"Part {part.part_number} storage PUT failed")
+                    validate_storage_response(response, f"Part {part.part_number} storage PUT failed")
 
         with ThreadPoolExecutor(max_workers=concurrency) as executor:
             futures = [executor.submit(upload_worker) for _ in range(concurrency)]
@@ -256,8 +255,3 @@ class DataStream(BaseModel):
         """
         r = self._client.post(f"/stream/{self.id}/delete")
         validate_response(r, "Delete stream failed")
-
-
-def _validate_storage_response(response: requests.Response, failure_message: str) -> None:
-    if not response.ok:
-        raise RuntimeError(f"{failure_message}: status {response.status_code}: {response.text}")

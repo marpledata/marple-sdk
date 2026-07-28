@@ -108,13 +108,20 @@ rust:parquet-transcode:
     - rustc --version
     - cargo --version
     - mkdir -p "$CARGO_HOME/registry" "$CARGO_HOME/git"
+    - apt-get update && apt-get install -y --no-install-recommends curl ca-certificates
+    - curl -LsSf https://astral.sh/uv/install.sh | sh
+    - export PATH="/root/.local/bin:$PATH"
   script:
     - cd rust/parquet-transcode
-    - cargo test
+    - cargo test --locked
+    - export PARQUET_TRANSCODE_BIN="$PWD/target/debug/parquet-transcode"
+    - test -x "$PARQUET_TRANSCODE_BIN"
+    - uv run --project ../../python --with 'pyarrow==24.0.0' tests/oracle_prepare_upload.py
   rules:
     - if: $CI_COMMIT_BRANCH
       changes:
         - rust/parquet-transcode/**/*
+        - python/src/marple/db/constants.py
 
 build:parquet-transcode:
   image: rust:1.93
