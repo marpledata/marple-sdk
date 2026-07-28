@@ -111,9 +111,11 @@ class Signal(BaseModel):
 
     def wait_until_available(self, timeout: float = 60) -> "Signal":
         """
-        Poll until this signal is available for querying (storage status is not
-        :attr:`StorageStatus.FROZEN_TO_COLD`). Updates the parent dataset's signal
-        cache when a parent dataset is known.
+        Poll until this signal is available for querying.
+        Args:
+            timeout: Maximum time to wait for the signal to be available in seconds.
+        Returns:
+            The signal object when it is available for querying, or a the last state before the timeout.
         """
         deadline_s = time.monotonic() + max(timeout, 0.1)
         while True:
