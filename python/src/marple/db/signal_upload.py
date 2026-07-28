@@ -74,7 +74,10 @@ class SignalUpload(BaseModel):
         elif isinstance(self.data, pd.DataFrame):
             table = pa.Table.from_pandas(self.data, preserve_index=False)
         elif isinstance(self.data, (Path, str)):
-            table = pq.read_table(self.data)
+            try:
+                table = pq.read_table(self.data)
+            except Exception as e:
+                raise ValueError(f"{self.name}: Unable to read parquet file: {e}") from e
         else:
             raise ValueError(f"{self.name}: Invalid data type: {type(self.data)}")
 
@@ -254,15 +257,15 @@ def _presign_signals(
             body = {}
         raise SignalsAlreadyExistError(
             body.get("signals") or [],  # type: ignore[arg-type]
-            message=f"Presign signal uploads failed: {body.get('error', 'signals_already_exist')}",
+            message=f"Signal upload failed: {body.get('error', 'signals_already_exist')}",
         )
     signals = {
         item["name"]: PresignedSignal.model_validate(item)
-        for item in validate_response(r, "Presign signal uploads failed")
+        for item in validate_response(r, "Signal upload failed")
     }
     missing = {p.name for p in planned} - signals.keys()
     if missing:
-        raise ValueError(f"Presign missing signals: {sorted(missing)}")
+        raise ValueError(f"Signal upload missing signals: {sorted(missing)}")
     if dataset._client._signal_map is not None:
         for name, signal in signals.items():
             dataset._client._signal_map[name] = signal.signal_id

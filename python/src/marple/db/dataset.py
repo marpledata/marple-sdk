@@ -2,6 +2,7 @@ import re
 import time
 import warnings
 from collections import UserList
+from enum import StrEnum
 from io import BytesIO
 from pathlib import Path
 from typing import Any, Callable, Iterable, Literal, Optional, Sequence
@@ -29,13 +30,33 @@ from marple.db.signal_upload import (
 )
 from marple.utils import DBClient, validate_response
 
-BUSY_STATUSES = [
-    "WAITING",
-    "IMPORTING",
-    "POST_PROCESSING",
-    "UPDATING_ICEBERG",
-    "COOLING",
+
+class ImportStatus(StrEnum):
+    """
+    Import statuses for a dataset.
+    """
+
+    UPLOADING = "UPLOADING"
+    WAITING = "WAITING"
+    IMPORTING = "IMPORTING"
+    POSTPROCESSING = "POSTPROCESSING"
+    POSTPROCESSING_FAILED = "POSTPROCESSING_FAILED"
+    COOLING = "COOLING"
+    COOLING_FAILED = "COOLING_FAILED"
+    FINISHED = "FINISHED"
+    LIVE = "LIVE"
+    FAILED = "FAILED"
+
+
+STABLE_STATUSES = [
+    ImportStatus.FINISHED,
+    ImportStatus.LIVE,
+    ImportStatus.FAILED,
+    ImportStatus.COOLING_FAILED,
+    ImportStatus.POSTPROCESSING_FAILED,
 ]
+BUSY_STATUSES = [v for v in ImportStatus if v not in STABLE_STATUSES]
+
 GET_SIGNALS_CHUNK_SIZE = 200
 
 
@@ -129,7 +150,7 @@ class Dataset(BaseModel):
             r = self._client.get(f"/stream/{self.datastream_id}/dataset/{self.id}/signal/{id}")
             try:
                 response = validate_response(r, f"Get signal data for signal ID {id} failed")
-                signal = Signal(self._client, self.datastream_id, self.id, **response)
+                signal = Signal(self._client, self.datastream_id, self.id, dataset=self, **response)
             except Exception as e:
                 warnings.warn(f"Failed to get signal with id {id} and name {name}: {e}")
                 return None
@@ -142,7 +163,7 @@ class Dataset(BaseModel):
         self._signals.clear()
         for response in validate_response(r, "Failed to get signals"):
             try:
-                signal = Signal(self._client, self.datastream_id, self.id, **response)
+                signal = Signal(self._client, self.datastream_id, self.id, dataset=self, **response)
             except ValidationError as e:
                 warnings.warn(f"Failed to create signal {response['name']} (id {response['id']}): {e}")
                 continue
@@ -199,7 +220,7 @@ class Dataset(BaseModel):
             )
             for response in validate_response(r, "Failed to get signals by id"):
                 try:
-                    signal = Signal(self._client, self.datastream_id, self.id, **response)
+                    signal = Signal(self._client, self.datastream_id, self.id, dataset=self, **response)
                 except ValidationError as e:
                     warnings.warn(
                         f"Failed to create signal {response.get('name')} (id {response.get('id')}): {e}"
@@ -366,6 +387,8 @@ class Dataset(BaseModel):
             return []
         if len(signals) > MAX_SIGNALS_PER_ADD:
             raise ValueError(f"Provide at most {MAX_SIGNALS_PER_ADD} signals per call")
+        if self.import_status != ImportStatus.FINISHED:
+            raise ValueError(f"Dataset {self.id} is not in a writable state (status: {self.import_status})")
 
         signal_ids = run_signal_uploads(self, signals, overwrite=overwrite, concurrency=concurrency)
         for signal_id in signal_ids:  # Invalidate new signals from cache
