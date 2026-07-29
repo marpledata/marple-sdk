@@ -29,6 +29,8 @@ This directory contains a small MATLAB client for Marple DB.
 - `add_signal(stream_name, dataset_id, name, data, ...)` accepts a table or
   timetable only; it stages Snappy Parquet locally and uses
   `parquet-transcode prepare-upload` before the storage PUT.
+- `update_metadata(stream_name, dataset_id, metadata)` posts `metadata`
+  straight to the `/metadata` endpoint, which merges it server-side.
 - Preserve `clear_cache()` behavior for forcing a clean re-download.
 - Older MATLAB versions may not read ZSTD-compressed Parquet. Keep the
   `parquet-transcode` helper download, directory transcode, and

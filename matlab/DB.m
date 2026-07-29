@@ -224,15 +224,6 @@ classdef DB
       end
     end
 
-    function merged = merge_structs(base, overrides)
-      % Shallow merge: fields in `overrides` replace same-named fields in `base`.
-      merged = base;
-      fields = fieldnames(overrides);
-      for i = 1:numel(fields)
-        merged.(fields{i}) = overrides.(fields{i});
-      end
-    end
-
     function json = encode_json_nullable_number(x)
       if isempty(x) || (isnumeric(x) && ~isfinite(x))
         json = 'null';
@@ -609,21 +600,20 @@ classdef DB
       end
     end
 
-    function dataset = update_metadata(obj, stream_name, dataset_id, metadata, opts)
+    function dataset = update_metadata(obj, stream_name, dataset_id, metadata)
       %UPDATE_METADATA Update the metadata of an existing dataset.
       %
       %   dataset = mdb.update_metadata(stream_name, dataset_id, metadata)
-      %   dataset = mdb.update_metadata(stream_name, dataset_id, metadata, Overwrite=true)
       %
-      %   By default, `metadata` is merged into the dataset's existing
-      %   metadata (matching keys are replaced). If Overwrite=true, the
-      %   existing metadata is replaced entirely with `metadata`.
+      %   `metadata` is merged into the dataset's existing metadata
+      %   server-side (matching keys are overwritten; keys already on the
+      %   dataset but absent from `metadata` are left untouched). Returns the
+      %   refreshed dataset.
       arguments
         obj
         stream_name
         dataset_id (1,1) double
         metadata
-        opts.Overwrite (1,1) logical = false
       end
 
       stream_name = char(string(stream_name));
@@ -632,30 +622,14 @@ classdef DB
       end
       stream_id = obj.find_stream_id(stream_name);
 
-      endpoint_get = sprintf('/datapool/%s/dataset', obj.datapool);
-      try
-        current = obj.make_request('GET', endpoint_get, [], struct('id', dataset_id));
-      catch ME
-        error('Failed to fetch dataset %d before metadata update: %s', dataset_id, ME.message);
-      end
-
-      if opts.Overwrite
-        new_metadata = metadata;
-      else
-        existing_metadata = struct();
-        if isfield(current, 'metadata') && isstruct(current.metadata)
-          existing_metadata = current.metadata;
-        end
-        new_metadata = DB.merge_structs(existing_metadata, metadata);
-      end
-
       endpoint = sprintf('/stream/%d/dataset/%d/metadata', stream_id, dataset_id);
       try
-        obj.post_json(endpoint, DB.encode_json_object(new_metadata));
+        obj.post_json(endpoint, DB.encode_json_object(metadata));
       catch ME
         error('Update metadata failed for dataset %d: %s', dataset_id, ME.message);
       end
 
+      endpoint_get = sprintf('/datapool/%s/dataset', obj.datapool);
       try
         dataset = obj.make_request('GET', endpoint_get, [], struct('id', dataset_id));
       catch ME

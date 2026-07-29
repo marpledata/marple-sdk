@@ -42,6 +42,7 @@ This folder contains a small MATLAB client for Marple DB.
 - `get_data(dataset_path, signal_name)` fetches a list of parquet URLs from the API, downloads them into `_marplecache/<workspace>/<datapool>/dataset=<id>/signal=<id>/` (via `websave`), and reads them via `parquetDatastore(...)`.
 - `add_dataset(stream_name, dataset_name, Metadata=struct())` creates an empty dataset. Live: append then cool to cold storage. File: prefer file upload; use with `add_signal` for custom lake writes without file parsing.
 - `add_signal(stream_name, dataset_id, name, data, ...)` uploads a signal onto a dataset (new via `add_dataset`, or already imported). `data` must be a `table` or `timetable` with `time` plus `value` and/or `value_text`. Optional name-value args: `Metadata`, `Overwrite`, `Priority`. The call returns after upload completion is accepted; the Iceberg commit may still be running, so the signal may not be readable immediately.
+- `update_metadata(stream_name, dataset_id, metadata)` merges `metadata` into a dataset's existing metadata server-side and returns the refreshed dataset.
 - If you want a clean re-download, call `mdb.clear_cache()`.
 - If you use MATLAB Online, make sure this `matlab/` folder is on your path and that your `config.json` is set appropriately.
 
