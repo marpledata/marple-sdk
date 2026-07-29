@@ -68,9 +68,6 @@ ylabel(cb,'Temperature');
 % dataset_id = datasets(1).id;
 % n = 100;
 % t0 = int64(datasets(1).timestamp_start);
-% if isempty(t0)
-%   t0 = int64(1.577e18); % fallback ~2020-01-01 UTC in ns
-% end
 % data = table( ...
 %   t0 + int64((0:n-1)' * 1e9), ...
 %   rand(n, 1), ...
