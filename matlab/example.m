@@ -1,4 +1,4 @@
-%% Load configuration from config.yaml
+%% Load configuration from config.json
 mdb = DB.from_config();
 
 %% Example 1: Calculating max(turbidity) of 2020
@@ -27,12 +27,6 @@ ylabel('pH');
 
 %% Example 3: 3D scatter (2020)
 
-function TT = toTT(tbl, signalName)
-    t = datetime(tbl.time/1e9, 'ConvertFrom','posixtime', 'TimeZone','UTC');
-    TT = table2timetable(table(t, tbl{:,signalName}, 'VariableNames', {'time', signalName}), 'RowTimes','time');
-    TT = retime(TT, 'regular', 'nearest', 'TimeStep', minutes(30)); % bucket to nearest 30 minutes
-end
-
 file_name = 'charles-river-2020_clean.csv';
 
 TT_turb = toTT(mdb.get_data(file_name, 'turbidity'), 'turbidity');
@@ -56,3 +50,39 @@ ylabel('Chlorophyll');
 zlabel('pH');
 cb = colorbar;
 ylabel(cb,'Temperature');
+
+%% Example 4: ingest Simulink signals (commented — creates a dataset)
+%
+% Assumes signals is a Simulink.SimulationData.Dataset of scalar signals whose
+% Values.Time is measured in seconds from the start of the run. Uncomment and
+% set stream_name before running.
+%
+% stream_name = 'Simulation';
+% run_start = datetime('now', 'TimeZone', 'UTC');
+% dataset = mdb.add_dataset( ...
+%   stream_name, 'simulation-run', ...
+%   Metadata=struct('source', 'Simulink'));
+%
+% for i = 1:numElements(signals)
+%   logged = signals{i};
+%   values = logged.Values;
+%   data = timetable( ...
+%     run_start + seconds(values.Time(:)), ...
+%     values.Data(:), ...
+%     'VariableNames', {'value'});
+%   mdb.add_signal(stream_name, dataset.id, logged.Name, data);
+% end
+%
+% dataset = mdb.update_metadata( ...
+%   stream_name, dataset.id, ...
+%   struct( ...
+%     'model_name', bdroot, ...
+%     'solver', get_param(bdroot, 'Solver'), ...
+%     'scenario', 'baseline');
+% disp(dataset);
+
+function TT = toTT(tbl, signalName)
+    t = datetime(tbl.time/1e9, 'ConvertFrom','posixtime', 'TimeZone','UTC');
+    TT = table2timetable(table(t, tbl{:,signalName}, 'VariableNames', {'time', signalName}), 'RowTimes','time');
+    TT = retime(TT, 'regular', 'nearest', 'TimeStep', minutes(30)); % bucket to nearest 30 minutes
+end

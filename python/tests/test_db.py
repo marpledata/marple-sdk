@@ -302,9 +302,9 @@ def test_realtime_dataset_cool(db: DB) -> None:
             ),
         )
 
-        cooling = dataset.cool()
-        assert cooling.import_status == "COOLING"
-        assert cooling.id == dataset.id
+        finished = dataset.cool().wait_for_import(timeout=180)
+        assert finished.import_status == "FINISHED"
+        assert finished.id == dataset.id
 
 
 def test_realtime_cool_rejects_invalid_status(example_dataset: Dataset) -> None:

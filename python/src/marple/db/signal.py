@@ -109,13 +109,15 @@ class Signal(BaseModel):
         """
         return self._client.get_dataframe(self.dataset_id, self.id, dtype, refresh_cache)
 
-    def wait_until_available(self, timeout_s: float = 60) -> "Signal":
+    def wait_until_available(self, timeout: float = 60) -> "Signal":
         """
-        Poll until this signal is available for querying (storage status is not
-        :attr:`StorageStatus.FROZEN_TO_COLD`). Updates the parent dataset's signal
-        cache when a parent dataset is known.
+        Poll until this signal is available for querying.
+        Args:
+            timeout: Maximum time to wait for the signal to be available in seconds.
+        Returns:
+            The signal object when it is available for querying, or a the last state before the timeout.
         """
-        deadline_s = time.monotonic() + max(timeout_s, 0.1)
+        deadline_s = time.monotonic() + max(timeout, 0.1)
         while True:
             r = self._client.get(f"/stream/{self.datastream_id}/dataset/{self.dataset_id}/signal/{self.id}")
             data = validate_response(r, f"Get signal {self.id} failed")
@@ -131,6 +133,6 @@ class Signal(BaseModel):
             if fresh.storage_status != StorageStatus.FROZEN_TO_COLD:
                 return fresh
             if time.monotonic() >= deadline_s:
-                warnings.warn(f"Signal {self.name} did not reach a queryable state after {timeout_s} seconds")
+                warnings.warn(f"Signal {self.name} did not reach a queryable state after {timeout} seconds")
                 return fresh
             time.sleep(0.5)

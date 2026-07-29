@@ -168,7 +168,8 @@ if len(datasets) > 0:
 
 - **List streams**: `db.get_streams()`
 - **List datasets in a stream**: `stream.get_datasets()`
-- **Upload a file to a file-stream**: `stream.push_file(file_path, metadata={...}, concurrency=4)`
+- **Upload a file (file stream, default)**: `stream.push_file(file_path, metadata={...}, concurrency=4)`
+- **Custom lake ingest (file stream)**: `stream.add_dataset(...)` then `dataset.add_signal(...)` / `add_signals([...])`
 - **Add signals to a dataset**: `dataset.add_signal(name, data, ...)` / `dataset.add_signals([...])` — data matches `LAKE_ARROW_SCHEMA` (`time` + `value` and/or `value_text`)
 - **Wait until a signal is available**: `signal.wait_until_available(timeout=60)`
 - **Fetch signals by ID**: `dataset.get_signals(signal_ids=[...], refresh=False)`
@@ -179,12 +180,12 @@ if len(datasets) > 0:
 - **Delete a stream**: `stream.delete()` or `db.delete_stream(stream_key)`
 - **Delete a dataset**: `dataset.delete()` or `db.delete_dataset(dataset_id, dataset_path)`
 
-For live/realtime streams (creating and appending data):
+For live streams:
 
 - **Create an empty dataset**: `stream.add_dataset(dataset_name, metadata=None)`
 - **Upsert signal definitions**: `dataset.upsert_signals(signals=[...])`
 - **Append timeseries data**: `dataset.append(data=df, shape="long"|"wide"|None)`
-- **Cool a realtime dataset**: `dataset.cool()` then `dataset.wait_for_import()` to wait until `FINISHED`
+- **Cool to cold storage**: `dataset.cool()` then `dataset.wait_for_import()` until `FINISHED`
 
 ### Calling endpoints directly
 

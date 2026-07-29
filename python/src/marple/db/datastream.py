@@ -79,12 +79,20 @@ class DataStream(BaseModel):
 
     def add_dataset(self, dataset_name: str, metadata: dict | None = None) -> Dataset:
         """
-        Create a new empty dataset in this realtime stream.
+        Create a new empty dataset in the specified stream.
 
-        Use :meth:`~marple.db.dataset.Dataset.append` to add data and
-        :meth:`~marple.db.dataset.Dataset.cool` to finalize the dataset.
-
-        To add datasets from a file to a file stream, use :meth:`push_file` instead.
+        **Live (realtime) stream**
+            - Define signals with :meth:`~marple.db.dataset.Dataset.upsert_signals`
+            - Push data with :meth:`~marple.db.dataset.Dataset.append`
+            - Call :meth:`~marple.db.dataset.Dataset.cool` when finished to move the
+              dataset to cold Parquet/Iceberg storage, then
+              :meth:`~marple.db.dataset.Dataset.wait_for_import` until it is `FINISHED`.
+        **File (non-live) stream**
+            - Default path: use :meth:`push_file` instead of `add_dataset` — upload a
+              file (e.g. CSV); Marple parses it and writes it to the data lake.
+            - Custom ingestion: create an empty dataset with `add_dataset`, then upload
+              signal data with :meth:`~marple.db.dataset.Dataset.add_signal` /
+              :meth:`~marple.db.dataset.Dataset.add_signals` straight into the lake.
         """
         r = self._client.post(
             f"/stream/{self.id}/dataset/add",

@@ -339,7 +339,8 @@ class Dataset(BaseModel):
         priority: Literal["default", "high"] = "default",
     ) -> Signal:
         """
-        Upload one signal with data into this dataset.
+        Upload one signal with data into this dataset (enrichment after import,
+        or custom ingest after :meth:`~marple.db.datastream.DataStream.add_dataset`).
 
         ``data`` must be a DataFrame, Arrow table, or parquet path matching
         :data:`~marple.db.LAKE_ARROW_SCHEMA` (``time`` plus ``value`` and/or

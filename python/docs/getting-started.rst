@@ -37,8 +37,9 @@ Marple DB quickstart
    dataset = dataset.wait_for_import(timeout=10)
 
 After import, you can add derived signals with
-``dataset.add_signal(...)`` / ``dataset.add_signals([...])``. See
-:doc:`tutorials` for a full example.
+``dataset.add_signal(...)`` / ``dataset.add_signals([...])``. For custom
+ingest without file parsing, use ``stream.add_dataset(...)`` then
+``add_signal``. See :doc:`tutorials` for a full example.
 
 ``stream.push_file(...)`` starts an ingestion and lets the Marple DB API choose
 the best upload mode for the deployment and file size. For large files, use a
