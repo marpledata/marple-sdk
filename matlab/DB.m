@@ -111,29 +111,82 @@ classdef DB
       end
     end
 
+    function time = datetime_to_unix_ns(row_times, name)
+      if isduration(row_times)
+        error('%s: timetable RowTimes must be datetime, not duration', name);
+      end
+      if ~isdatetime(row_times)
+        error('%s: timetable RowTimes must be datetime', name);
+      end
+      if any(isnat(row_times))
+        error('%s: timetable RowTimes must not contain NaT', name);
+      end
+
+      row_times.TimeZone = 'UTC';
+      epoch = datetime(1970, 1, 1, 0, 0, 0, 'TimeZone', 'UTC');
+      seconds_since_epoch = seconds(row_times - epoch);
+      if any(seconds_since_epoch < 0)
+        error('%s: timetable RowTimes must be on or after the Unix epoch', name);
+      end
+      if any(seconds_since_epoch >= double(intmax('int64')) / 1e9)
+        error('%s: timetable RowTimes exceed the int64-nanosecond range', name);
+      end
+      time = int64(round(seconds_since_epoch * 1e9));
+    end
+
+    function time = validate_numeric_time(raw_time, name)
+      if ~isnumeric(raw_time) || ~isreal(raw_time)
+        error( ...
+          ['%s: table variable ''time'' must be a real numeric column of ', ...
+           'int64 Unix nanoseconds; use a timetable for datetime values'], name);
+      end
+      if ~iscolumn(raw_time)
+        error('%s: table variable ''time'' must contain exactly one column', name);
+      end
+      if isfloat(raw_time) && any(~isfinite(raw_time))
+        error('%s: table variable ''time'' must not contain NaN or Inf', name);
+      end
+      if any(raw_time < 0)
+        error('%s: table variable ''time'' must be greater than or equal to 0', name);
+      end
+      if isfloat(raw_time)
+        if any(raw_time ~= fix(raw_time))
+          error('%s: table variable ''time'' must contain integer nanoseconds', name);
+        end
+        if any(raw_time > flintmax(class(raw_time)))
+          error( ...
+            ['%s: floating-point ''time'' values are too large to represent ', ...
+             'nanoseconds exactly; convert them to int64 first'], name);
+        end
+      elseif isa(raw_time, 'uint64') && any(raw_time > uint64(intmax('int64')))
+        error('%s: table variable ''time'' exceeds the int64-nanosecond range', name);
+      end
+      time = int64(raw_time);
+    end
+
     function T = normalize_signal_table(data, name)
+      if ~istimetable(data) && ~istable(data)
+        error('%s: data must be a table or timetable', name);
+      end
+      if height(data) < 1
+        error('%s: Signal must have at least one row', name);
+      end
+
       if istimetable(data)
         row_times = data.Properties.RowTimes;
-        if isduration(row_times)
-          error('%s: timetable RowTimes must be datetime, not duration', name);
-        end
-        % Convert datetime to signed int64 Unix nanoseconds.
-        epoch = datetime(1970, 1, 1, 0, 0, 0, 'TimeZone', 'UTC');
-        row_times.TimeZone = 'UTC';
-        time_ns = int64(floor(seconds(row_times - epoch) * 1e9));
         vars = data.Properties.VariableNames;
-        T = table(time_ns, 'VariableNames', {'time'});
+        if ismember('time', vars)
+          error( ...
+            ['%s: timetable data must use RowTimes for timestamps; ', ...
+             'remove the variable named ''time'''], name);
+        end
+        time = DB.datetime_to_unix_ns(row_times, name);
+        T = table(time, 'VariableNames', {'time'});
         for i = 1:numel(vars)
           T.(vars{i}) = data.(vars{i});
         end
-      elseif istable(data)
-        T = data;
       else
-        error('%s: data must be a table or timetable', name);
-      end
-
-      if height(T) < 1
-        error('%s: Signal must have at least one row', name);
+        T = data;
       end
 
       vars = T.Properties.VariableNames;
@@ -144,18 +197,7 @@ classdef DB
         error('%s: Data must include ''value'' and/or ''value_text''', name);
       end
 
-      raw_time = T.time;
-      if any(ismissing(raw_time)) || (isfloat(raw_time) && any(~isfinite(raw_time)))
-        error('%s: ''time'' must not contain nulls', name);
-      end
-      try
-        time = int64(raw_time);
-      catch ME
-        error('%s: ''time'' must be int64-compatible: %s', name, ME.message);
-      end
-      if any(time < 0)
-        error('%s: ''time'' must be greater than or equal to 0', name);
-      end
+      time = DB.validate_numeric_time(T.time, name);
 
       n = height(T);
       if ismember('value', vars)
@@ -419,6 +461,26 @@ classdef DB
       signal_id = res.id;
     end
 
+    function cache = signal_cache_path(obj, dataset_id, signal_id)
+      cache = fullfile( ...
+        '_marplecache', char(string(obj.workspace)), char(string(obj.datapool)), ...
+        sprintf('dataset=%d', dataset_id), sprintf('signal=%d', signal_id));
+    end
+
+    function clear_signal_cache(obj, dataset_id, signal_id)
+      cache = obj.signal_cache_path(dataset_id, signal_id);
+      if isfolder(cache)
+        try
+          rmdir(cache, 's');
+        catch ME
+          error( ...
+            ['Signal upload completed, but failed to clear cached data for ', ...
+             'dataset %d signal %d: %s'], ...
+            dataset_id, signal_id, ME.message);
+        end
+      end
+    end
+
     function dataset = find_dataset(obj, stream_name, dataset_id)
       datasets = obj.get_datasets(stream_name);
       if iscell(datasets)
@@ -643,7 +705,8 @@ classdef DB
       %   signal = mdb.add_signal(stream_name, dataset_id, name, data)
       %   signal = mdb.add_signal(..., Metadata=struct(), Overwrite=false, Priority="default")
       %
-      %   data must be a table or timetable with time plus value and/or value_text.
+      %   A table uses int64 Unix nanoseconds in time. A timetable uses datetime
+      %   RowTimes. Both need value and/or value_text data.
       %   Returns the signal object after upload completion is accepted; the
       %   asynchronous Iceberg commit may still be in progress.
       arguments
@@ -802,6 +865,7 @@ classdef DB
           obj.format_upload_statuses(statuses);
         end
       end
+      obj.clear_signal_cache(dataset_id, signal_id);
 
       endpoint_get = sprintf( ...
         '/stream/%d/dataset/%d/signal/%d', stream_id, dataset_id, signal_id);
@@ -822,7 +886,7 @@ classdef DB
       end
       dataset_id = obj.find_dataset_id(dataset_path);
       signal_id = obj.find_signal_id(dataset_id, signal_name);
-      cache = sprintf('_marplecache/%s/%s/dataset=%d/signal=%d', obj.workspace, obj.datapool, dataset_id, signal_id);
+      cache = obj.signal_cache_path(dataset_id, signal_id);
 
       if ~isfolder(cache)
         mkdir(cache)

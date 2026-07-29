@@ -6,7 +6,6 @@ This directory contains a small MATLAB client for Marple DB.
 
 - `DB.m`: MATLAB DB client implementation.
 - `example.m`: example usage script.
-- `add_signal_test.m`: manual wind-turbine `add_signal` smoke test.
 - `config.json`: local configuration read by `DB.from_config()`.
 - `README.md`: setup, quickstart, cache, and compatibility notes.
 
@@ -25,10 +24,12 @@ This directory contains a small MATLAB client for Marple DB.
 - `get_data(dataset_path, signal_name)` downloads parquet files into
   `_marplecache/<workspace>/<datapool>/dataset=<id>/signal=<id>/`.
 - `add_dataset` creates an empty dataset; on file streams pair it with
-  `add_signal` for custom lake writes (prefer file upload otherwise).
+  `add_signal` for custom lake writes (prefer file upload otherwise). The
+  MATLAB client does not expose realtime `append` or `cool`.
 - `add_signal(stream_name, dataset_id, name, data, ...)` accepts a table or
-  timetable only; it stages Snappy Parquet locally and uses
-  `parquet-transcode prepare-upload` before the storage PUT.
+  timetable only. Tables use int64-nanosecond `time`; timetable row times are
+  datetimes converted to Unix nanoseconds. It stages Snappy Parquet locally
+  and uses `parquet-transcode prepare-upload` before the storage PUT.
 - `update_metadata(stream_name, dataset_id, metadata)` posts `metadata`
   straight to the `/metadata` endpoint, which merges it server-side.
 - Preserve `clear_cache()` behavior for forcing a clean re-download.

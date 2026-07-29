@@ -5,10 +5,9 @@ This folder contains a small MATLAB client for Marple DB.
 ## Quickstart
 
 1. Open `matlab/config.json` and fill in:
-
    - `api_key`
+   - `api_url`
    - `workspace`
-   - (optional) `api_url`
    - (optional) `datapool`
 
 2. In MATLAB, add this folder to your path:
@@ -29,19 +28,14 @@ This folder contains a small MATLAB client for Marple DB.
    run(fullfile('matlab', 'example.m'));
    ```
 
-5. Optional: upload a synthetic wind-turbine SCADA burst with `add_signal`
-   (edit `STREAM_NAME` / `DATASET_ID` at the top first):
-
-   ```matlab
-   run(fullfile('matlab', 'add_signal_test.m'));
-   ```
+   Example 4 is commented because it creates a dataset and uploads signals.
 
 ## Notes
 
 - `DB.from_config()` reads `config.json` next to `DB.m`. `api_key` is sent as a Bearer token to the Marple DB API.
 - `get_data(dataset_path, signal_name)` fetches a list of parquet URLs from the API, downloads them into `_marplecache/<workspace>/<datapool>/dataset=<id>/signal=<id>/` (via `websave`), and reads them via `parquetDatastore(...)`.
-- `add_dataset(stream_name, dataset_name, Metadata=struct())` creates an empty dataset. Live: append then cool to cold storage. File: prefer file upload; use with `add_signal` for custom lake writes without file parsing.
-- `add_signal(stream_name, dataset_id, name, data, ...)` uploads a signal onto a dataset (new via `add_dataset`, or already imported). `data` must be a `table` or `timetable` with `time` plus `value` and/or `value_text`. Optional name-value args: `Metadata`, `Overwrite`, `Priority`. The call returns after upload completion is accepted; the Iceberg commit may still be running, so the signal may not be readable immediately.
+- `add_dataset(stream_name, dataset_name, Metadata=struct())` creates an empty dataset. On file streams, prefer file upload for normal ingestion; pair `add_dataset` with `add_signal` for custom ingestion flows
+- `add_signal(stream_name, dataset_id, name, data, ...)` uploads a signal onto a new or imported dataset. Pass either a `table` with an int64-nanosecond `time` column and `value` and/or `value_text`, or a `timetable` with datetime row times and `value` and/or `value_text` variables. Optional name-value args are `Metadata`, `Overwrite`, and `Priority`. The call returns after upload completion is accepted; the Iceberg commit may still be running, so the signal may not be readable immediately.
 - `update_metadata(stream_name, dataset_id, metadata)` merges `metadata` into a dataset's existing metadata server-side and returns the refreshed dataset.
 - If you want a clean re-download, call `mdb.clear_cache()`.
 - If you use MATLAB Online, make sure this `matlab/` folder is on your path and that your `config.json` is set appropriately.
