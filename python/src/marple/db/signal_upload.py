@@ -48,8 +48,8 @@ class SignalUpload(BaseModel):
     :data:`marple.db.LAKE_ARROW_SCHEMA` (``time`` plus ``value`` and/or ``value_text``).
 
     A pandas Series, or a DataFrame without a ``time`` column, must have a
-    ``DatetimeIndex`` or ``TimedeltaIndex`` holding the sample times, as returned by
-    :meth:`~marple.db.Signal.get_data` and :meth:`~marple.db.Dataset.get_data`.
+    ``DatetimeIndex`` or ``TimedeltaIndex`` holding the sample times.
+    It must also contain ``value`` and/or ``value_text`` columns.
     """
 
     model_config = ConfigDict(arbitrary_types_allowed=True)
@@ -103,12 +103,7 @@ class SignalUpload(BaseModel):
         try:
             if COL_VAL in names:
                 value = table.column(COL_VAL).cast(pa.float64(), safe=True)
-                # if_else materializes a full copy of the column, so only pay for it when a
-                # non-finite value is present. pc.all skips nulls and returns null for an
-                # all-null column, where the replacement would be a no-op anyway.
-                finite = pc.is_finite(value)
-                if pc.all(finite).as_py() is False:
-                    value = pc.if_else(finite, value, pa.scalar(None, type=pa.float64()))
+                value = pc.if_else(pc.is_finite(value), value, pa.nulls(n, type=pa.float64()))
             else:
                 value = pa.nulls(n, type=pa.float64())
         except (pa.ArrowInvalid, pa.ArrowTypeError) as exc:
@@ -145,8 +140,6 @@ class SignalUpload(BaseModel):
             )
         if index.hasnans:
             raise ValueError(f"{self.name}: Time index must not contain NaT")
-        # Arrow bit-casts the time column to int64 without copying, so a coarser
-        # resolution would be read as nanoseconds and silently shift every sample.
         return index.as_unit("ns").rename(COL_TIME)
 
     def _validate_time_range(self, table: pa.Table, dataset: "Dataset") -> pa.ChunkedArray | pa.Array:

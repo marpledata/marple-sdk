@@ -55,13 +55,13 @@ dataset = dataset.wait_for_import(timeout=10)
 #### Add signals to an imported dataset
 
 Upload additional signals (for example derived channels) on an existing dataset.
-Each signal is a DataFrame, Series, Arrow table, or on-disk parquet matching `LAKE_ARROW_SCHEMA`:
-columns `time` (int64 nanoseconds) plus `value` and/or `value_text`.
+DataFrames, Arrow tables, and on-disk parquet use `LAKE_ARROW_SCHEMA`: columns
+`time` (int64 nanoseconds) plus `value` and/or `value_text`.
 Times must overlap the dataset time range. Use `overwrite=True` to replace an existing signal name;
 a conflict without overwrite raises `SignalsAlreadyExistError`.
 
 A Series, or a DataFrame without a `time` column, takes its times from a `DatetimeIndex` or
-`TimedeltaIndex`, so data read with `get_data` can be written straight back:
+`TimedeltaIndex`. Indexed DataFrames must still have a `value` and/or `value_text` column.
 
 ```python
 # Single signal: wait until available before reading

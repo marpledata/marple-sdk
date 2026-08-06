@@ -11,10 +11,6 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - `Dataset.add_signal` and `Dataset.add_signals` now accept a time-indexed pandas Series or DataFrame.
 
-### Changed
-
-- Reduced peak memory when uploading signal data by roughly 40% for a typical numeric signal.
-
 ## [3.4.0] - 2026-07-28
 
 ### Added

@@ -345,9 +345,8 @@ class Dataset(BaseModel):
         ``data`` must be a DataFrame, Series, Arrow table, or parquet path matching
         :data:`~marple.db.LAKE_ARROW_SCHEMA` (``time`` plus ``value`` and/or
         ``value_text``). A Series, or a DataFrame without a ``time`` column, takes its
-        sample times from a ``DatetimeIndex`` or ``TimedeltaIndex``, so data read with
-        :meth:`~marple.db.Signal.get_data` or :meth:`get_data` can be written back
-        directly. Times must overlap the dataset time range.
+        sample times from a ``DatetimeIndex`` or ``TimedeltaIndex``.
+        It must also contain ``value`` and/or ``value_text`` columns.
 
         Returns the new signal immediately after upload completes. Call
         :meth:`Signal.wait_until_available` to wait until the signal is available.
