@@ -47,9 +47,9 @@ class SignalUpload(BaseModel):
     ``data`` is a DataFrame, Series, Arrow table, or parquet path matching
     :data:`marple.db.LAKE_ARROW_SCHEMA` (``time`` plus ``value`` and/or ``value_text``).
 
-    A pandas Series, or a DataFrame without a ``time`` column, must have a
+    A DataFrame without a ``time`` column, must have a
     ``DatetimeIndex`` or ``TimedeltaIndex`` holding the sample times.
-    It must also contain ``value`` and/or ``value_text`` columns.
+    It must still contain ``value`` and/or ``value_text`` columns.
     """
 
     model_config = ConfigDict(arbitrary_types_allowed=True)

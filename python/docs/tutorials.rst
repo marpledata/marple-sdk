@@ -41,7 +41,7 @@ Add signals after import, or start with an empty dataset using
 ``time`` (int64 nanoseconds) plus ``value`` and/or ``value_text``.
 
 A Series, or a DataFrame without a ``time`` column, takes its times from a
-``DatetimeIndex`` or ``TimedeltaIndex``
+``DatetimeIndex`` or ``TimedeltaIndex``.
 
 .. code-block:: python
 
