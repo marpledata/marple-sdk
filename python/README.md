@@ -55,32 +55,38 @@ dataset = dataset.wait_for_import(timeout=10)
 #### Add signals to an imported dataset
 
 Upload additional signals (for example derived channels) on an existing dataset.
-Each signal is a DataFrame, Arrow table, or on-disk parquet matching `LAKE_ARROW_SCHEMA`:
+Each signal is a DataFrame, Series, Arrow table, or on-disk parquet matching `LAKE_ARROW_SCHEMA`:
 columns `time` (int64 nanoseconds) plus `value` and/or `value_text`.
 Times must overlap the dataset time range. Use `overwrite=True` to replace an existing signal name;
 a conflict without overwrite raises `SignalsAlreadyExistError`.
 
-```python
-import pandas as pd
-from marple.db import LAKE_ARROW_SCHEMA  # time + value and/or value_text
+A Series, or a DataFrame without a `time` column, takes its times from a `DatetimeIndex` or
+`TimedeltaIndex`, so data read with `get_data` can be written straight back:
 
-speed = dataset.get_signal("car.speed").get_data()
-derived = pd.DataFrame({
-    "time": speed.index.asi8,
-    "value": speed["value"] * 3.6,
-})
+```python
 # Single signal: wait until available before reading
+speed = dataset.get_signal("car.speed").get_data()
 signal = dataset.add_signal(
     "car.speed_kmh",
-    derived,
+    speed * 3.6,
     metadata={"unit": "km/h"},
 ).wait_until_available()
 
 # Batch: returns IDs as soon as upload completes (no wait)
 ids = dataset.add_signals([
-    {"name": "car.speed_kmh", "data": derived, "metadata": {"unit": "km/h"}},
+    {"name": "car.speed_kmh", "data": speed * 3.6, "metadata": {"unit": "km/h"}},
 ], overwrite=True, concurrency=4)
 signals = dataset.get_signals(signal_ids=ids)
+```
+
+Data assembled from scratch uses the explicit schema columns instead:
+
+```python
+import pandas as pd
+from marple.db import LAKE_ARROW_SCHEMA  # time + value and/or value_text
+
+samples = pd.DataFrame({"time": [t0, t0 + 1_000_000_000], "value": [1.0, 2.0]})
+dataset.add_signal("car.custom", samples)
 ```
 
 #### Upload large files

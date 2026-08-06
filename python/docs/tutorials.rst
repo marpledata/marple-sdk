@@ -40,27 +40,35 @@ Add signals after import, or start with an empty dataset using
 ``stream.add_dataset``. Input follows :data:`marple.db.LAKE_ARROW_SCHEMA`:
 ``time`` (int64 nanoseconds) plus ``value`` and/or ``value_text``.
 
+A Series, or a DataFrame without a ``time`` column, takes its times from a
+``DatetimeIndex`` or ``TimedeltaIndex``, so data read with ``get_data`` can be
+written straight back:
+
 .. code-block:: python
 
-   speed = dataset.get_signal("car.speed")
-   assert speed is not None
-   speed_data = speed.get_data()
-   derived = pd.DataFrame({
-       "time": speed_data.index.asi8,
-       "value": speed_data["value"] * 3.6,
-   })
+   speed = dataset.get_signal("car.speed").get_data()
    signal = dataset.add_signal(
        "car.speed_kmh",
-       derived,
+       speed * 3.6,
        metadata={"unit": "km/h"},
    ).wait_until_available()
+
+Data assembled from scratch uses the explicit schema columns instead:
+
+.. code-block:: python
+
+   derived = pd.DataFrame({
+       "time": [t0, t0 + 1_000_000_000],
+       "value": [1.0, 2.0],
+   })
+   dataset.add_signal("car.custom", derived)
 
 For batches, ``add_signals`` returns signal IDs without waiting:
 
 .. code-block:: python
 
    ids = dataset.add_signals(
-       [{"name": "car.speed_kmh", "data": derived}],
+       [{"name": "car.speed_kmh", "data": speed * 3.6}],
        overwrite=True,
    )
    signals = [
