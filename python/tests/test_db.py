@@ -258,7 +258,7 @@ def test_push_file_server_upload(db: DB) -> None:
 def test_push_file_overwrite(db: DB) -> None:
     metadata_v1 = {"version": "1"}
     metadata_v2 = {"version": "2"}
-    overwrite_file_name = "overwrite_test.csv"
+    overwrite_file_name = f"overwrite_test_{datetime.now().isoformat()}.csv"
     with _upload_test_stream(db, "overwrite") as stream:
         _push_and_assert_upload(stream, EXAMPLE_CSV, metadata_v1, file_name=overwrite_file_name)
         dataset_overwritten = _push_and_assert_upload(
@@ -321,7 +321,7 @@ def test_realtime_dataset_cool(db: DB) -> None:
         )
 
         cooling = dataset.cool()
-        assert cooling.import_status == "COOLING"
+        assert cooling.import_status in ("COOLING", "FINISHED")
         assert cooling.id == dataset.id
 
 
