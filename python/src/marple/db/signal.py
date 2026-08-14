@@ -76,6 +76,7 @@ class Signal(BaseModel):
         Download the parquet files for this signal to a local cache folder and return the folder path.
         Args:
             refresh_cache: If True, re-download the parquet files even if they already exist in the cache.
+                An empty cache folder is always treated as a miss.
 
         Returns:
             The path to the local cache folder.

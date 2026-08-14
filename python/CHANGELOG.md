@@ -11,6 +11,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - `Dataset.add_signal` and `Dataset.add_signals` now accept a time-indexed pandas Series or DataFrame.
 
+### Fixed
+
+- An empty local parquet cache folder is treated as a cache miss and re-downloaded, instead of being assumed to mean the signal has no data.
+
 ## [3.4.0] - 2026-07-28
 
 ### Added
