@@ -86,7 +86,3 @@ function TT = toTT(tbl, signalName)
     TT = table2timetable(table(t, tbl{:,signalName}, 'VariableNames', {'time', signalName}), 'RowTimes','time');
     TT = retime(TT, 'regular', 'nearest', 'TimeStep', minutes(30)); % bucket to nearest 30 minutes
 end
-
-dataset = mdb.push_file('MAT Stream', 'run.mat', Metadata=struct('driver', 'Mbaerto'));
-dataset = mdb.wait_for_import('MAT Stream', dataset.id);
-T = mdb.get_data(dataset.path, 'speed');
