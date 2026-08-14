@@ -216,6 +216,86 @@ def test_signal_upload_value_text_only() -> None:
     assert planned.data.column(COL_VAL_TEXT).to_pylist() == ["a", "b"]
 
 
+def test_signal_upload_from_time_indexed_series() -> None:
+    dataset = _fake_dataset()
+    series = pd.Series([1.0, 2.0], index=pd.to_datetime([0, 1_000_000_000], unit="ns"))
+    planned = SignalUpload(name="series", data=series).plan_upload(dataset)
+    assert planned.data.column(COL_TIME).to_pylist() == [0, 1_000_000_000]
+    assert planned.data.column(COL_VAL).to_pylist() == [1.0, 2.0]
+    assert planned.data.column(COL_VAL_TEXT).null_count == 2
+
+
+def test_signal_upload_from_time_indexed_frame() -> None:
+    """A one-column frame straight out of Signal.get_data round-trips without rebuilding."""
+    dataset = _fake_dataset()
+    index = pd.to_timedelta([0, 1_000_000_000], unit="ns")
+    frame = pd.DataFrame({COL_VAL: [1.0, 2.0]}, index=index)
+    planned = SignalUpload(name="frame", data=frame * 3.6).plan_upload(dataset)
+    assert planned.data.column(COL_TIME).to_pylist() == [0, 1_000_000_000]
+    assert planned.data.column(COL_VAL).to_pylist() == [3.6, 7.2]
+
+
+def test_signal_upload_time_column_wins_over_index() -> None:
+    dataset = _fake_dataset()
+    frame = pd.DataFrame(
+        {COL_TIME: [0, 1_000_000_000], COL_VAL: [1.0, 2.0]},
+        index=pd.to_datetime([5_000_000_000, 6_000_000_000], unit="ns"),
+    )
+    planned = SignalUpload(name="both", data=frame).plan_upload(dataset)
+    assert planned.data.column(COL_TIME).to_pylist() == [0, 1_000_000_000]
+
+
+def test_signal_upload_text_series_becomes_value_text() -> None:
+    dataset = _fake_dataset()
+    series = pd.Series(["a", "b"], index=pd.to_timedelta([0, 1_000_000_000], unit="ns"))
+    planned = SignalUpload(name="text_series", data=series).plan_upload(dataset)
+    assert planned.data.column(COL_VAL_TEXT).to_pylist() == ["a", "b"]
+    assert planned.data.column(COL_VAL).null_count == 2
+
+
+def test_signal_upload_ignores_unrelated_columns() -> None:
+    dataset = _fake_dataset()
+    frame = pd.DataFrame(
+        {COL_VAL: [1.0, 2.0], "label": ["a", "b"], "other": [3, 4]},
+        index=pd.to_timedelta([0, 1_000_000_000], unit="ns"),
+    )
+    planned = SignalUpload(name="extra_cols", data=frame).plan_upload(dataset)
+    assert planned.data.schema.names == [COL_TIME, COL_VAL, COL_VAL_TEXT]
+    assert planned.data.column(COL_VAL).to_pylist() == [1.0, 2.0]
+    assert planned.data.column(COL_VAL_TEXT).null_count == 2
+
+
+def test_signal_upload_normalizes_index_resolution() -> None:
+    """A coarser index resolution must not be bit-cast to int64 as if it were nanoseconds."""
+    dataset = _fake_dataset()
+    index = pd.to_timedelta([0, 1_000_000_000], unit="ns").as_unit("us")
+    planned = SignalUpload(name="micros", data=pd.Series([1.0, 2.0], index=index)).plan_upload(dataset)
+    assert planned.data.column(COL_TIME).to_pylist() == [0, 1_000_000_000]
+
+
+def test_signal_upload_tz_aware_index_uses_utc() -> None:
+    dataset = _fake_dataset()
+    index = pd.to_datetime([0, 1_000_000_000], unit="ns").tz_localize("UTC").tz_convert("Europe/Brussels")
+    planned = SignalUpload(name="tz", data=pd.Series([1.0, 2.0], index=index)).plan_upload(dataset)
+    assert planned.data.column(COL_TIME).to_pylist() == [0, 1_000_000_000]
+
+
+def test_signal_upload_rejects_nat_index() -> None:
+    dataset = _fake_dataset()
+    series = pd.Series([1.0, 2.0], index=pd.DatetimeIndex([pd.Timestamp(0), pd.NaT]))
+    with pytest.raises(ValueError, match="NaT"):
+        SignalUpload(name="nat", data=series).plan_upload(dataset)
+
+
+def test_signal_upload_rejects_non_time_index() -> None:
+    dataset = _fake_dataset()
+    with pytest.raises(ValueError, match="DatetimeIndex"):
+        SignalUpload(name="range_series", data=pd.Series([1.0, 2.0])).plan_upload(dataset)
+
+    with pytest.raises(ValueError, match="DatetimeIndex"):
+        SignalUpload(name="range_frame", data=pd.DataFrame({COL_VAL: [1.0]})).plan_upload(dataset)
+
+
 def test_planned_upload_to_request_omits_overwrite() -> None:
     dataset = _fake_dataset()
     planned = SignalUpload(
@@ -276,14 +356,7 @@ def test_add_signal_demo_csv_integration(db: DB, require_signal_upload_api: None
         dataset = ingest_dataset(stream, metadata={"test": "add_signal_demo_csv"})
         speed = dataset.get_signal("car.speed")
         assert speed is not None
-        speed_df = speed.get_data()
-
-        derived = pd.DataFrame(
-            {
-                COL_TIME: speed_df.index.asi8,
-                COL_VAL: speed_df["value"] * 3.6,
-            }
-        )
+        derived = speed.get_data() * 3.6
         signal = dataset.add_signal(
             "sdk.car.speed_kmh",
             derived,

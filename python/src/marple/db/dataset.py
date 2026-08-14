@@ -333,7 +333,7 @@ class Dataset(BaseModel):
     def add_signal(
         self,
         name: str,
-        data: pa.Table | pd.DataFrame | Path | str,
+        data: pa.Table | pd.DataFrame | pd.Series | Path | str,
         metadata: dict[str, Any] | None = None,
         overwrite: bool = False,
         priority: Literal["default", "high"] = "default",
@@ -342,16 +342,18 @@ class Dataset(BaseModel):
         Upload one signal with data into this dataset (enrichment after import,
         or custom ingest after :meth:`~marple.db.datastream.DataStream.add_dataset`).
 
-        ``data`` must be a DataFrame, Arrow table, or parquet path matching
+        ``data`` must be a DataFrame, Series, Arrow table, or parquet path matching
         :data:`~marple.db.LAKE_ARROW_SCHEMA` (``time`` plus ``value`` and/or
-        ``value_text``). Times must overlap the dataset time range.
+        ``value_text``). A Series, or a DataFrame without a ``time`` column, takes its
+        sample times from a ``DatetimeIndex`` or ``TimedeltaIndex``.
+        It must also contain ``value`` and/or ``value_text`` columns.
 
         Returns the new signal immediately after upload completes. Call
         :meth:`Signal.wait_until_available` to wait until the signal is available.
 
         Args:
             name: Signal name.
-            data: Signal samples (DataFrame, Arrow table, or parquet path).
+            data: Signal samples (DataFrame, Series, Arrow table, or parquet path).
             metadata: Optional signal metadata (for example ``unit``).
             overwrite: If True, replace an existing signal with the same name.
             priority: Import priority (``default`` or ``high``).
