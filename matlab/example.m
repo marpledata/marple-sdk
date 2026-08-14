@@ -81,6 +81,14 @@ ylabel(cb,'Temperature');
 %     'scenario', 'baseline');
 % disp(dataset);
 
+%% Example 5: push a local file to a stream 
+%
+% stream_name = 'CSV Stream';
+% dataset = mdb.push_file( ...
+%   stream_name, 'race.csv', ...
+%   Metadata=struct('car_id', 1, 'track', 'track_1', 'weather', 'sunny'));
+% disp(dataset);
+
 function TT = toTT(tbl, signalName)
     t = datetime(tbl.time/1e9, 'ConvertFrom','posixtime', 'TimeZone','UTC');
     TT = table2timetable(table(t, tbl{:,signalName}, 'VariableNames', {'time', signalName}), 'RowTimes','time');

@@ -32,6 +32,11 @@ This directory contains a small MATLAB client for Marple DB.
   and uses `parquet-transcode prepare-upload` before the storage PUT.
 - `update_metadata(stream_name, dataset_id, metadata)` posts `metadata`
   straight to the `/metadata` endpoint, which merges it server-side.
+- `push_file(stream_name, file_path, ...)` uploads a file to a file stream via
+  the ingestion protocol (`POST /ingestion` to init, upload, `.../complete`,
+  `.../abort` on failure). Unlike Python/Rust, it only implements the
+  server-relay upload path (`POST /ingestion/{id}/upload/server`); the
+  direct-to-storage single/multipart/Azure modes aren't supported.
 - Preserve `clear_cache()` behavior for forcing a clean re-download.
 - Older MATLAB versions may not read ZSTD-compressed Parquet. Keep the
   `parquet-transcode` helper download, directory transcode, and

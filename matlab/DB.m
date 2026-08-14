@@ -436,6 +436,58 @@ classdef DB
       end
     end
 
+    function upload_via_server(obj, ingestion_id, file_path)
+      % Hand-built multipart/form-data, field "file", Content-Type forced to
+      % application/octet-stream -- matches Python's _upload_server exactly.
+      import matlab.net.http.*
+      import matlab.net.URI
+
+      [~, base_name, ext] = fileparts(file_path);
+      file_name = [base_name ext];
+
+      fid = fopen(file_path, 'rb');
+      if fid < 0
+        error('Server upload failed: could not open %s', file_path);
+      end
+      cleaner = onCleanup(@() fclose(fid));
+      file_bytes = fread(fid, Inf, '*uint8');
+      clear cleaner;
+
+      boundary = ['MarpleFormBoundary' strrep(char(java.util.UUID.randomUUID()), '-', '')];
+      preamble = uint8(sprintf( ...
+        ['--%s\r\n' ...
+         'Content-Disposition: form-data; name="file"; filename="%s"\r\n' ...
+         'Content-Type: application/octet-stream\r\n\r\n'], ...
+        boundary, file_name)).';
+      closing = uint8(sprintf('\r\n--%s--\r\n', boundary)).';
+      payload = [preamble; file_bytes(:); closing];
+
+      headers = [
+        HeaderField('Authorization', ['Bearer ' obj.api_key]), ...
+        HeaderField('X-Request-Source', 'sdk/matlab'), ...
+        HeaderField('Content-Type', ['multipart/form-data; boundary=' boundary])
+      ];
+      body = MessageBody();
+      body.Payload = payload;
+      req = RequestMessage(RequestMethod.POST, headers, body);
+      url = [obj.api_url sprintf('/ingestion/%d/upload/server', ingestion_id)];
+      try
+        resp = req.send(URI(url));
+      catch ME
+        error('Server upload failed: %s', ME.message);
+      end
+
+      code = double(resp.StatusCode);
+      if code < 200 || code >= 300
+        reason = '';
+        try
+          reason = char(resp.StatusLine.ReasonPhrase);
+        catch
+        end
+        error('Server upload failed: HTTP %d %s', code, reason);
+      end
+    end
+
     function stream_id = find_stream_id(obj, stream_name)
       for i = 1:length(obj.streams)
         if strcmpi(obj.streams{i}.name, stream_name)
@@ -874,6 +926,86 @@ classdef DB
       catch ME
         error('Failed to fetch signal "%s" after upload (id=%d): %s', ...
           name, signal_id, ME.message);
+      end
+    end
+
+    function dataset = push_file(obj, stream_name, file_path, opts)
+      %PUSH_FILE Push a local file to a file stream; ingested as a new dataset.
+      %
+      %   dataset = mdb.push_file(stream_name, file_path)
+      %   dataset = mdb.push_file(..., Metadata=struct(), FileName=name, Overwrite=false)
+      %
+      %   Uploads via the API server (no direct-to-storage modes here, unlike
+      %   Python/Rust). FileName defaults to the local file's basename and
+      %   becomes the dataset name.
+      arguments
+        obj
+        stream_name
+        file_path
+        opts.Metadata = struct()
+        opts.FileName = ""
+        opts.Overwrite (1,1) logical = false
+      end
+
+      file_path = char(string(file_path));
+      if ~isfile(file_path)
+        error('File not found: %s', file_path);
+      end
+      info = dir(file_path);
+      file_size = info(1).bytes;
+
+      if strlength(strtrim(string(opts.FileName))) > 0
+        dataset_name = char(opts.FileName);
+      else
+        [~, name, ext] = fileparts(file_path);
+        dataset_name = [name ext];
+      end
+
+      stream_name = char(string(stream_name));
+      if isempty(obj.streams)
+        obj.streams = obj.get_streams();
+      end
+      stream_id = obj.find_stream_id(stream_name);
+
+      overwrite_json = 'false';
+      if opts.Overwrite
+        overwrite_json = 'true';
+      end
+      init_body = sprintf( ...
+        '{"stream_id":%d,"dataset_name":%s,"file_size":%d,"metadata":%s,"overwrite":%s}', ...
+        stream_id, jsonencode(dataset_name), file_size, ...
+        DB.encode_json_object(opts.Metadata), overwrite_json);
+
+      try
+        init_resp = obj.post_json('/ingestion', init_body);
+      catch ME
+        error('Initialize ingestion failed for "%s": %s', dataset_name, ME.message);
+      end
+      if ~isfield(init_resp, 'ingestion_id') || ~isfield(init_resp, 'dataset_id')
+        error('Initialize ingestion response missing dataset_id/ingestion_id for "%s"', dataset_name);
+      end
+      ingestion_id = double(init_resp.ingestion_id);
+      dataset_id = double(init_resp.dataset_id);
+
+      try
+        obj.upload_via_server(ingestion_id, file_path);
+        obj.post_json(sprintf('/ingestion/%d/upload/complete', ingestion_id), '{}');
+      catch ME
+        try
+          reason_json = sprintf('{"reason":%s}', jsonencode(ME.message));
+          obj.post_json(sprintf('/ingestion/%d/abort', ingestion_id), reason_json);
+        catch ME2
+          warning('Failed to abort ingestion %d: %s', ingestion_id, ME2.message);
+        end
+        rethrow(ME);
+      end
+
+      endpoint_get = sprintf('/datapool/%s/dataset', obj.datapool);
+      try
+        dataset = obj.make_request('GET', endpoint_get, [], struct('id', dataset_id));
+      catch ME
+        error('Failed to fetch dataset "%s" after push_file (id=%d): %s', ...
+          dataset_name, dataset_id, ME.message);
       end
     end
 
