@@ -297,7 +297,8 @@ classdef DB
       end
       provider = FileProvider(local_path);
       if opts.Multipart
-        provider = MultipartFormProvider("file", provider);
+        file_header = HeaderField('Content-Type', 'application/octet-stream');
+        provider = MultipartFormProvider("file", RequestMessage([], file_header, provider));
       else
         headers = [headers, HeaderField('Content-Type', 'application/octet-stream')];
       end
@@ -960,6 +961,44 @@ classdef DB
       catch ME
         error('Failed to fetch dataset "%s" after push_file (id=%d): %s', ...
           dataset_name, dataset_id, ME.message);
+      end
+    end
+
+    function dataset = wait_for_import(obj, stream_name, dataset_id, opts)
+      %WAIT_FOR_IMPORT Poll a dataset until its import finishes (or times out).
+      %
+      %   dataset = mdb.wait_for_import(stream_name, dataset_id)
+      %   dataset = mdb.wait_for_import(stream_name, dataset_id, Timeout=60)
+      %
+      %   Returns once import_status leaves the busy set (e.g. FINISHED). If
+      %   still busy after Timeout seconds, a warning is issued and the
+      %   current dataset is returned.
+      arguments
+        obj
+        stream_name %#ok<INUSA> kept for symmetry with the other flat methods
+        dataset_id (1,1) double
+        opts.Timeout (1,1) double = 60
+      end
+
+      busy_statuses = {'UPLOADING', 'WAITING', 'IMPORTING', 'POSTPROCESSING', 'COOLING'};
+      endpoint_get = sprintf('/datapool/%s/dataset', obj.datapool);
+      start_time = tic;
+      while true
+        try
+          dataset = obj.make_request('GET', endpoint_get, [], struct('id', dataset_id));
+        catch ME
+          error('Failed to fetch dataset %d while waiting for import: %s', dataset_id, ME.message);
+        end
+
+        if ~ismember(char(string(dataset.import_status)), busy_statuses)
+          return;
+        end
+        if toc(start_time) >= opts.Timeout
+          warning('Import for dataset %d did not finish after %g seconds (status: %s)', ...
+            dataset_id, opts.Timeout, char(string(dataset.import_status)));
+          return;
+        end
+        pause(0.5);
       end
     end
 
