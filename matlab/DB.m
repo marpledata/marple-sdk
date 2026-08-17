@@ -1078,6 +1078,7 @@ classdef DB
         signal_name
         is_text logical = false
       end
+      signal_name = char(string(signal_name));
       dataset_id = obj.find_dataset_id(dataset_path);
       signal_id = obj.find_signal_id(dataset_id, signal_name);
       cache = obj.signal_cache_path(dataset_id, signal_id);
