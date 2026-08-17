@@ -8,6 +8,10 @@ classdef DB
     streams % Cache for available streams
   end
 
+  properties (Constant)
+    VERSION = "0.3.0"
+  end
+
   properties (Constant, Access = private)
     TRANSCODE_VERSION = 'v0.2.0'
     TRANSCODE_BASE_URL = 'https://github.com/marpledata/marple-sdk/releases/download/parquet-transcode'
@@ -15,6 +19,10 @@ classdef DB
   end
 
   methods (Static, Access = private)
+    function src = request_source()
+      src = sprintf('sdk/matlab:%s', DB.VERSION);
+    end
+
     function cfg = read_config()
       json_path = fullfile(fileparts(mfilename('fullpath')), 'config.json');
       if ~isfile(json_path)
@@ -292,7 +300,7 @@ classdef DB
       if strlength(string(opts.Bearer)) > 0
         headers = [
           HeaderField('Authorization', ['Bearer ' char(string(opts.Bearer))]), ...
-          HeaderField('X-Request-Source', 'sdk/matlab')
+          HeaderField('X-Request-Source', DB.request_source())
         ];
       end
       provider = FileProvider(local_path);
@@ -315,7 +323,8 @@ classdef DB
         end
         resp = send(completed, uri);
       catch ME
-        error('File upload failed: %s', ME.message);
+        err = MException('Marple:FileUploadFailed', 'File upload failed: %s', ME.message);
+        throw(err.addCause(ME));
       end
       code = double(resp.StatusCode);
       if code < 200 || code >= 300
@@ -368,7 +377,7 @@ classdef DB
 
       headers = {
         'Authorization', ['Bearer ' obj.api_key];
-        'X-Request-Source', 'sdk/matlab'
+        'X-Request-Source', DB.request_source()
       };
       options = weboptions('HeaderFields', headers, ...
                          'ContentType', 'json', ...
@@ -392,7 +401,7 @@ classdef DB
 
       headers = [
         HeaderField('Authorization', ['Bearer ' obj.api_key]), ...
-        HeaderField('X-Request-Source', 'sdk/matlab'), ...
+        HeaderField('X-Request-Source', DB.request_source()), ...
         HeaderField('Content-Type', 'application/json')
       ];
       body = MessageBody();
@@ -602,10 +611,12 @@ classdef DB
       response = obj.make_request('GET', endpoint);
       % actual data is nested in this key
       streams = response.streams;
-      % jsondecode returns a struct array when all stream objects have
-      % identical fields, but a cell array when they don't. Normalize to
-      % a cell array so consumers only have to handle one shape.
-      if isstruct(streams)
+      % jsondecode returns [] for an empty list, a struct array when all
+      % stream objects have identical fields, and a cell array when they
+      % don't. Normalize to a cell array so consumers only handle one shape.
+      if isempty(streams)
+        streams = {};
+      elseif isstruct(streams)
         streams = num2cell(streams);
       end
       obj.streams = streams;

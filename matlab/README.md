@@ -32,6 +32,7 @@ This folder contains a small MATLAB client for Marple DB.
 
 ## Notes
 
+- The client version is `DB.VERSION`. History is in `CHANGELOG.md`.
 - `DB.from_config()` reads `config.json` next to `DB.m`. `api_key` is sent as a Bearer token to the Marple DB API.
 - `get_data(dataset_path, signal_name)` fetches a list of parquet URLs from the API, downloads them into `_marplecache/<workspace>/<datapool>/dataset=<id>/signal=<id>/` (via `websave`), and reads them via `parquetDatastore(...)`.
 - `create_stream(name, Type="files", Description=..., Datapool=..., Plugin=..., PluginArgs=..., LayerShifts=..., SignalReduction=..., InsightWorkspace=..., InsightProject=...)` creates a new datastream and returns it. `Type` is `"files"` (default) or `"realtime"`. For MATLAB files, use `Plugin="mat"`.
