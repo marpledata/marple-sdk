@@ -23,6 +23,12 @@ This directory contains a small MATLAB client for Marple DB.
 - `DB.from_config()` should continue reading `config.json` next to `DB.m`.
 - `get_data(dataset_path, signal_name)` downloads parquet files into
   `_marplecache/<workspace>/<datapool>/dataset=<id>/signal=<id>/`.
+- `create_stream(name, ...)` posts to `/stream` and mirrors Python's
+  `create_stream` field set. `DB` is a value class, not a `handle` class, so
+  `obj.streams` refreshed inside one method call is invisible to the
+  caller's copy; `find_stream_id` retries once against a fresh
+  `get_streams()` on a cache miss so a stream created earlier in the same
+  session is still resolvable by name.
 - `add_dataset` creates an empty dataset; on file streams pair it with
   `add_signal` for custom lake writes (prefer file upload otherwise). The
   MATLAB client does not expose realtime `append` or `cool`.

@@ -472,14 +472,21 @@ classdef DB
     end
 
     function stream_id = find_stream_id(obj, stream_name)
-      for i = 1:length(obj.streams)
-        if strcmpi(obj.streams{i}.name, stream_name)
-          stream_id = obj.streams{i}.id;
-          return;
+      % Retry once against a fresh list -- obj.streams is a per-call snapshot
+      % (DB isn't a handle class), so a stream created earlier in the same
+      % session via create_stream won't be in the caller's cached copy yet.
+      for attempt = 1:2
+        for i = 1:length(obj.streams)
+          if strcmpi(obj.streams{i}.name, stream_name)
+            stream_id = obj.streams{i}.id;
+            return;
+          end
+        end
+        if attempt == 1
+          obj.streams = obj.get_streams();
         end
       end
 
-      % If we get here, stream wasn't found
       available_names = strjoin(cellfun(@(s) s.name, obj.streams, 'UniformOutput', false), ', ');
       error('Stream "%s" not found. Available streams are: %s', stream_name, available_names);
     end
@@ -630,6 +637,68 @@ classdef DB
         streams = num2cell(streams);
       end
       obj.streams = streams;
+    end
+
+    function stream = create_stream(obj, name, opts)
+      %CREATE_STREAM Create a new datastream.
+      %
+      %   stream = mdb.create_stream(name)
+      %   stream = mdb.create_stream(name, Type="realtime", Description="...")
+      %
+      %   Type is "files" (default) or "realtime". Optional Description,
+      %   Datapool, Plugin, PluginArgs, LayerShifts, SignalReduction,
+      %   InsightWorkspace, InsightProject mirror the Python/Rust SDKs.
+      arguments
+        obj
+        name
+        opts.Type (1,1) string {mustBeMember(opts.Type, ["files", "realtime"])} = "files"
+        opts.Description = []
+        opts.Datapool = []
+        opts.Plugin = []
+        opts.PluginArgs = []
+        opts.LayerShifts = []
+        opts.SignalReduction = []
+        opts.InsightWorkspace = []
+        opts.InsightProject = []
+      end
+
+      name = char(string(name));
+      if strlength(strtrim(string(name))) == 0
+        error('Stream name must be non-empty');
+      end
+
+      body = struct('name', name, 'type', char(opts.Type));
+      optional_fields = { ...
+        'Description', 'description'; 'Datapool', 'datapool'; ...
+        'Plugin', 'plugin'; 'PluginArgs', 'plugin_args'; ...
+        'LayerShifts', 'layer_shifts'; 'SignalReduction', 'signal_reduction'; ...
+        'InsightWorkspace', 'insight_workspace'; 'InsightProject', 'insight_project' ...
+      };
+      for i = 1:size(optional_fields, 1)
+        value = opts.(optional_fields{i, 1});
+        if ~isempty(value)
+          body.(optional_fields{i, 2}) = value;
+        end
+      end
+
+      try
+        resp = obj.post_json('/stream', jsonencode(body));
+      catch ME
+        error('Create stream failed for "%s": %s', name, ME.message);
+      end
+      if ~isfield(resp, 'id')
+        error('Create stream response missing id for "%s"', name);
+      end
+      stream_id = double(resp.id);
+
+      obj.streams = obj.get_streams();
+      for i = 1:numel(obj.streams)
+        if obj.streams{i}.id == stream_id
+          stream = obj.streams{i};
+          return;
+        end
+      end
+      error('Created stream %d ("%s") not found after refreshing stream list', stream_id, name);
     end
 
     function datasets = get_datasets(obj, stream_name)

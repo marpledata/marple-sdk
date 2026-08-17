@@ -34,6 +34,7 @@ This folder contains a small MATLAB client for Marple DB.
 
 - `DB.from_config()` reads `config.json` next to `DB.m`. `api_key` is sent as a Bearer token to the Marple DB API.
 - `get_data(dataset_path, signal_name)` fetches a list of parquet URLs from the API, downloads them into `_marplecache/<workspace>/<datapool>/dataset=<id>/signal=<id>/` (via `websave`), and reads them via `parquetDatastore(...)`.
+- `create_stream(name, Type="files", Description=..., Datapool=..., Plugin=..., PluginArgs=..., LayerShifts=..., SignalReduction=..., InsightWorkspace=..., InsightProject=...)` creates a new datastream and returns it. `Type` is `"files"` (default) or `"realtime"`.
 - `add_dataset(stream_name, dataset_name, Metadata=struct())` creates an empty dataset. On file streams, prefer file upload for normal ingestion; pair `add_dataset` with `add_signal` for custom ingestion flows
 - `add_signal(stream_name, dataset_id, name, data, ...)` uploads a signal onto a new or imported dataset. Pass either a `table` with an int64-nanosecond `time` column and `value` and/or `value_text`, or a `timetable` with datetime row times and `value` and/or `value_text` variables. Optional name-value args are `Metadata`, `Overwrite`, and `Priority`. The call returns after upload completion is accepted; the Iceberg commit may still be running, so the signal may not be readable immediately.
 - `update_metadata(stream_name, dataset_id, metadata)` merges `metadata` into a dataset's existing metadata server-side and returns the refreshed dataset.
