@@ -935,8 +935,7 @@ classdef DB
       %   dataset = mdb.push_file(stream_name, file_path)
       %   dataset = mdb.push_file(..., Metadata=struct(), FileName=name, Overwrite=false)
       %
-      %   Uploads via the API server (no direct-to-storage modes here, unlike
-      %   Python/Rust). FileName defaults to the local file's basename and
+      %   Uploads via the API server. FileName defaults to the local file's basename and
       %   becomes the dataset name.
       arguments
         obj
