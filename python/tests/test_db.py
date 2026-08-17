@@ -61,10 +61,12 @@ def _push_and_assert_upload(
     file_path: Path,
     metadata: dict[str, str],
     upload_mode: Literal["auto", "server"] = "auto",
+    overwrite: bool = False,
+    file_name: str | None = None,
 ) -> Dataset:
-    dataset = stream.push_file(str(file_path), metadata=metadata, upload_mode=upload_mode).wait_for_import(
-        timeout=180
-    )
+    dataset = stream.push_file(
+        str(file_path), metadata=metadata, upload_mode=upload_mode, overwrite=overwrite, file_name=file_name
+    ).wait_for_import(timeout=180)
 
     assert dataset.import_status == "FINISHED"
     assert dataset.backup_size == file_path.stat().st_size
@@ -251,6 +253,22 @@ def test_push_file_server_upload(db: DB) -> None:
         dataset = _push_and_assert_upload(stream, EXAMPLE_CSV, metadata, upload_mode="server")
 
     assert dataset.metadata.get("upload_mode") == "server"
+
+
+def test_push_file_overwrite(db: DB) -> None:
+    metadata_v1 = {"version": "1"}
+    metadata_v2 = {"version": "2"}
+    overwrite_file_name = f"overwrite_test_{datetime.now().isoformat()}.csv"
+    with _upload_test_stream(db, "overwrite") as stream:
+        _push_and_assert_upload(stream, EXAMPLE_CSV, metadata_v1, file_name=overwrite_file_name)
+        dataset_overwritten = _push_and_assert_upload(
+            stream, EXAMPLE_CSV, metadata_v2, overwrite=True, file_name=overwrite_file_name
+        )
+
+        assert dataset_overwritten.import_status == "FINISHED"
+        assert dataset_overwritten.metadata.get("version") == "2"
+        # Ensure it actually overwrote instead of duplicating
+        assert len(stream.get_datasets()) == 1
 
 
 def test_push_file_multipart_upload(db: DB) -> None:

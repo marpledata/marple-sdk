@@ -44,14 +44,18 @@ class SignalsAlreadyExistError(ValueError):
 class SignalUpload(BaseModel):
     """Input for :meth:`Dataset.add_signal` / :meth:`Dataset.add_signals`.
 
-    ``data`` is a DataFrame, Arrow table, or parquet path matching
+    ``data`` is a DataFrame, Series, Arrow table, or parquet path matching
     :data:`marple.db.LAKE_ARROW_SCHEMA` (``time`` plus ``value`` and/or ``value_text``).
+
+    A DataFrame without a ``time`` column, must have a
+    ``DatetimeIndex`` or ``TimedeltaIndex`` holding the sample times.
+    It must still contain ``value`` and/or ``value_text`` columns.
     """
 
     model_config = ConfigDict(arbitrary_types_allowed=True)
 
     name: str
-    data: pd.DataFrame | pa.Table | Path | str
+    data: pd.DataFrame | pd.Series | pa.Table | Path | str
     metadata: dict[str, Any] = Field(default_factory=dict)
     priority: Literal["default", "high"] = "default"
 
@@ -71,8 +75,10 @@ class SignalUpload(BaseModel):
     def _validate_data(self, dataset: "Dataset") -> pa.Table:
         if isinstance(self.data, pa.Table):
             table = self.data
+        elif isinstance(self.data, pd.Series):
+            table = pa.Table.from_pandas(self._series_to_frame(self.data), preserve_index=False)
         elif isinstance(self.data, pd.DataFrame):
-            table = pa.Table.from_pandas(self.data, preserve_index=False)
+            table = pa.Table.from_pandas(self._frame_to_upload(self.data), preserve_index=False)
         elif isinstance(self.data, (Path, str)):
             try:
                 table = pq.read_table(self.data)
@@ -112,6 +118,29 @@ class SignalUpload(BaseModel):
             raise ValueError(f"{self.name}: {COL_VAL_TEXT!r} must be string-compatible: {exc}") from exc
 
         return pa.Table.from_arrays([time, value, value_text], schema=LAKE_ARROW_SCHEMA)
+
+    def _frame_to_upload(self, df: pd.DataFrame) -> pd.DataFrame:
+        # Narrow to the lake columns first, so unrelated columns are never converted to Arrow.
+        columns = [col for col in (COL_TIME, COL_VAL, COL_VAL_TEXT) if col in df.columns]
+        if len(columns) != len(df.columns):
+            df = df[columns]
+        if COL_TIME in columns:
+            return df
+        return df.set_axis(self._time_index(df.index)).reset_index()
+
+    def _series_to_frame(self, series: pd.Series) -> pd.DataFrame:
+        column = COL_VAL if pd.api.types.is_numeric_dtype(series) else COL_VAL_TEXT
+        return series.rename(column).set_axis(self._time_index(series.index)).reset_index()
+
+    def _time_index(self, index: pd.Index) -> pd.DatetimeIndex | pd.TimedeltaIndex:
+        if not isinstance(index, (pd.DatetimeIndex, pd.TimedeltaIndex)):
+            raise ValueError(
+                f"{self.name}: Data must include a {COL_TIME!r} column "
+                f"or a DatetimeIndex / TimedeltaIndex, got {type(index).__name__}"
+            )
+        if index.hasnans:
+            raise ValueError(f"{self.name}: Time index must not contain NaT")
+        return index.as_unit("ns").rename(COL_TIME)
 
     def _validate_time_range(self, table: pa.Table, dataset: "Dataset") -> pa.ChunkedArray | pa.Array:
         try:

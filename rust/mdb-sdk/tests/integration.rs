@@ -243,6 +243,17 @@ async fn test_sdk_server_upload_flow() -> anyhow::Result<()> {
 }
 
 #[tokio::test]
+async fn test_sdk_overwrite_flow() -> anyhow::Result<()> {
+    let Some((token, url)) = maybe_skip_integration() else {
+        eprintln!("Skipping Rust SDK integration test: missing env var MDB_TOKEN");
+        return Ok(());
+    };
+
+    let db = db(&token, &url)?;
+    run_with_cleanup(&db, || async { run_overwrite_flow(&db).await }).await
+}
+
+#[tokio::test]
 async fn test_sdk_multipart_upload_flow() -> anyhow::Result<()> {
     let Some((token, url)) = maybe_skip_integration() else {
         eprintln!("Skipping Rust SDK integration test: missing env var MDB_TOKEN");
@@ -311,6 +322,48 @@ async fn run_server_upload_flow(db: &MarpleDB) -> anyhow::Result<()> {
         false,
     )
     .await?;
+
+    Ok(())
+}
+
+async fn run_overwrite_flow(db: &MarpleDB) -> anyhow::Result<()> {
+    let tmp = tempfile::tempdir()?;
+    let csv_path = tmp.path().join("overwrite_test.csv");
+    fs::copy(example_csv_path(), &csv_path)?;
+    let stream = create_test_stream(db, "overwrite").await?;
+
+    let dataset = upload_and_assert_dataset(
+        db,
+        stream.id,
+        &csv_path,
+        PushFileOptions::builder()
+            .metadata([("version".to_string(), serde_json::json!("1"))])
+            .build(),
+        &[("version", "1")],
+        false,
+    )
+    .await?;
+
+    let dataset_overwritten = upload_and_assert_dataset(
+        db,
+        stream.id,
+        &csv_path,
+        PushFileOptions::builder()
+            .metadata([("version".to_string(), serde_json::json!("2"))])
+            .overwrite(true)
+            .build(),
+        &[("version", "2")],
+        false,
+    )
+    .await?;
+
+    anyhow::ensure!(dataset_overwritten.id == dataset.id, "overwrite created a new dataset instead of updating");
+    let datasets = db.get_datasets(stream.id).await?;
+    anyhow::ensure!(
+        datasets.len() == 1,
+        "Expected exactly 1 dataset after overwrite, found {}",
+        datasets.len()
+    );
 
     Ok(())
 }
