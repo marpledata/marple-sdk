@@ -87,6 +87,8 @@ ylabel(cb,'Temperature');
 % dataset = mdb.push_file( ...
 %   stream_name, 'race.csv', ...
 %   Metadata=struct('car_id', 1, 'track', 'track_1', 'weather', 'sunny'));
+% dataset = mdb.wait_for_import(stream_name, dataset.id);
+% T = mdb.get_data(dataset.path, 'speed');
 % disp(dataset);
 
 function TT = toTT(tbl, signalName)

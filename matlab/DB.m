@@ -437,39 +437,22 @@ classdef DB
     end
 
     function upload_via_server(obj, ingestion_id, file_path)
-      % Hand-built multipart/form-data, field "file", Content-Type forced to
-      % application/octet-stream -- matches Python's _upload_server exactly.
+      % Streams the file via FileProvider (like put_storage_file) instead of
+      % reading it into memory; MultipartFormProvider wraps it as form field
+      % "file" and handles the boundary/Content-Length itself.
       import matlab.net.http.*
+      import matlab.net.http.io.*
       import matlab.net.URI
 
-      [~, base_name, ext] = fileparts(file_path);
-      file_name = [base_name ext];
-
-      fid = fopen(file_path, 'rb');
-      if fid < 0
-        error('Server upload failed: could not open %s', file_path);
-      end
-      cleaner = onCleanup(@() fclose(fid));
-      file_bytes = fread(fid, Inf, '*uint8');
-      clear cleaner;
-
-      boundary = ['MarpleFormBoundary' strrep(char(java.util.UUID.randomUUID()), '-', '')];
-      preamble = uint8(sprintf( ...
-        ['--%s\r\n' ...
-         'Content-Disposition: form-data; name="file"; filename="%s"\r\n' ...
-         'Content-Type: application/octet-stream\r\n\r\n'], ...
-        boundary, file_name)).';
-      closing = uint8(sprintf('\r\n--%s--\r\n', boundary)).';
-      payload = [preamble; file_bytes(:); closing];
+      file_header = HeaderField('Content-Type', 'application/octet-stream');
+      file_part = RequestMessage([], file_header, FileProvider(file_path));
+      form = MultipartFormProvider('file', file_part);
 
       headers = [
         HeaderField('Authorization', ['Bearer ' obj.api_key]), ...
-        HeaderField('X-Request-Source', 'sdk/matlab'), ...
-        HeaderField('Content-Type', ['multipart/form-data; boundary=' boundary])
+        HeaderField('X-Request-Source', 'sdk/matlab')
       ];
-      body = MessageBody();
-      body.Payload = payload;
-      req = RequestMessage(RequestMethod.POST, headers, body);
+      req = RequestMessage(RequestMethod.POST, headers, form);
       url = [obj.api_url sprintf('/ingestion/%d/upload/server', ingestion_id)];
       try
         resp = req.send(URI(url));
@@ -1005,6 +988,44 @@ classdef DB
       catch ME
         error('Failed to fetch dataset "%s" after push_file (id=%d): %s', ...
           dataset_name, dataset_id, ME.message);
+      end
+    end
+
+    function dataset = wait_for_import(obj, stream_name, dataset_id, opts)
+      %WAIT_FOR_IMPORT Poll a dataset until its import finishes (or times out).
+      %
+      %   dataset = mdb.wait_for_import(stream_name, dataset_id)
+      %   dataset = mdb.wait_for_import(stream_name, dataset_id, Timeout=60)
+      %
+      %   Returns once import_status leaves the busy set (e.g. FINISHED). If
+      %   still busy after Timeout seconds, a warning is issued and the
+      %   current dataset is returned.
+      arguments
+        obj
+        stream_name %#ok<INUSA> kept for symmetry with the other flat methods
+        dataset_id (1,1) double
+        opts.Timeout (1,1) double = 60
+      end
+
+      busy_statuses = {'UPLOADING', 'WAITING', 'IMPORTING', 'POSTPROCESSING', 'COOLING'};
+      endpoint_get = sprintf('/datapool/%s/dataset', obj.datapool);
+      start_time = tic;
+      while true
+        try
+          dataset = obj.make_request('GET', endpoint_get, [], struct('id', dataset_id));
+        catch ME
+          error('Failed to fetch dataset %d while waiting for import: %s', dataset_id, ME.message);
+        end
+
+        if ~ismember(char(string(dataset.import_status)), busy_statuses)
+          return;
+        end
+        if toc(start_time) >= opts.Timeout
+          warning('Import for dataset %d did not finish after %g seconds (status: %s)', ...
+            dataset_id, opts.Timeout, char(string(dataset.import_status)));
+          return;
+        end
+        pause(0.5);
       end
     end
 

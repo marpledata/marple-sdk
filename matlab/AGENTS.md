@@ -37,6 +37,10 @@ This directory contains a small MATLAB client for Marple DB.
   `.../abort` on failure). Unlike Python/Rust, it only implements the
   server-relay upload path (`POST /ingestion/{id}/upload/server`); the
   direct-to-storage single/multipart/Azure modes aren't supported.
+- `wait_for_import(stream_name, dataset_id, ...)` polls the dataset by id
+  (same `/datapool/<datapool>/dataset` GET used elsewhere) until
+  `import_status` leaves the busy set, mirroring Python/Rust's
+  `wait_for_import`.
 - Preserve `clear_cache()` behavior for forcing a clean re-download.
 - Older MATLAB versions may not read ZSTD-compressed Parquet. Keep the
   `parquet-transcode` helper download, directory transcode, and
