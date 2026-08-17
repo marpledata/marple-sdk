@@ -36,16 +36,15 @@ classdef DB
 
     function bin_path = ensure_binary()
       arch = computer('arch');
+      ext = '';
       switch arch
         case 'win64'
           platform = 'windows-x64';
           ext = '.exe';
         case 'maca64'
           platform = 'darwin-arm64';
-          ext = '';
         case 'glnxa64'
           platform = 'linux-x64';
-          ext = '';
         otherwise
           error('Unsupported platform: %s', arch);
       end
@@ -282,9 +281,21 @@ classdef DB
       end
     end
 
+    function c = as_cell(x)
+      if iscell(x)
+        c = x;
+      elseif isstruct(x)
+        c = num2cell(x);
+      elseif isempty(x)
+        c = {};
+      else
+        c = {x};
+      end
+    end
+
     function send_file(local_path, url, method, opts)
-      % Stream a local file with FileProvider. PUT is a raw body (presigned
-      % storage); Multipart wraps field "file" as multipart/form-data (server).
+      % Stream a local file with FileProvider.send (no complete()).
+      % Multipart writes a one-part form to a temp file first.
       arguments
         local_path
         url
@@ -303,37 +314,75 @@ classdef DB
           HeaderField('X-Request-Source', DB.request_source())
         ];
       end
-      provider = FileProvider(local_path);
-      if opts.Multipart
-        file_header = HeaderField('Content-Type', 'application/octet-stream');
-        provider = MultipartFormProvider("file", RequestMessage([], file_header, provider));
-      else
-        headers = [headers, HeaderField('Content-Type', 'application/octet-stream')];
-      end
+      local_path = char(string(local_path));
+      send_path = local_path;
+      content_type = 'application/octet-stream';
       uri = URI(url, 'literal');
-      req = RequestMessage(method, headers, provider);
       try
-        [completed, ~] = complete(req, uri);
-        if ~opts.Multipart
-          if ~isempty(completed.Header.getFields('Content-Disposition'))
-            completed.Header = completed.Header.removeFields('Content-Disposition');
-          end
-          completed.Header = replaceFields(completed.Header, ...
-            HeaderField('Content-Type', 'application/octet-stream'));
+        if opts.Multipart
+          [~, name, ext] = fileparts(local_path);
+          tmp = [tempname '.upload'];
+          cleaner = onCleanup(@() delete(tmp)); %#ok<NASGU>
+          boundary = DB.write_multipart_upload(local_path, tmp, [name ext]);
+          send_path = tmp;
+          content_type = ['multipart/form-data; boundary=' boundary];
         end
-        resp = send(completed, uri);
+        % Empty Content-Disposition suppresses FileProvider's attachment header.
+        headers = [headers, ...
+          HeaderField('Content-Type', content_type), ...
+          HeaderField('Content-Disposition')];
+        provider = FileProvider(send_path);
+        req = RequestMessage(method, headers, provider);
+        resp = send(req, uri);
       catch ME
         err = MException('Marple:FileUploadFailed', 'File upload failed: %s', ME.message);
         throw(err.addCause(ME));
       end
       code = double(resp.StatusCode);
       if code < 200 || code >= 300
-        reason = '';
-        try
-          reason = char(resp.StatusLine.ReasonPhrase);
-        catch
+        error('File upload failed: HTTP %d: %s', code, DB.response_text(resp));
+      end
+    end
+
+    function boundary = write_multipart_upload(src_path, dest_path, filename)
+      filename = regexprep(char(string(filename)), '[\r\n"]', '');
+      boundary = sprintf('----MarpleBoundary%08X%08X', randi(2^31-1), randi(2^31-1));
+      preamble = unicode2native(sprintf([ ...
+        '--%s\r\n' ...
+        'Content-Disposition: form-data; name="file"; filename="%s"\r\n' ...
+        'Content-Type: application/octet-stream\r\n' ...
+        '\r\n'], boundary, filename), 'UTF-8');
+      epilogue = unicode2native(sprintf('\r\n--%s--\r\n', boundary), 'UTF-8');
+
+      out = fopen(dest_path, 'wb');
+      if out < 0
+        error('Could not create upload temp file: %s', dest_path);
+      end
+      cleaner_out = onCleanup(@() fclose(out)); %#ok<NASGU>
+      fwrite(out, preamble, 'uint8');
+
+      in = fopen(src_path, 'rb');
+      if in < 0
+        error('Could not open file for upload: %s', src_path);
+      end
+      cleaner_in = onCleanup(@() fclose(in)); %#ok<NASGU>
+      while true
+        chunk = fread(in, 65536, '*uint8');
+        if isempty(chunk)
+          break;
         end
-        error('File upload failed: HTTP %d %s', code, reason);
+        fwrite(out, chunk, 'uint8');
+      end
+      fwrite(out, epilogue, 'uint8');
+    end
+
+    function text = response_text(resp)
+      text = '';
+      try
+        if ~isempty(resp.Body.Payload)
+          text = strtrim(native2unicode(resp.Body.Payload(:)', 'UTF-8'));
+        end
+      catch
       end
     end
 
@@ -349,18 +398,14 @@ classdef DB
 
   methods (Static)
     function obj = from_config()
-      % Static constructor using config file
       cfg = DB.read_config();
       obj = DB(cfg.api_url, cfg.api_key);
-
-      % Set additional properties from config
       obj.workspace = cfg.workspace;
-      if isfield(cfg,'datapool')
-            obj.datapool = cfg.datapool;
+      if isfield(cfg, 'datapool')
+        obj.datapool = cfg.datapool;
       else
-            obj.datapool = "default";
+        obj.datapool = "default";
       end
-
       obj.streams = obj.get_streams();
     end
   end
@@ -384,14 +429,14 @@ classdef DB
                          'RequestMethod', method);
       url = [obj.api_url endpoint];
       try
-          if strcmp(method, 'GET')
-              qp_args = namedargs2cell(query_params);
-              response = webread(url, qp_args{:}, options);
-          else
-              response = webwrite(url, data, options);
-          end
+        if strcmp(method, 'GET')
+          qp_args = namedargs2cell(query_params);
+          response = webread(url, qp_args{:}, options);
+        else
+          response = webwrite(url, data, options);
+        end
       catch ME
-          error('API request failed: %s', ME.message);
+        error('API request failed: %s', ME.message);
       end
     end
 
@@ -424,10 +469,9 @@ classdef DB
             raw = char(resp.Body.Data);
           else
             response = resp.Body.Data;
-            if code < 200 || code >= 300
-              error('API request failed: HTTP %d', code);
+            if code >= 200 && code < 300
+              return;
             end
-            return;
           end
         end
       catch
@@ -472,10 +516,9 @@ classdef DB
       error('Stream "%s" not found. Available streams are: %s', stream_name, available_names);
     end
 
-    function dataset_id = find_dataset_id(obj, dataset_path)
+    function dataset = get_dataset(obj, query)
       endpoint = sprintf('/datapool/%s/dataset', obj.datapool);
-      res = obj.make_request('GET', endpoint, [], struct('path', dataset_path));
-      dataset_id = res.id;
+      dataset = obj.make_request('GET', endpoint, [], query);
     end
 
     function signal_id = find_signal_id(obj, dataset_id, signal_name)
@@ -505,20 +548,11 @@ classdef DB
     end
 
     function dataset = find_dataset(obj, stream_name, dataset_id)
-      datasets = obj.get_datasets(stream_name);
-      if iscell(datasets)
-        for i = 1:numel(datasets)
-          if double(datasets{i}.id) == double(dataset_id)
-            dataset = datasets{i};
-            return;
-          end
-        end
-      else
-        for i = 1:numel(datasets)
-          if double(datasets(i).id) == double(dataset_id)
-            dataset = datasets(i);
-            return;
-          end
+      datasets = DB.as_cell(obj.get_datasets(stream_name));
+      for i = 1:numel(datasets)
+        if double(datasets{i}.id) == double(dataset_id)
+          dataset = datasets{i};
+          return;
         end
       end
       error('Dataset id %d not found in stream "%s"', dataset_id, stream_name);
@@ -556,17 +590,10 @@ classdef DB
     end
 
     function format_upload_statuses(~, signals)
-      parts = {};
-      if iscell(signals)
-        items = signals;
-      elseif isstruct(signals)
-        items = num2cell(signals);
-      else
-        return;
-      end
+      items = DB.as_cell(signals);
+      parts = cell(1, numel(items));
       for i = 1:numel(items)
         s = items{i};
-        label = '';
         if isfield(s, 'name') && ~isempty(s.name)
           label = char(string(s.name));
         elseif isfield(s, 'id') && ~isempty(s.id)
@@ -578,19 +605,16 @@ classdef DB
         if isfield(s, 'status')
           status = char(string(s.status));
         end
-        message = '';
         if isfield(s, 'message') && ~isempty(s.message)
-          message = char(string(s.message));
-        end
-        if isempty(message)
-          parts{end+1} = sprintf('%s: %s', label, status); %#ok<AGROW>
+          parts{i} = sprintf('%s: %s (%s)', label, status, char(string(s.message)));
         else
-          parts{end+1} = sprintf('%s: %s (%s)', label, status, message); %#ok<AGROW>
+          parts{i} = sprintf('%s: %s', label, status);
         end
       end
-      if ~isempty(parts)
-        error('Signal upload failed: %s', strjoin(parts, '; '));
+      if isempty(parts)
+        error('Signal upload failed');
       end
+      error('Signal upload failed: %s', strjoin(parts, '; '));
     end
   end
 
@@ -601,25 +625,14 @@ classdef DB
     end
 
     function status = health(obj)
-      endpoint = '/health';
-      status = obj.make_request('GET', endpoint);
+      status = obj.make_request('GET', '/health');
     end
 
     function streams = get_streams(obj)
-      % Get all available streams and cache them
-      endpoint = '/streams';
-      response = obj.make_request('GET', endpoint);
-      % actual data is nested in this key
-      streams = response.streams;
       % jsondecode returns [] for an empty list, a struct array when all
       % stream objects have identical fields, and a cell array when they
       % don't. Normalize to a cell array so consumers only handle one shape.
-      if isempty(streams)
-        streams = {};
-      elseif isstruct(streams)
-        streams = num2cell(streams);
-      end
-      obj.streams = streams;
+      streams = DB.as_cell(obj.make_request('GET', '/streams').streams);
     end
 
     function stream = create_stream(obj, name, opts)
@@ -646,7 +659,7 @@ classdef DB
       end
 
       name = char(string(name));
-      if strlength(strtrim(string(name))) == 0
+      if isempty(strtrim(name))
         error('Stream name must be non-empty');
       end
 
@@ -715,15 +728,10 @@ classdef DB
       end
 
       dataset_name = char(string(dataset_name));
-      if strlength(strtrim(string(dataset_name))) == 0
+      if isempty(strtrim(dataset_name))
         error('Dataset name must be non-empty');
       end
-      stream_name = char(string(stream_name));
-
-      if isempty(obj.streams)
-        obj.streams = obj.get_streams();
-      end
-      stream_id = obj.find_stream_id(stream_name);
+      stream_id = obj.find_stream_id(char(string(stream_name)));
 
       body = sprintf('{"dataset_name":%s,"metadata":%s}', ...
         jsonencode(dataset_name), DB.encode_json_object(opts.Metadata));
@@ -740,9 +748,8 @@ classdef DB
       end
       dataset_id = double(resp.dataset_id);
 
-      endpoint_get = sprintf('/datapool/%s/dataset', obj.datapool);
       try
-        dataset = obj.make_request('GET', endpoint_get, [], struct('id', dataset_id));
+        dataset = obj.get_dataset(struct('id', dataset_id));
       catch ME
         error('Failed to fetch dataset "%s" after creation (id=%d): %s', ...
           dataset_name, dataset_id, ME.message);
@@ -765,11 +772,7 @@ classdef DB
         metadata
       end
 
-      stream_name = char(string(stream_name));
-      if isempty(obj.streams)
-        obj.streams = obj.get_streams();
-      end
-      stream_id = obj.find_stream_id(stream_name);
+      stream_id = obj.find_stream_id(char(string(stream_name)));
 
       endpoint = sprintf('/stream/%d/dataset/%d/metadata', stream_id, dataset_id);
       try
@@ -778,9 +781,8 @@ classdef DB
         error('Update metadata failed for dataset %d: %s', dataset_id, ME.message);
       end
 
-      endpoint_get = sprintf('/datapool/%s/dataset', obj.datapool);
       try
-        dataset = obj.make_request('GET', endpoint_get, [], struct('id', dataset_id));
+        dataset = obj.get_dataset(struct('id', dataset_id));
       catch ME
         error('Failed to fetch dataset %d after metadata update: %s', dataset_id, ME.message);
       end
@@ -808,15 +810,11 @@ classdef DB
       end
 
       name = char(string(name));
-      if strlength(strtrim(string(name))) == 0
+      if isempty(strtrim(name))
         error('Signal name must be non-empty');
       end
       stream_name = char(string(stream_name));
       priority = char(opts.Priority);
-
-      if isempty(obj.streams)
-        obj.streams = obj.get_streams();
-      end
       stream_id = obj.find_stream_id(stream_name);
       dataset = obj.find_dataset(stream_name, dataset_id);
 
@@ -837,17 +835,13 @@ classdef DB
       for i = 1:numel(row_counts)
         files_json_parts{i} = sprintf('{"index":%d,"rows":%d}', i-1, row_counts(i));
       end
-      overwrite_json = 'false';
-      if opts.Overwrite
-        overwrite_json = 'true';
-      end
       presign_body = sprintf( ...
         '{"signals":[{"name":%s,"metadata":%s,"files":[%s],"priority":%s}],"overwrite":%s}', ...
         jsonencode(name), ...
         DB.encode_json_object(opts.Metadata), ...
         strjoin(files_json_parts, ','), ...
         jsonencode(priority), ...
-        overwrite_json);
+        jsonencode(opts.Overwrite));
 
       endpoint_presign = sprintf('/stream/%d/dataset/%d/signal/uploads', stream_id, dataset_id);
       try
@@ -856,13 +850,10 @@ classdef DB
         error('Presign signal upload failed for "%s": %s', name, ME.message);
       end
 
-      if iscell(presign_resp)
-        presigned_list = presign_resp;
-      elseif isstruct(presign_resp)
-        presigned_list = num2cell(presign_resp);
-      else
+      if ~iscell(presign_resp) && ~isstruct(presign_resp)
         error('Unexpected presign response for "%s"', name);
       end
+      presigned_list = DB.as_cell(presign_resp);
 
       presigned = [];
       for i = 1:numel(presigned_list)
@@ -877,11 +868,7 @@ classdef DB
       end
       signal_id = double(presigned.signal_id);
 
-      if iscell(presigned.files)
-        file_list = presigned.files;
-      else
-        file_list = num2cell(presigned.files);
-      end
+      file_list = DB.as_cell(presigned.files);
       files_by_index = containers.Map('KeyType', 'double', 'ValueType', 'any');
       for i = 1:numel(file_list)
         f = file_list{i};
@@ -935,22 +922,13 @@ classdef DB
         error('Complete signal upload failed for "%s" (id=%d): %s', name, signal_id, ME.message);
       end
 
-      if iscell(complete_resp)
-        statuses = complete_resp;
-      elseif isstruct(complete_resp)
-        statuses = num2cell(complete_resp);
-      else
-        statuses = {complete_resp};
-      end
+      statuses = DB.as_cell(complete_resp);
       if isempty(statuses)
         error('Complete signal upload returned empty status list for id=%d', signal_id);
       end
-      for i = 1:numel(statuses)
-        st = statuses{i};
-        status_ok = isfield(st, 'status') && strcmp(char(string(st.status)), 'OK');
-        if ~status_ok
-          obj.format_upload_statuses(statuses);
-        end
+      ok = cellfun(@(st) isfield(st, 'status') && strcmp(char(string(st.status)), 'OK'), statuses);
+      if ~all(ok)
+        obj.format_upload_statuses(statuses);
       end
       obj.clear_signal_cache(dataset_id, signal_id);
 
@@ -995,20 +973,11 @@ classdef DB
         dataset_name = [name ext];
       end
 
-      stream_name = char(string(stream_name));
-      if isempty(obj.streams)
-        obj.streams = obj.get_streams();
-      end
-      stream_id = obj.find_stream_id(stream_name);
-
-      overwrite_json = 'false';
-      if opts.Overwrite
-        overwrite_json = 'true';
-      end
+      stream_id = obj.find_stream_id(char(string(stream_name)));
       init_body = sprintf( ...
         '{"stream_id":%d,"dataset_name":%s,"file_size":%d,"metadata":%s,"overwrite":%s}', ...
         stream_id, jsonencode(dataset_name), file_size, ...
-        DB.encode_json_object(opts.Metadata), overwrite_json);
+        DB.encode_json_object(opts.Metadata), jsonencode(opts.Overwrite));
 
       try
         init_resp = obj.post_json('/ingestion', init_body);
@@ -1035,9 +1004,8 @@ classdef DB
         rethrow(ME);
       end
 
-      endpoint_get = sprintf('/datapool/%s/dataset', obj.datapool);
       try
-        dataset = obj.make_request('GET', endpoint_get, [], struct('id', dataset_id));
+        dataset = obj.get_dataset(struct('id', dataset_id));
       catch ME
         error('Failed to fetch dataset "%s" after push_file (id=%d): %s', ...
           dataset_name, dataset_id, ME.message);
@@ -1061,11 +1029,10 @@ classdef DB
       end
 
       busy_statuses = {'UPLOADING', 'WAITING', 'IMPORTING', 'POSTPROCESSING', 'COOLING'};
-      endpoint_get = sprintf('/datapool/%s/dataset', obj.datapool);
       start_time = tic;
       while true
         try
-          dataset = obj.make_request('GET', endpoint_get, [], struct('id', dataset_id));
+          dataset = obj.get_dataset(struct('id', dataset_id));
         catch ME
           error('Failed to fetch dataset %d while waiting for import: %s', dataset_id, ME.message);
         end
@@ -1090,7 +1057,7 @@ classdef DB
         is_text logical = false
       end
       signal_name = char(string(signal_name));
-      dataset_id = obj.find_dataset_id(dataset_path);
+      dataset_id = obj.get_dataset(struct('path', dataset_path)).id;
       signal_id = obj.find_signal_id(dataset_id, signal_name);
       cache = obj.signal_cache_path(dataset_id, signal_id);
 
@@ -1102,7 +1069,7 @@ classdef DB
           url = paths{i};
           [~, name, ext] = fileparts(extractBefore(url, '?'));
           parquet_name = [name ext];
-          cache_path = sprintf('%s/%s', cache, parquet_name);
+          cache_path = fullfile(cache, parquet_name);
           websave(cache_path, url);
         end
       end
@@ -1126,7 +1093,7 @@ classdef DB
     end
 
     function clear_cache(obj)
-      cache = sprintf('_marplecache/%s/%s', obj.workspace, obj.datapool);
+      cache = fullfile('_marplecache', char(string(obj.workspace)), char(string(obj.datapool)));
       if isfolder(cache)
         rmdir(cache, 's');
       end
