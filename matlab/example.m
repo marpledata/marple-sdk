@@ -97,7 +97,7 @@ ylabel(cb,'Temperature');
 % streams = mdb.get_streams();
 % stream_names = cellfun(@(s) s.name, streams, 'UniformOutput', false);
 % if ~any(strcmpi(stream_names, stream_name))
-%   mdb.create_stream(stream_name, Type='files', Plugin='MATLAB');
+%   mdb.create_stream(stream_name, Type='files', Plugin='mat');
 % end
 % dataset = mdb.push_file(stream_name, 'run.mat');
 % dataset = mdb.wait_for_import(stream_name, dataset.id);
