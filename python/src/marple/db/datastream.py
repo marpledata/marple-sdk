@@ -108,6 +108,7 @@ class DataStream(BaseModel):
         file_name: str | None = None,
         concurrency: int = 4,
         upload_mode: Literal["auto", "server"] = "auto",
+        overwrite: bool = False,
     ) -> Dataset:
         """
         Push a file to the datastream. The file will be ingested as a new dataset.
@@ -118,13 +119,14 @@ class DataStream(BaseModel):
             file_name: Optional name for the dataset. If not provided, the file name will be used.
             concurrency: Maximum number of concurrent part uploads for multipart uploads.
             upload_mode: Upload mode override. Use "server" to force upload through the Marple DB API server.
+            overwrite: If true, existing dataset with the same name will be overwritten.
         """
         if upload_mode not in ("auto", "server"):
             raise ValueError("upload_mode must be either 'auto' or 'server'")
 
         path = Path(file_path)
         file_size = path.stat().st_size
-        init = self._init_ingestion(file_name or path.name, file_size, metadata or {})
+        init = self._init_ingestion(file_name or path.name, file_size, metadata or {}, overwrite)
 
         try:
             if upload_mode == "server" or init.mode == "server":
@@ -145,7 +147,9 @@ class DataStream(BaseModel):
 
         return self.get_dataset(init.dataset_id)
 
-    def _init_ingestion(self, dataset_name: str, file_size: int, metadata: dict) -> IngestionInit:
+    def _init_ingestion(
+        self, dataset_name: str, file_size: int, metadata: dict, overwrite: bool = False
+    ) -> IngestionInit:
         r = self._client.post(
             "/ingestion",
             json={
@@ -153,6 +157,7 @@ class DataStream(BaseModel):
                 "dataset_name": dataset_name,
                 "file_size": file_size,
                 "metadata": metadata,
+                "overwrite": overwrite,
             },
         )
         return IngestionInit(**validate_response(r, "Initialize ingestion failed"))

@@ -122,12 +122,14 @@ impl MarpleDB {
         dataset_name: &str,
         file_size: u64,
         metadata: &crate::Metadata,
+        overwrite: bool,
     ) -> Result<IngestionInit> {
         let body = serde_json::json!({
             "stream_id": stream_id,
             "dataset_name": dataset_name,
             "file_size": file_size,
             "metadata": metadata,
+            "overwrite": overwrite,
         });
         self.post_json("ingestion", &body).await
     }
@@ -493,7 +495,13 @@ impl MarpleDB {
         let total_size = tokio::fs::metadata(file_path).await?.len();
 
         let init = self
-            .init_ingestion(stream_id, &file_name, total_size, &options.metadata)
+            .init_ingestion(
+                stream_id,
+                &file_name,
+                total_size,
+                &options.metadata,
+                options.overwrite,
+            )
             .await?;
         let progress = Arc::clone(&options.progress);
 

@@ -16,6 +16,7 @@ async fn main() -> anyhow::Result<()> {
             "run.csv",
             PushFileOptions::builder()
                 .metadata([("source", json!("rust-example"))])
+                .overwrite(true)
                 .build(),
         )
         .await?;
