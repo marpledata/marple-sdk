@@ -274,42 +274,48 @@ classdef DB
       end
     end
 
-    function put_storage_file(local_path, put_url)
+    function send_file(local_path, url, method, opts)
+      % Stream a local file with FileProvider. PUT is a raw body (presigned
+      % storage); Multipart wraps field "file" as multipart/form-data (server).
+      arguments
+        local_path
+        url
+        method
+        opts.Bearer = ""
+        opts.Multipart (1,1) logical = false
+      end
       import matlab.net.http.*
       import matlab.net.http.io.*
       import matlab.net.URI
 
-      % Prefer FileProvider streaming; strip Content-Disposition which breaks
-      % many presigned object-storage URLs. Fall back to raw uint8 Payload when
-      % FileProvider/complete fails (not when the HTTP status is non-2xx).
-      uri = URI(put_url, 'literal'); % avoid re-encoding '%' in the presigned path
-      try
-        provider = FileProvider(local_path);
-        header = HeaderField('Content-Type', 'application/octet-stream');
-        req = RequestMessage(RequestMethod.PUT, header, provider);
-        [completed, ~] = complete(req, uri);
-        if ~isempty(completed.Header.getFields('Content-Disposition'))
-          completed.Header = completed.Header.removeFields('Content-Disposition');
-        end
-        % Re-assert Content-Type in case complete replaced it from the file suffix.
-        completed.Header = replaceFields(completed.Header, ...
-          HeaderField('Content-Type', 'application/octet-stream'));
-        resp = send(completed, uri);
-      catch
-        fid = fopen(local_path, 'rb');
-        if fid < 0
-          error('Storage PUT failed: could not open %s', local_path);
-        end
-        cleaner = onCleanup(@() fclose(fid));
-        bytes = fread(fid, Inf, '*uint8');
-        clear cleaner;
-        body = MessageBody();
-        body.Payload = bytes;
-        header = HeaderField('Content-Type', 'application/octet-stream');
-        req = RequestMessage(RequestMethod.PUT, header, body);
-        resp = req.send(uri);
+      headers = HeaderField.empty;
+      if strlength(string(opts.Bearer)) > 0
+        headers = [
+          HeaderField('Authorization', ['Bearer ' char(string(opts.Bearer))]), ...
+          HeaderField('X-Request-Source', 'sdk/matlab')
+        ];
       end
-
+      provider = FileProvider(local_path);
+      if opts.Multipart
+        provider = MultipartFormProvider("file", provider);
+      else
+        headers = [headers, HeaderField('Content-Type', 'application/octet-stream')];
+      end
+      uri = URI(url, 'literal');
+      req = RequestMessage(method, headers, provider);
+      try
+        [completed, ~] = complete(req, uri);
+        if ~opts.Multipart
+          if ~isempty(completed.Header.getFields('Content-Disposition'))
+            completed.Header = completed.Header.removeFields('Content-Disposition');
+          end
+          completed.Header = replaceFields(completed.Header, ...
+            HeaderField('Content-Type', 'application/octet-stream'));
+        end
+        resp = send(completed, uri);
+      catch ME
+        error('File upload failed: %s', ME.message);
+      end
       code = double(resp.StatusCode);
       if code < 200 || code >= 300
         reason = '';
@@ -317,7 +323,7 @@ classdef DB
           reason = char(resp.StatusLine.ReasonPhrase);
         catch
         end
-        error('Storage PUT failed: HTTP %d %s', code, reason);
+        error('File upload failed: HTTP %d %s', code, reason);
       end
     end
 
@@ -433,58 +439,6 @@ classdef DB
         response = jsondecode(raw);
       catch ME
         error('API request failed: could not decode JSON response: %s', ME.message);
-      end
-    end
-
-    function upload_via_server(obj, ingestion_id, file_path)
-      % Hand-built multipart/form-data, field "file", Content-Type forced to
-      % application/octet-stream -- matches Python's _upload_server exactly.
-      import matlab.net.http.*
-      import matlab.net.URI
-
-      [~, base_name, ext] = fileparts(file_path);
-      file_name = [base_name ext];
-
-      fid = fopen(file_path, 'rb');
-      if fid < 0
-        error('Server upload failed: could not open %s', file_path);
-      end
-      cleaner = onCleanup(@() fclose(fid));
-      file_bytes = fread(fid, Inf, '*uint8');
-      clear cleaner;
-
-      boundary = ['MarpleFormBoundary' strrep(char(java.util.UUID.randomUUID()), '-', '')];
-      preamble = uint8(sprintf( ...
-        ['--%s\r\n' ...
-         'Content-Disposition: form-data; name="file"; filename="%s"\r\n' ...
-         'Content-Type: application/octet-stream\r\n\r\n'], ...
-        boundary, file_name)).';
-      closing = uint8(sprintf('\r\n--%s--\r\n', boundary)).';
-      payload = [preamble; file_bytes(:); closing];
-
-      headers = [
-        HeaderField('Authorization', ['Bearer ' obj.api_key]), ...
-        HeaderField('X-Request-Source', 'sdk/matlab'), ...
-        HeaderField('Content-Type', ['multipart/form-data; boundary=' boundary])
-      ];
-      body = MessageBody();
-      body.Payload = payload;
-      req = RequestMessage(RequestMethod.POST, headers, body);
-      url = [obj.api_url sprintf('/ingestion/%d/upload/server', ingestion_id)];
-      try
-        resp = req.send(URI(url));
-      catch ME
-        error('Server upload failed: %s', ME.message);
-      end
-
-      code = double(resp.StatusCode);
-      if code < 200 || code >= 300
-        reason = '';
-        try
-          reason = char(resp.StatusLine.ReasonPhrase);
-        catch
-        end
-        error('Server upload failed: HTTP %d %s', code, reason);
       end
     end
 
@@ -864,7 +818,7 @@ classdef DB
           upload_path = fullfile(temp_dir, sprintf('upload_%d.parquet', idx));
           meta = DB.prepare_upload_file( ...
             staging_paths{i}, upload_path, dataset_id, signal_id, row_counts(i));
-          DB.put_storage_file(upload_path, char(string(remote.url)));
+          DB.send_file(upload_path, char(string(remote.url)), 'PUT');
           uploaded_files{i} = struct( ...
             'path', char(string(remote.path)), ...
             'size', double(meta.size), ...
@@ -987,7 +941,8 @@ classdef DB
       dataset_id = double(init_resp.dataset_id);
 
       try
-        obj.upload_via_server(ingestion_id, file_path);
+        DB.send_file(file_path, [obj.api_url sprintf('/ingestion/%d/upload/server', ingestion_id)], ...
+          'POST', Bearer=obj.api_key, Multipart=true);
         obj.post_json(sprintf('/ingestion/%d/upload/complete', ingestion_id), '{}');
       catch ME
         try
