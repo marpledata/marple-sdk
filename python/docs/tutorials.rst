@@ -31,7 +31,10 @@ Import a file and wait for import
        "examples_race.csv",
        metadata={"source": "testbench"},
        concurrency=8,
+       overwrite=False,
    ).wait_for_import(timeout=180)
+
+Pass ``overwrite=True`` to replace an existing dataset with the same name.
 
 Add signals to a dataset
 ------------------------

@@ -46,7 +46,7 @@ Default: a single-file `uv` script with PEP 723 inline dependencies. Run with `u
 
 ```python
 # /// script
-# requires-python = ">=3.10"
+# requires-python = ">=3.11"
 # dependencies = ["marpledata", "pandas", "plotly"]
 # ///
 import os
@@ -93,9 +93,10 @@ pip install -r requirements.txt && python analyze.py
 
 ## Recipe 4: ingest paths
 
-- File stream (plugin defined): `stream.push_file(...)` then `wait_for_import`
-- File stream (custom): `stream.add_dataset(...)` then `dataset.add_signal(...)`
+- File stream (plugin defined): `stream.push_file(...)` then `wait_for_import` (use `overwrite=True` to replace a same-named dataset)
+- File stream (custom): `stream.add_dataset(...)` then `dataset.add_signal(...)` then `signal.wait_until_available(...)`
 - Live stream: `add_dataset` → `upsert_signals` / `append` → `cool` → `wait_for_import`
+- `add_signal` / `add_signals` accept DataFrame, Series (time-indexed), Arrow table, or parquet matching `LAKE_ARROW_SCHEMA`
 - Large uploads / realtime details: https://docs.marpledata.com/docs/sdk/overview/python-sdk and https://docs.marpledata.com/docs/sdk/advanced/realtime-stream
 
 When unsure of the exact method, introspect the package or query `<doc-url>.md?ask=<question>` (see `reference.md`).

@@ -50,6 +50,13 @@ longer ``wait_for_import`` timeout and optionally increase upload concurrency:
    dataset = stream.push_file("large_export.csv", concurrency=8)
    dataset = dataset.wait_for_import(timeout=180)
 
+To replace an existing dataset with the same name, pass ``overwrite=True``:
+
+.. code-block:: python
+
+   dataset = stream.push_file("examples_race.csv", overwrite=True)
+   dataset = dataset.wait_for_import(timeout=10)
+
 If direct storage uploads are blocked by your network or proxy, force upload
 through the Marple DB API server:
 

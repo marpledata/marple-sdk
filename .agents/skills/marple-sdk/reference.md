@@ -9,7 +9,7 @@ Main path is the Python SDK on Marple DB; Rust and MATLAB pointers are included 
 - SDK API reference (versioned): https://marpledata.gitlab.io/marple-sdk/
 - Python SDK overview: https://docs.marpledata.com/docs/sdk/overview/python-sdk
 - Rust SDK (DB): crate `marple-db` (imported as `marple_db`), async/Tokio; CLI binary `mdb`. Source in `rust/`.
-- MATLAB DB client: example script and config in `matlab/`.
+- MATLAB DB client: `matlab/DB.m` (+ `config.json`, `example.m`). Source in `matlab/`.
 - Agentic coding guidance: https://docs.marpledata.com/docs/sdk/agentic-coding
 - API tokens: https://docs.marpledata.com/docs/sdk/overview/api-tokens
 - REST API overview: https://docs.marpledata.com/docs/sdk/overview/rest-api
@@ -39,21 +39,29 @@ Two products are available as core building blocks:
 - Marple Insight: Collaborative web interface for deep analysis, reporting and dashboarding on complex time series data. Docs: https://docs.marpledata.com/docs/marple-insight/welcome
 
 ## Programming language
-- Python: preferred choice, works excellent with our Python SDK `marpledata` [Marple DB]
-- MATLAB: SDK available [Marple DB only]
+- Python: preferred choice, works excellent with our Python SDK `marpledata` [Marple DB + Insight]
+- MATLAB: SDK available [Marple DB only] — pull and push (files, signals)
+- Rust: crate `marple-db` + CLI `mdb` [Marple DB only]
 - Other: REST API available [Marple DB + Insight]
 
 ## Python SDK
-- Installation: from PyPI as `marpledata`
+- Installation: from PyPI as `marpledata` (Python >= 3.11)
 - Docs: https://marpledata.gitlab.io/marple-sdk/
 - Read through source code to understand types and available functions better
-- Only make raw API calls using `DB.get` / `DB.post` (etc...) if no built-in function is available
+- Only make raw API calls using `DB.get` / `DB.post` / `Insight.post` (etc.) if no built-in function is available
+
+## MATLAB SDK
+- Installation: add the `matlab/` folder from https://github.com/marpledata/marple-sdk/tree/main/matlab to the MATLAB path (or download `DB.m` + `config.json`)
+- Docs: https://docs.marpledata.com/docs/sdk/overview/matlab-sdk
+- Read through `DB.m` for available methods
+- Requires `config.json` next to `DB.m` (`api_url`, `api_key`, `workspace`, optional `datapool`)
 
 ## REST API
-- Prefer Python SDK built-in functions because they are typed
-- If not possible, prefer to call `DB.get(...)`, `DB.post(...)` etc over raw HTTP calls
+- Prefer Python or MATLAB SDK built-in functions because they are typed
+- If not possible, prefer to call `DB.get(...)`, `Insight.post(...)` etc. (Python) or `DB.make_request(...)` (MATLAB) over raw HTTP calls
 - Authenticate using `Authorization: Bearer <api-token>` for raw calls
 - Swagger docs (DB): https://db.marpledata.com/api/docs
+- Swagger docs (Insight): https://insight.marpledata.com/api/v1/spec/
 
 ## URLs
 - Marple products exist in 3 deployment options: SaaS, VPC, Self-hosted

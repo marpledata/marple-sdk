@@ -57,8 +57,8 @@ Default to pulling signals via the SDK (`get_data`) for analysis/plotting on a k
 ## Gotchas
 
 - A 403 means the token is invalid/expired or belongs to a different deployment. Verify the token; if it is valid, ask whether they are on SaaS, VPC, or self-hosted and set `api_url`/`MDB_URL` accordingly.
-- Importing is async: after `stream.push_file(...)`, call `dataset.wait_for_import(timeout=...)` before reading data.
-- Ingest paths: file stream → `push_file` (default) or `add_dataset` + `add_signal` (custom); live → `add_dataset` / `append` / `cool`.
+- Importing is async: after `stream.push_file(...)`, call `dataset.wait_for_import(timeout=...)` before reading data. After `add_signal`, call `signal.wait_until_available(...)`.
+- Ingest paths: file stream → `push_file` (default; `overwrite=True` replaces same name) or `add_dataset` + `add_signal` (custom); live → `add_dataset` / `append` / `cool`.
 - Terminology: a `stream` contains `dataset`s; each dataset has `signal`s.
 
 ## More
