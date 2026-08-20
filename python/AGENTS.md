@@ -30,3 +30,4 @@ Run commands from `python/` unless a command explicitly says otherwise.
 - Integration tests run against live Marple services and may require
   `MDB_TOKEN`, `MDB_URL`, `INSIGHT_TOKEN`, and `INSIGHT_URL`. Tests should skip
   or fail clearly when required credentials are missing.
+- Release steps: `RELEASING.md`.

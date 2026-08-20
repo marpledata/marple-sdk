@@ -15,3 +15,4 @@ This directory contains a small MATLAB client for Marple DB.
   `addpath(genpath(fullfile(pwd, 'matlab')))`
 - Create a client with `DB.from_config()` when using `config.json`.
 - Run the example from the repo root with `run(fullfile('matlab', 'example.m'))`.
+- Release steps: `RELEASING.md`.
