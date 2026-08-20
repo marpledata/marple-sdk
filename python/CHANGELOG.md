@@ -5,11 +5,16 @@ All notable changes to the Python SDK package `marpledata` will be documented in
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-## [Unreleased]
+## [3.5.0] - 2026-08-20
 
 ### Added
 
-- `Dataset.add_signal` and `Dataset.add_signals` now accept a time-indexed pandas Series or DataFrame.
+- `Dataset.add_signal` and `Dataset.add_signals` now accept a time-indexed pandas Series or DataFrame (DatetimeIndex / TimedeltaIndex when there is no `time` column).
+- `DataStream.push_file(..., overwrite=False)` to replace an existing dataset with the same name (also on the deprecated `DB.push_file`).
+
+### Fixed
+
+- An empty local parquet cache folder is treated as a cache miss and re-downloaded, instead of being assumed to mean the signal has no data.
 
 ## [3.4.0] - 2026-07-28
 

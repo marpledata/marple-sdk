@@ -9,7 +9,7 @@ classdef DB
   end
 
   properties (Constant)
-    VERSION = "0.3.0"
+    VERSION = "0.3.1"
   end
 
   properties (Constant, Access = private)
@@ -1001,8 +1001,10 @@ classdef DB
       signal_id = obj.find_signal_id(dataset_id, signal_name);
       cache = obj.signal_cache_path(dataset_id, signal_id);
 
-      if ~isfolder(cache)
-        mkdir(cache);
+      if ~isfolder(cache) || isempty(dir(fullfile(cache, '*.parquet')))
+        if ~isfolder(cache)
+          mkdir(cache);
+        end
         endpoint = sprintf('/datapool/%s/dataset/%d/signal/%d/data', obj.datapool, dataset_id, signal_id);
         paths = obj.make_request('GET', endpoint);
         for i = 1:length(paths)

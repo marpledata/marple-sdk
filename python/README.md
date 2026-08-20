@@ -17,7 +17,7 @@ from marple import DB      # Marple DB
 from marple import Insight # Marple Insight
 ```
 
-For release notes, see [`CHANGELOG.md`](CHANGELOG.md).
+For release notes, see [`CHANGELOG.md`](CHANGELOG.md). To publish a release, see [`RELEASING.md`](RELEASING.md).
 
 ## Marple DB
 

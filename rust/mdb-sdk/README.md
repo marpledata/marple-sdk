@@ -8,7 +8,7 @@ The SDK is async and works with any runtime supported by `reqwest`. The examples
 
 ```toml
 [dependencies]
-marple-db = "0.2"
+marple-db = "0.3"
 tokio = { version = "1", features = ["rt-multi-thread", "macros"] }
 anyhow = "1"
 serde_json = "1"

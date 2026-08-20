@@ -35,11 +35,13 @@ specific `AGENTS.md` files in subdirectories override or extend this guidance.
 
 ## Releases
 
-- Only `mdb-cli` gets GitHub releases and git tags. Tags follow the
-  `mdb-cli-v<X.Y.Z>` convention (matching `parquet-transcode-v<X.Y.Z>` for the
-  out-of-workspace crate).
-- `marple-db` ships via `cargo publish` to crates.io and `marpledata` via
-  `uv publish` to PyPI. Neither gets its own git tag or GitHub release; their
-  CHANGELOGs are the canonical history.
-- CHANGELOG version-footnote links should point at `releases/tag/mdb-cli-v*`,
-  not `releases/tag/v*`.
+Short procedures:
+
+- Python: `python/RELEASING.md` (TestPyPI → PyPI → GitLab `pages`)
+- Rust: `rust/RELEASING.md` (`marple-db` → `mdb-cli` → tag `mdb-cli-v*` + binaries)
+- MATLAB: `matlab/RELEASING.md` (tag `matlab-v*`)
+
+GitHub tags/releases: `mdb-cli-v*`, `matlab-v*`, and `parquet-transcode-v*` when
+that binary changes. `marpledata` and `marple-db` ship only to PyPI / crates.io;
+their CHANGELOGs are the history. CLI footnote links use `mdb-cli-v*`, not bare
+`v*`.

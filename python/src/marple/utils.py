@@ -147,7 +147,8 @@ class DBClient:
         Download the parquet files for this signal to a local cache folder and return the folder path.
         """
         signal_cache = Path(f"{self.cache_folder}/{self.datapool}/dataset={dataset_id}/signal={signal_id}")
-        if not signal_cache.exists() or refresh_cache:
+        cache_empty = not signal_cache.exists() or not any(signal_cache.glob("*.parquet"))
+        if cache_empty or refresh_cache:
             signal_cache.mkdir(parents=True, exist_ok=True)
             for file in signal_cache.iterdir():
                 file.unlink(missing_ok=True)

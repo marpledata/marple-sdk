@@ -33,3 +33,4 @@ Run workspace commands from `rust/`. Run parquet transcoder commands from
 - Keep Cargo dependency versions centralized in `[workspace.dependencies]` when
   the dependency is shared by workspace crates.
 - Preserve the Rust 2024 edition and the existing async/Tokio patterns.
+- Release steps: `RELEASING.md`.
