@@ -170,6 +170,7 @@ pub struct PushFileOptions {
     pub(crate) concurrency: usize,
     pub(crate) upload_mode: UploadModeOverride,
     pub(crate) progress: Arc<dyn ProgressReporter>,
+    pub(crate) overwrite: bool,
 }
 
 impl fmt::Debug for PushFileOptions {
@@ -178,6 +179,7 @@ impl fmt::Debug for PushFileOptions {
             .field("metadata", &self.metadata)
             .field("concurrency", &self.concurrency)
             .field("upload_mode", &self.upload_mode)
+            .field("overwrite", &self.overwrite)
             .finish_non_exhaustive()
     }
 }
@@ -196,6 +198,7 @@ impl Default for PushFileOptions {
             concurrency: 4,
             upload_mode: UploadModeOverride::Auto,
             progress: Arc::new(NoopProgress),
+            overwrite: false,
         }
     }
 }
@@ -208,6 +211,7 @@ pub struct PushFileOptionsBuilder {
     concurrency: usize,
     upload_mode: UploadModeOverride,
     progress: Arc<dyn ProgressReporter>,
+    overwrite: bool,
 }
 
 impl fmt::Debug for PushFileOptionsBuilder {
@@ -216,6 +220,7 @@ impl fmt::Debug for PushFileOptionsBuilder {
             .field("metadata", &self.metadata)
             .field("concurrency", &self.concurrency)
             .field("upload_mode", &self.upload_mode)
+            .field("overwrite", &self.overwrite)
             .finish_non_exhaustive()
     }
 }
@@ -228,6 +233,7 @@ impl Default for PushFileOptionsBuilder {
             concurrency: options.concurrency,
             upload_mode: options.upload_mode,
             progress: options.progress,
+            overwrite: options.overwrite,
         }
     }
 }
@@ -280,6 +286,12 @@ impl PushFileOptionsBuilder {
         self
     }
 
+    /// Set true to overwrite an existing dataset with the same name.
+    pub fn overwrite(mut self, overwrite: bool) -> Self {
+        self.overwrite = overwrite;
+        self
+    }
+
     /// Builds upload options.
     pub fn build(self) -> PushFileOptions {
         PushFileOptions {
@@ -287,6 +299,7 @@ impl PushFileOptionsBuilder {
             concurrency: self.concurrency,
             upload_mode: self.upload_mode,
             progress: self.progress,
+            overwrite: self.overwrite,
         }
     }
 }

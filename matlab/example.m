@@ -81,6 +81,28 @@ ylabel(cb,'Temperature');
 %     'scenario', 'baseline');
 % disp(dataset);
 
+%% Example 5: push a local file to a stream 
+%
+% stream_name = 'CSV Stream';
+% dataset = mdb.push_file( ...
+%   stream_name, 'race.csv', ...
+%   Metadata=struct('car_id', 1, 'track', 'track_1', 'weather', 'sunny'));
+% dataset = mdb.wait_for_import(stream_name, dataset.id);
+% T = mdb.get_data(dataset.path, 'speed');
+% disp(dataset);
+
+%% Example 6: create a stream if it doesn't exist yet, then push a .mat file to it
+%
+% stream_name = 'Matlab SDK test';
+% streams = mdb.get_streams();
+% stream_names = cellfun(@(s) s.name, streams, 'UniformOutput', false);
+% if ~any(strcmpi(stream_names, stream_name))
+%   mdb.create_stream(stream_name, Type='files', Plugin='mat');
+% end
+% dataset = mdb.push_file(stream_name, 'run.mat');
+% dataset = mdb.wait_for_import(stream_name, dataset.id);
+% disp(dataset);
+
 function TT = toTT(tbl, signalName)
     t = datetime(tbl.time/1e9, 'ConvertFrom','posixtime', 'TimeZone','UTC');
     TT = table2timetable(table(t, tbl{:,signalName}, 'VariableNames', {'time', signalName}), 'RowTimes','time');
