@@ -7,7 +7,7 @@ anyhow.workspace = true
 colored = "3.0.0"
 dotenvy = "0.15.7"
 futures-util = { workspace = true, default-features = false, features = ["std"] }
-marple-db = { path = "../mdb-sdk", version = "0.2.1" }
+marple-db = { path = "../mdb-sdk", version = "0.3.0" }
 reqwest.workspace = true
 serde_json.workspace = true
 walkdir.workspace = true
@@ -47,5 +47,5 @@ license = "Apache-2.0"
 name = "mdb-cli"
 readme = "README.md"
 repository.workspace = true
-version = "0.2.1"
+version = "0.3.0"
 exclude = ["target/", ".git/", ".gitignore"]

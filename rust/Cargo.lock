@@ -1117,7 +1117,7 @@ dependencies = [
 
 [[package]]
 name = "marple-db"
-version = "0.2.1"
+version = "0.3.0"
 dependencies = [
  "anyhow",
  "async-stream",
@@ -1138,7 +1138,7 @@ dependencies = [
 
 [[package]]
 name = "mdb-cli"
-version = "0.2.1"
+version = "0.3.0"
 dependencies = [
  "anyhow",
  "assert_cmd",
