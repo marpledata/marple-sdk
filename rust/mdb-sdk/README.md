@@ -67,9 +67,9 @@ async fn main() -> anyhow::Result<()> {
 
 - `db.health()` checks the API health endpoint.
 - `db.get_user_info()` fetches the authenticated user profile and workspace memberships.
+- `db.get_current_workspace()` resolves the connected workspace name, license, and latest storage usage.
 - `db.get_workspace_license()` fetches the license for the workspace bound to the token.
 - `db.get_usage_series(UsageType::ColdStorage, None, None)` fetches a workspace usage series.
-- `db.get_current_workspace()` resolves the connected workspace name, license, and latest storage usage.
 - `db.get_streams()` lists streams.
 - `db.get_stream("runs")` finds a stream by name.
 - `db.create_stream("runs", &serde_json::json!({ "plugin": "csv" }))` creates a stream.
