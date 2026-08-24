@@ -149,6 +149,41 @@ fn deserializes_user_info_workspaces() {
 }
 
 #[test]
+fn user_info_accepts_postgres_epoch_floats_and_null() {
+    let info: UserInfo = serde_json::from_str(
+        r#"{
+            "id": 1,
+            "email": "dev@example.com",
+            "workspaces": [
+                {
+                    "workspace_id": "castro_comrades",
+                    "name": "Castro Comrades",
+                    "role": "admin",
+                    "last_active": 1780905024.258647
+                },
+                {
+                    "workspace_id": "security_factory",
+                    "name": "Security Factory",
+                    "role": "admin",
+                    "last_active": null
+                }
+            ],
+            "license": {
+                "workspace": "staging",
+                "payload": { "type": "DEV" }
+            },
+            "info": { "sub": "google-oauth2|1" }
+        }"#,
+    )
+    .expect("user info JSON with float and null last_active");
+
+    assert_eq!(info.workspaces[0].last_active, Some(1_780_905_024));
+    assert_eq!(info.workspaces[1].last_active, None);
+    assert_eq!(info.current_workspace_id(), Some("staging"));
+    assert_eq!(info.workspace_name("staging"), "staging");
+}
+
+#[test]
 fn usage_series_latest_is_last_sample() {
     let series: UsageSeries = serde_json::from_value(json!({
         "timestamps": [1.0, 2.0],

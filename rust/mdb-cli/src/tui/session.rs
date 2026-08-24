@@ -1,16 +1,9 @@
 use anyhow::{Context, Result, bail};
 use serde::{Deserialize, Serialize};
-use std::collections::HashSet;
 use std::fs;
 use std::path::{Path, PathBuf};
 
 const SAAS_URL: &str = "https://db.marpledata.com/api/v1";
-
-#[derive(Clone, Debug)]
-pub(crate) struct EnvChoice {
-    pub path: PathBuf,
-    pub label: String,
-}
 
 #[derive(Clone, Debug, Default, Serialize, Deserialize)]
 pub(crate) struct TuiSettings {
@@ -69,34 +62,7 @@ pub(crate) fn local_dotenv() -> Option<PathBuf> {
         .filter(|path| path.is_file())
 }
 
-pub(crate) fn discover_env_files(saved: Option<&Path>) -> Vec<EnvChoice> {
-    discover_env_files_in(std::env::current_dir().ok().as_deref(), saved)
-}
-
-fn discover_env_files_in(cwd: Option<&Path>, saved: Option<&Path>) -> Vec<EnvChoice> {
-    let mut choices = Vec::new();
-    let mut seen = HashSet::new();
-    let mut push = |path: PathBuf| {
-        if path.is_file() {
-            let key = fs::canonicalize(&path).unwrap_or_else(|_| path.clone());
-            if seen.insert(key) {
-                choices.push(EnvChoice {
-                    label: env_label(&path),
-                    path,
-                });
-            }
-        }
-    };
-    if let Some(cwd) = cwd {
-        push(cwd.join(".env"));
-    }
-    if let Some(saved) = saved {
-        push(saved.to_path_buf());
-    }
-    choices
-}
-
-fn env_label(path: &Path) -> String {
+pub(crate) fn env_label(path: &Path) -> String {
     let name = path
         .file_name()
         .and_then(|name| name.to_str())
@@ -110,24 +76,23 @@ fn env_label(path: &Path) -> String {
 
 #[cfg(test)]
 mod tests {
-    use super::{TuiSettings, discover_env_files_in, load_settings, save_settings};
-    use std::fs;
+    use super::{TuiSettings, load_settings, save_settings};
     use std::path::{Path, PathBuf};
     use std::sync::Mutex;
 
     static ENV_LOCK: Mutex<()> = Mutex::new(());
 
-    fn with_xdg(var: &str, path: &Path, body: impl FnOnce()) {
+    fn with_xdg(path: &Path, body: impl FnOnce()) {
         let _guard = ENV_LOCK.lock().expect("env lock");
-        let previous = std::env::var_os(var);
+        let previous = std::env::var_os("XDG_CONFIG_HOME");
         unsafe {
-            std::env::set_var(var, path);
+            std::env::set_var("XDG_CONFIG_HOME", path);
         }
         body();
         unsafe {
             match previous {
-                Some(value) => std::env::set_var(var, value),
-                None => std::env::remove_var(var),
+                Some(value) => std::env::set_var("XDG_CONFIG_HOME", value),
+                None => std::env::remove_var("XDG_CONFIG_HOME"),
             }
         }
     }
@@ -135,7 +100,7 @@ mod tests {
     #[test]
     fn persists_env_file_in_xdg_config() {
         let tmp = tempfile::tempdir().unwrap();
-        with_xdg("XDG_CONFIG_HOME", tmp.path(), || {
+        with_xdg(tmp.path(), || {
             let settings = TuiSettings {
                 env_file: Some(PathBuf::from("/tmp/custom.env")),
                 stream_id: Some(5),
@@ -149,38 +114,5 @@ mod tests {
             assert_eq!(loaded.stream_id, Some(5));
             assert!(tmp.path().join("mdb/tui.toml").is_file());
         });
-    }
-
-    #[test]
-    fn discovers_cwd_dotenv_and_saved_file() {
-        let tmp = tempfile::tempdir().unwrap();
-        let local = tmp.path().join(".env");
-        fs::write(&local, "MDB_TOKEN=local\n").unwrap();
-        let saved = tmp.path().join("custom.env");
-        fs::write(&saved, "MDB_TOKEN=saved\n").unwrap();
-
-        let both = discover_env_files_in(Some(tmp.path()), Some(&saved));
-        assert_eq!(both.len(), 2);
-        assert_eq!(both[0].path, local);
-        assert_eq!(both[1].path, saved);
-
-        let empty = tempfile::tempdir().unwrap();
-        assert!(discover_env_files_in(Some(empty.path()), None).is_empty());
-        assert_eq!(
-            discover_env_files_in(Some(empty.path()), Some(&saved)).len(),
-            1
-        );
-        assert_eq!(
-            discover_env_files_in(Some(tmp.path()), Some(&local)).len(),
-            1
-        );
-        assert!(
-            discover_env_files_in(
-                Some(tmp.path()),
-                Some(empty.path().join("missing").as_path())
-            )
-            .len()
-                == 1
-        );
     }
 }

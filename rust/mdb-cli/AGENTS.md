@@ -8,7 +8,8 @@ the Rust SDK crate `marple-db`.
 - `src/main.rs`: clap command definitions, argument parsing, command handlers,
   progress output, and process exit behavior.
 - `src/tui/`: stream / dataset / signal browser started by `mdb tui`. Session
-  (env file and last stream) is saved in `$XDG_CONFIG_HOME/mdb/tui.toml`.
+  (env file and last stream) is saved in `$XDG_CONFIG_HOME/mdb/tui.toml`. The
+  env-file modal lives in `picker.rs`.
 - `tests/integration.rs`: CLI tests using `assert_cmd`.
 - `tests/unit.rs`: table-format unit tests.
 - `README.md`: user-facing CLI documentation and examples.

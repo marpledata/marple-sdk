@@ -55,7 +55,7 @@ Exported shell variables take precedence over values in dotenv files, and explic
 - `mdb dataset <stream-name> download [--output-dir DIR] [dataset-id]` downloads original uploaded files.
 - `mdb datapool datasets [--pool POOL] [--queue] [--format short|long]` lists datapool datasets.
 - `mdb get`, `mdb post`, and `mdb delete` call raw API endpoints.
-- `mdb tui` opens a stream / dataset / signal browser. It loads `./.env` from the current directory, or the path last saved in `$XDG_CONFIG_HOME/mdb/tui.toml` (typically `~/.config/mdb/tui.toml`). Pass `--env-file` to choose another file; `v` switches between the local `.env` and that saved path. The TUI starts without a hard API check so you can choose credentials from the picker.
+- `mdb tui` opens a stream / dataset / signal browser. It loads `./.env` from the current directory, or the path last saved in `$XDG_CONFIG_HOME/mdb/tui.toml` (typically `~/.config/mdb/tui.toml`). Pass `--env-file` to choose another file, or press `v` to browse local folders and type a path. The chosen file is saved for the next session.
 
 ## Examples
 

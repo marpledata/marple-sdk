@@ -11,6 +11,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - `mdb tui` browses streams, datasets, and signals, with an env-file picker and a workspace card (license chip, usage bars, env/host).
 
+### Changed
+
+- `v` opens a filesystem picker for `--env-file` (browse folders or type a path), instead of a one-item list of discovered files.
+
+### Fixed
+
+- Workspace name no longer shows `not connected` when streams have already loaded.
+
 ## [0.3.0] - 2026-08-20
 
 ### Added

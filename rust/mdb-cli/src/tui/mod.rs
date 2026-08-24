@@ -1,5 +1,6 @@
 mod draw;
 mod format;
+mod picker;
 mod session;
 
 use crate::connect;
@@ -9,17 +10,14 @@ use draw::draw;
 use format::{dataset_info, signal_info, stream_info};
 use marple_db::{CurrentWorkspace, Dataset, ImportStatus, MarpleDB, Signal, Stream};
 use ratatui::text::Line;
-use ratatui::widgets::{ListState, TableState};
-use session::{
-    EnvChoice, TuiSettings, apply_env_file, discover_env_files, load_settings, local_dotenv,
-    save_settings,
-};
-use std::path::{Path, PathBuf};
+use ratatui::widgets::TableState;
+use picker::FilePicker;
+use session::{TuiSettings, apply_env_file, env_label, load_settings, local_dotenv, save_settings};
+use std::path::PathBuf;
 
 pub(super) const AUTO_LOAD_LIMIT: u64 = 100;
 const PAGE_SIZE: i32 = 10;
-const NOT_CONNECTED: &str = "not connected — pass --env-file PATH";
-const PICK_ENV: &str = "not connected — pick an env file (v)";
+const NOT_CONNECTED: &str = "not connected — pick an env file (v)";
 
 pub(super) fn is_cheap(count: Option<u64>) -> bool {
     count.is_some_and(|count| count < AUTO_LOAD_LIMIT)
@@ -59,8 +57,7 @@ pub(super) struct App {
     db: MarpleDB,
     url: String,
     env_file: Option<PathBuf>,
-    env_files: Vec<EnvChoice>,
-    env_index: usize,
+    env_picker: Option<FilePicker>,
     streams: Vec<Stream>,
     datasets: Vec<Dataset>,
     signals: Vec<Signal>,
@@ -69,10 +66,8 @@ pub(super) struct App {
     stream_state: TableState,
     dataset_state: TableState,
     signal_state: TableState,
-    env_state: ListState,
     browse_level: BrowseLevel,
     focus: Focus,
-    show_env: bool,
     status: String,
     connected: bool,
     workspace: Option<CurrentWorkspace>,
@@ -139,6 +134,9 @@ async fn handle_key(app: &mut App, key: KeyEvent) -> bool {
         app.clear_motion();
         return false;
     }
+    if app.env_picker.as_ref().is_some_and(|picker| picker.editing) {
+        return handle_env_input(app, key).await;
+    }
     match read_motion(app, key) {
         MotionRead::Pending => return false,
         MotionRead::Act(motion) => {
@@ -147,7 +145,7 @@ async fn handle_key(app: &mut App, key: KeyEvent) -> bool {
         }
         MotionRead::None => {}
     }
-    if app.show_env {
+    if app.env_picker.is_some() {
         return handle_env_key(app, key).await;
     }
     match key.code {
@@ -164,13 +162,65 @@ async fn handle_key(app: &mut App, key: KeyEvent) -> bool {
 
 async fn handle_env_key(app: &mut App, key: KeyEvent) -> bool {
     match key.code {
-        KeyCode::Esc | KeyCode::Char('q') => app.show_env = false,
-        KeyCode::Enter => {
-            if let Some(index) = app.env_state.selected() {
-                app.switch_env(index).await;
+        KeyCode::Esc | KeyCode::Char('q') => app.env_picker = None,
+        KeyCode::Char('h') | KeyCode::Left | KeyCode::Backspace => {
+            if let Some(picker) = &mut app.env_picker {
+                picker.go_parent();
             }
-            if app.connected {
-                app.show_env = false;
+        }
+        KeyCode::Char('l') | KeyCode::Right => {
+            if let Some(picker) = &mut app.env_picker
+                && picker.selected_entry().is_some_and(|entry| entry.is_dir)
+            {
+                picker.enter_selected();
+            }
+        }
+        KeyCode::Char('/') => {
+            if let Some(picker) = &mut app.env_picker {
+                picker.start_editing();
+            }
+        }
+        KeyCode::Enter => {
+            let path = app
+                .env_picker
+                .as_mut()
+                .and_then(FilePicker::enter_selected);
+            if let Some(path) = path {
+                app.use_env_file(path).await;
+            }
+        }
+        _ => {}
+    }
+    false
+}
+
+async fn handle_env_input(app: &mut App, key: KeyEvent) -> bool {
+    match key.code {
+        KeyCode::Esc => {
+            if let Some(picker) = &mut app.env_picker {
+                picker.cancel_editing();
+            }
+        }
+        KeyCode::Enter => {
+            let result = app
+                .env_picker
+                .as_mut()
+                .map(FilePicker::submit_input)
+                .unwrap_or(Err("no picker".to_string()));
+            match result {
+                Ok(Some(path)) => app.use_env_file(path).await,
+                Ok(None) => {}
+                Err(error) => app.status = error,
+            }
+        }
+        KeyCode::Backspace => {
+            if let Some(picker) = &mut app.env_picker {
+                picker.backspace();
+            }
+        }
+        KeyCode::Char(ch) if !key.modifiers.contains(KeyModifiers::CONTROL) => {
+            if let Some(picker) = &mut app.env_picker {
+                picker.push_char(ch);
             }
         }
         _ => {}
@@ -236,7 +286,7 @@ fn read_motion(app: &mut App, key: KeyEvent) -> MotionRead {
 }
 
 async fn apply_motion(app: &mut App, motion: Motion) {
-    if app.show_env {
+    if app.env_picker.is_some() {
         apply_env_motion(app, motion);
     } else {
         apply_browse_motion(app, motion).await;
@@ -244,19 +294,16 @@ async fn apply_motion(app: &mut App, motion: Motion) {
 }
 
 fn apply_env_motion(app: &mut App, motion: Motion) {
-    let len = app.env_files.len();
+    let Some(picker) = app.env_picker.as_mut() else {
+        return;
+    };
+    let last = picker.entries.len().saturating_sub(1);
     match motion {
-        Motion::Delta(delta) => {
-            app.env_state
-                .select(step_index(app.env_state.selected(), len, delta));
-        }
-        Motion::Page(pages) => {
-            app.env_state
-                .select(step_index(app.env_state.selected(), len, pages * PAGE_SIZE));
-        }
-        Motion::First => app.env_state.select(resolve(len, 0)),
-        Motion::Last => app.env_state.select(resolve(len, len.saturating_sub(1))),
-        Motion::Goto(index) => app.env_state.select(resolve(len, index)),
+        Motion::Delta(delta) => picker.move_sel(delta),
+        Motion::Page(pages) => picker.move_sel(pages * PAGE_SIZE),
+        Motion::First => picker.goto(0),
+        Motion::Last => picker.goto(last),
+        Motion::Goto(index) => picker.goto(index),
     }
 }
 
@@ -279,21 +326,11 @@ async fn apply_browse_motion(app: &mut App, motion: Motion) {
 
 impl App {
     fn new(db: MarpleDB, url: String, env_file: Option<PathBuf>) -> Self {
-        let env_files = discover_env_files(env_file.as_deref());
-        let env_index = env_file
-            .as_ref()
-            .and_then(|selected| {
-                env_files
-                    .iter()
-                    .position(|choice| same_path(&choice.path, selected))
-            })
-            .unwrap_or(0);
         Self {
             db,
             url,
             env_file,
-            env_files,
-            env_index,
+            env_picker: None,
             streams: Vec::new(),
             datasets: Vec::new(),
             signals: Vec::new(),
@@ -302,10 +339,8 @@ impl App {
             stream_state: TableState::default().with_selected(Some(0)),
             dataset_state: TableState::default(),
             signal_state: TableState::default(),
-            env_state: ListState::default(),
             browse_level: BrowseLevel::Root,
             focus: Focus::Table,
-            show_env: false,
             status: String::new(),
             connected: false,
             workspace: None,
@@ -327,21 +362,12 @@ impl App {
     }
 
     fn prompt_for_env(&mut self) {
-        if self.env_files.is_empty() {
-            self.status = NOT_CONNECTED.to_string();
-        } else {
-            self.status = PICK_ENV.to_string();
-            self.open_env();
-        }
+        self.status = NOT_CONNECTED.to_string();
+        self.open_env();
     }
 
     fn open_env(&mut self) {
-        if self.env_files.is_empty() {
-            self.status = NOT_CONNECTED.to_string();
-            return;
-        }
-        self.show_env = true;
-        self.env_state.select(Some(self.env_index));
+        self.env_picker = Some(FilePicker::open(self.env_file.as_deref()));
     }
 
     fn go_back(&mut self) {
@@ -561,17 +587,13 @@ impl App {
         }
     }
 
-    async fn switch_env(&mut self, index: usize) {
-        let Some(choice) = self.env_files.get(index).cloned() else {
-            return;
-        };
-        match apply_env_file(&choice.path) {
+    async fn use_env_file(&mut self, path: PathBuf) {
+        match apply_env_file(&path) {
             Ok((url, token)) => match connect(&url, &token) {
                 Ok(db) => {
                     self.db = db;
                     self.url = url;
-                    self.env_file = Some(choice.path.clone());
-                    self.env_index = index;
+                    self.env_file = Some(path.clone());
                     self.persist_settings();
                     self.clear_loaded();
                     self.browse_level = BrowseLevel::Root;
@@ -580,7 +602,8 @@ impl App {
                     self.info_scroll = 0;
                     self.refresh_streams().await;
                     if self.connected {
-                        self.status = format!("using {}", choice.label);
+                        self.status = format!("using {}", env_label(&path));
+                        self.env_picker = None;
                     }
                 }
                 Err(error) => self.status = error.to_string(),
@@ -704,14 +727,8 @@ impl App {
 
     fn env_label(&self) -> String {
         self.env_file
-            .as_ref()
-            .map(|path| {
-                self.env_files
-                    .iter()
-                    .find(|choice| same_path(&choice.path, path))
-                    .map(|choice| choice.label.clone())
-                    .unwrap_or_else(|| path.display().to_string())
-            })
+            .as_deref()
+            .map(env_label)
             .unwrap_or_else(|| "env".to_string())
     }
 
@@ -748,11 +765,6 @@ fn resolve(len: usize, index: usize) -> Option<usize> {
 fn clamp_scroll(scroll: u16, delta: i32, lines: u16, view: u16) -> u16 {
     let max = lines.saturating_sub(view.saturating_sub(2).max(1));
     (scroll as i32 + delta).clamp(0, max as i32) as u16
-}
-
-fn same_path(left: &Path, right: &Path) -> bool {
-    let canon = |path: &Path| std::fs::canonicalize(path).unwrap_or_else(|_| path.to_path_buf());
-    canon(left) == canon(right)
 }
 
 #[cfg(test)]

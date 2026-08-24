@@ -16,6 +16,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Fixed
 
 - Parse JSON numbers that do not fit in `i64` (for example signal `stats` min/max stored as `±f64::MAX` integers) instead of failing with `JSON error`.
+- Parse `/user/info` workspace `last_active` values that are Postgres floats or JSON `null`, so `get_current_workspace()` no longer fails on a connected token.
 
 ## [0.3.0] - 2026-08-20
 

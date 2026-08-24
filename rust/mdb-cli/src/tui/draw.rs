@@ -3,6 +3,7 @@ use super::format::{
     host_from_url, kv, kv_styled, license_color, license_type, now_epoch, opt_bytes, opt_count,
     opt_text, signal_kind, signal_source, stream_kind, sum_bytes, usage_bar,
 };
+use super::picker::FilePicker;
 use super::session::settings_path;
 use super::{AUTO_LOAD_LIMIT, App, BrowseLevel, Focus};
 use marple_db::{CurrentWorkspace, StorageQuota};
@@ -63,16 +64,8 @@ pub(super) fn draw(frame: &mut Frame, app: &mut App) {
         root[3],
     );
 
-    if app.show_env {
-        draw_picker(
-            frame,
-            &format!("env file  (saved in {})", settings_path().display()),
-            app.env_files
-                .iter()
-                .map(|choice| format!("{}  {}", choice.label, choice.path.display()))
-                .collect(),
-            &mut app.env_state,
-        );
+    if let Some(picker) = &app.env_picker {
+        draw_file_picker(frame, picker);
     }
 }
 
@@ -201,9 +194,10 @@ fn render_table(
     mut row_at: impl FnMut(usize) -> Row<'static>,
 ) {
     let (start, end) = visible_range(len, selected, table_view_rows(area.height));
+    let title = window_title(title, start, end, len);
     let rows: Vec<Row> = (start..end).map(|index| row_at(index)).collect();
     let mut table = Table::new(rows, widths)
-        .block(block(title, focused))
+        .block(block(&title, focused))
         .style(body_style())
         .row_highlight_style(highlight())
         .highlight_symbol("");
@@ -337,21 +331,6 @@ fn draw_table(frame: &mut Frame, app: &App, area: Rect) {
             ) {
                 return;
             }
-            let selected = app.signal_state.selected();
-            let (start, end) =
-                visible_range(app.signals.len(), selected, table_view_rows(area.height));
-            let title = match app.selected_dataset() {
-                Some(dataset) => {
-                    format!(
-                        "signals  /{}  {}–{} of {}",
-                        dataset.path,
-                        start + 1,
-                        end,
-                        app.signals.len()
-                    )
-                }
-                None => "signals".to_string(),
-            };
             render_table(
                 frame,
                 area,
@@ -378,7 +357,7 @@ fn draw_table(frame: &mut Frame, app: &App, area: Rect) {
                     Constraint::Length(12),
                 ],
                 app.signals.len(),
-                selected,
+                app.signal_state.selected(),
                 |index| {
                     let signal = &app.signals[index];
                     Row::new(vec![
@@ -435,6 +414,7 @@ fn draw_workspace(frame: &mut Frame, app: &App, area: Rect) {
         .sum();
     let (name, slug) = match &app.workspace {
         Some(workspace) => (workspace.name.as_str(), workspace.id.as_str()),
+        None if app.connected => ("unknown", "—"),
         None => ("not connected", "—"),
     };
     frame.render_widget(
@@ -583,6 +563,14 @@ fn table_view_rows(height: u16) -> usize {
     height.saturating_sub(3).max(1) as usize
 }
 
+fn window_title(title: &str, start: usize, end: usize, len: usize) -> String {
+    if len == 0 {
+        title.to_string()
+    } else {
+        format!("{title}  {}–{} of {len}", start + 1, end)
+    }
+}
+
 fn visible_range(len: usize, selected: Option<usize>, view: usize) -> (usize, usize) {
     if len == 0 {
         return (0, 0);
@@ -596,8 +584,12 @@ fn visible_range(len: usize, selected: Option<usize>, view: usize) -> (usize, us
 
 fn draw_help(frame: &mut Frame, app: &App, area: Rect) {
     let env = app.env_label();
-    let help = if app.show_env {
-        "j/k  S-↓/↑ page  gg/G  enter use  esc close".to_string()
+    let help = if let Some(picker) = &app.env_picker {
+        if picker.editing {
+            "enter use or open  esc cancel".to_string()
+        } else {
+            "j/k  S-↓/↑ page  gg/G  enter open/use  ← parent  / path  esc close".to_string()
+        }
     } else if app.info_expanded {
         format!("j/k next  S-↓/↑ page  gg/G  i/esc close  v env ({env})  q quit")
     } else if app.browse_level == BrowseLevel::Root {
@@ -613,13 +605,54 @@ fn draw_help(frame: &mut Frame, app: &App, area: Rect) {
     );
 }
 
-fn draw_picker(frame: &mut Frame, title: &str, items: Vec<String>, state: &mut ListState) {
-    let area = centered(frame.area(), 70, 50);
-    let list = List::new(items.into_iter().map(ListItem::new).collect::<Vec<_>>())
-        .block(block(title, true))
-        .highlight_style(highlight());
+fn draw_file_picker(frame: &mut Frame, picker: &FilePicker) {
+    let area = centered(frame.area(), 80, 60);
+    let title = format!("env file  (saved in {})", settings_path().display());
+    let bordered = block(&title, true);
+    let inner = bordered.inner(area);
     frame.render_widget(ratatui::widgets::Clear, area);
-    frame.render_stateful_widget(list, area, state);
+    frame.render_widget(bordered, area);
+
+    let chunks = Layout::default()
+        .direction(Direction::Vertical)
+        .constraints([
+            Constraint::Length(1),
+            Constraint::Min(3),
+            Constraint::Length(1),
+        ])
+        .split(inner);
+    frame.render_widget(
+        Paragraph::new(picker.dir.display().to_string()).style(Style::default().fg(Color::DarkGray)),
+        chunks[0],
+    );
+    let items: Vec<ListItem> = picker
+        .entries
+        .iter()
+        .map(|entry| {
+            let label = if entry.is_dir {
+                format!("{}/", entry.name)
+            } else {
+                entry.name.clone()
+            };
+            ListItem::new(label)
+        })
+        .collect();
+    let list = List::new(items)
+        .style(body_style())
+        .highlight_style(highlight());
+    let mut state = ListState::default().with_selected(Some(picker.selected));
+    frame.render_stateful_widget(list, chunks[1], &mut state);
+    let input_style = if picker.editing {
+        Style::default()
+            .fg(Color::Cyan)
+            .add_modifier(Modifier::BOLD)
+    } else {
+        Style::default().fg(Color::DarkGray)
+    };
+    frame.render_widget(
+        Paragraph::new(format!("path  {}", picker.input)).style(input_style),
+        chunks[2],
+    );
 }
 
 fn block(title: &str, focused: bool) -> Block<'_> {
@@ -661,7 +694,17 @@ fn centered(area: Rect, percent_x: u16, percent_y: u16) -> Rect {
 
 #[cfg(test)]
 mod tests {
-    use super::visible_range;
+    use super::{visible_range, window_title};
+
+    #[test]
+    fn window_title_shows_visible_slice() {
+        assert_eq!(window_title("streams", 0, 0, 0), "streams");
+        assert_eq!(window_title("streams", 0, 5, 20), "streams  1–5 of 20");
+        assert_eq!(
+            window_title("signals  /speed", 8, 13, 20),
+            "signals  /speed  9–13 of 20"
+        );
+    }
 
     #[test]
     fn visible_range_keeps_selection_in_window() {
