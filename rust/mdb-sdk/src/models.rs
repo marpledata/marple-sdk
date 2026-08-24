@@ -241,15 +241,19 @@ impl UserInfo {
     /// Prefers `license.workspace`, then `license.payload.workspace`, then the
     /// sole membership when the user belongs to exactly one workspace.
     pub fn current_workspace_id(&self) -> Option<&str> {
-        self.license
+        if let Some(id) = self
+            .license
             .as_ref()
             .and_then(WorkspaceLicense::workspace_id)
-            .or_else(|| match self.workspaces.as_slice() {
-                [membership] if !membership.workspace_id.is_empty() => {
-                    Some(membership.workspace_id.as_str())
-                }
-                _ => None,
-            })
+        {
+            return Some(id);
+        }
+        match self.workspaces.as_slice() {
+            [membership] if !membership.workspace_id.is_empty() => {
+                Some(membership.workspace_id.as_str())
+            }
+            _ => None,
+        }
     }
 
     /// Display name for `workspace_id`, or the slug when no membership matches.

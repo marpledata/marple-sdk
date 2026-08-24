@@ -705,9 +705,7 @@ async fn main() -> Result<()> {
         Commands::Get { endpoint, params } => handle_get(&marpledb, &endpoint, params).await?,
         Commands::Post { endpoint, data } => handle_post(&marpledb, &endpoint, data).await?,
         Commands::Delete { endpoint, data } => handle_delete(&marpledb, &endpoint, data).await?,
-        Commands::Tui => {
-            mdb_cli::tui::run(marpledb, cli.mdb_url, cli.mdb_token, cli.env_file).await?
-        }
+        Commands::Tui => mdb_cli::tui::run(marpledb, cli.mdb_url, cli.env_file).await?,
     }
 
     Ok(())

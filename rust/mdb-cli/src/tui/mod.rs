@@ -11,12 +11,13 @@ use ratatui::widgets::{ListState, TableState};
 use session::{
     EnvChoice, TuiSettings, apply_env_file, discover_env_files, load_settings, save_settings,
 };
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::time::Duration;
 use tokio::sync::mpsc;
 
 pub(super) const AUTO_LOAD_LIMIT: u64 = 100;
 const PAGE_SIZE: i32 = 10;
+const NOT_CONNECTED: &str = "not connected — pick an env file (v)";
 
 enum Motion {
     Delta(i32),
@@ -58,10 +59,18 @@ pub(super) enum Focus {
     Table,
 }
 
+impl Focus {
+    fn other(self) -> Self {
+        match self {
+            Self::List => Self::Table,
+            Self::Table => Self::List,
+        }
+    }
+}
+
 pub(super) struct App {
     db: MarpleDB,
     url: String,
-    token: String,
     env_file: Option<PathBuf>,
     env_files: Vec<EnvChoice>,
     env_index: usize,
@@ -87,12 +96,7 @@ pub(super) struct App {
     pending_g: bool,
 }
 
-pub async fn run(
-    mut db: MarpleDB,
-    mut url: String,
-    mut token: String,
-    env_file: Option<PathBuf>,
-) -> Result<()> {
+pub async fn run(mut db: MarpleDB, mut url: String, env_file: Option<PathBuf>) -> Result<()> {
     let mut settings = load_settings();
     let env_file = match env_file {
         Some(path) => {
@@ -108,9 +112,8 @@ pub async fn run(
     {
         db = next_db;
         url = next_url;
-        token = next_token;
     }
-    let mut app = App::new(db, url, token, env_file)?;
+    let mut app = App::new(db, url, env_file);
     app.refresh_streams().await;
     app.restore_session(&settings).await;
     if !app.connected {
@@ -177,12 +180,7 @@ async fn handle_key(app: &mut App, key: KeyEvent) -> Result<bool> {
     match key.code {
         KeyCode::Char('q') => return Ok(true),
         KeyCode::Tab => app.focus = app.cycle_focus(),
-        KeyCode::BackTab => {
-            app.focus = match app.focus {
-                Focus::List => Focus::Table,
-                Focus::Table => Focus::List,
-            };
-        }
+        KeyCode::BackTab => app.focus = app.focus.other(),
         KeyCode::Esc | KeyCode::Char('h') | KeyCode::Left => app.go_back(),
         KeyCode::Char('l') | KeyCode::Right | KeyCode::Enter => app.activate().await,
         KeyCode::Char('i') => app.toggle_info(),
@@ -302,7 +300,7 @@ async fn apply_browse_motion(app: &mut App, motion: Motion) {
 }
 
 impl App {
-    fn new(db: MarpleDB, url: String, token: String, env_file: Option<PathBuf>) -> Result<Self> {
+    fn new(db: MarpleDB, url: String, env_file: Option<PathBuf>) -> Self {
         let env_files = discover_env_files();
         let env_index = env_file
             .as_ref()
@@ -312,10 +310,9 @@ impl App {
                     .position(|choice| same_path(&choice.path, selected))
             })
             .unwrap_or(0);
-        Ok(Self {
+        Self {
             db,
             url,
-            token,
             env_file,
             env_files,
             env_index,
@@ -339,7 +336,7 @@ impl App {
             info_view: 8,
             motion_count: None,
             pending_g: false,
-        })
+        }
     }
 
     fn has_pending_motion(&self) -> bool {
@@ -352,7 +349,7 @@ impl App {
     }
 
     fn prompt_for_env(&mut self) {
-        self.status = "not connected — pick an env file (v)".to_string();
+        self.status = NOT_CONNECTED.to_string();
         self.open_env();
     }
 
@@ -388,11 +385,9 @@ impl App {
 
     fn cycle_focus(&self) -> Focus {
         if self.browse_level == BrowseLevel::Root {
-            return Focus::Table;
-        }
-        match self.focus {
-            Focus::List => Focus::Table,
-            Focus::Table => Focus::List,
+            Focus::Table
+        } else {
+            self.focus.other()
         }
     }
 
@@ -419,10 +414,7 @@ impl App {
                 self.connected = false;
                 self.workspace = None;
                 self.streams.clear();
-                self.datasets.clear();
-                self.signals.clear();
-                self.loaded_stream_id = None;
-                self.signals_dataset_id = None;
+                self.clear_loaded();
                 self.status = format!("not connected — {error}");
             }
         }
@@ -440,8 +432,14 @@ impl App {
             (BrowseLevel::Root, _) | (BrowseLevel::Streams, Focus::List) => {
                 self.load_stream_table().await
             }
-            (BrowseLevel::Streams, Focus::Table) => self.drill_into_dataset().await,
-            (BrowseLevel::Datasets, Focus::List) => self.load_dataset_table().await,
+            (BrowseLevel::Streams, Focus::Table) => {
+                if self.table_shows_current_stream() {
+                    self.show_signals(true).await;
+                } else {
+                    self.load_stream_table().await;
+                }
+            }
+            (BrowseLevel::Datasets, Focus::List) => self.show_signals(false).await,
             (BrowseLevel::Datasets, Focus::Table) => self.toggle_info(),
         }
     }
@@ -457,10 +455,13 @@ impl App {
     }
 
     async fn load_stream_table(&mut self) {
-        let Some(stream) = self.selected_stream().cloned() else {
+        let Some((id, name)) = self
+            .selected_stream()
+            .map(|stream| (stream.id, stream.name.clone()))
+        else {
             return;
         };
-        if let Err(error) = self.ensure_datasets(stream.id).await {
+        if let Err(error) = self.ensure_datasets(id).await {
             self.status = error;
             return;
         }
@@ -477,24 +478,9 @@ impl App {
             .filter(|dataset| dataset.import_status == ImportStatus::Live)
             .count();
         self.status = format!(
-            "/{} · {} datasets · FINISHED {} · LIVE {}",
-            stream.name,
+            "/{name} · {} datasets · FINISHED {finished} · LIVE {live}",
             self.datasets.len(),
-            finished,
-            live
         );
-    }
-
-    async fn drill_into_dataset(&mut self) {
-        if !self.table_shows_current_stream() {
-            self.load_stream_table().await;
-            return;
-        }
-        self.show_signals(true).await;
-    }
-
-    async fn load_dataset_table(&mut self) {
-        self.show_signals(false).await;
     }
 
     async fn show_signals(&mut self, drill: bool) {
@@ -517,11 +503,14 @@ impl App {
     }
 
     async fn maybe_autoload_datasets(&mut self) {
-        let Some(stream) = self.selected_stream().cloned() else {
+        let Some((id, n_datasets)) = self
+            .selected_stream()
+            .map(|stream| (stream.id, stream.n_datasets))
+        else {
             return;
         };
-        if is_cheap(stream.n_datasets)
-            && let Err(error) = self.ensure_datasets(stream.id).await
+        if is_cheap(n_datasets)
+            && let Err(error) = self.ensure_datasets(id).await
         {
             self.status = error;
         }
@@ -541,7 +530,7 @@ impl App {
     async fn ensure_datasets(&mut self, stream_id: i32) -> std::result::Result<(), String> {
         if !self.connected {
             self.prompt_for_env();
-            return Err("not connected — pick an env file (v)".to_string());
+            return Err(NOT_CONNECTED.to_string());
         }
         if self.loaded_stream_id == Some(stream_id) {
             return Ok(());
@@ -596,14 +585,10 @@ impl App {
                 Ok(db) => {
                     self.db = db;
                     self.url = url;
-                    self.token = token;
                     self.env_file = Some(choice.path.clone());
                     self.env_index = index;
                     self.persist_settings();
-                    self.datasets.clear();
-                    self.signals.clear();
-                    self.loaded_stream_id = None;
-                    self.signals_dataset_id = None;
+                    self.clear_loaded();
                     self.browse_level = BrowseLevel::Root;
                     self.focus = Focus::Table;
                     self.info_expanded = false;
@@ -617,6 +602,13 @@ impl App {
             },
             Err(error) => self.status = error.to_string(),
         }
+    }
+
+    fn clear_loaded(&mut self) {
+        self.datasets.clear();
+        self.signals.clear();
+        self.loaded_stream_id = None;
+        self.signals_dataset_id = None;
     }
 
     fn selected_stream(&self) -> Option<&Stream> {
@@ -672,51 +664,34 @@ impl App {
     }
 
     async fn move_sel(&mut self, delta: i32) {
-        if self.info_expanded {
-            self.info_scroll = 0;
-        }
-        match (self.browse_level, self.focus) {
-            (BrowseLevel::Root, _) => {
-                move_table(&mut self.stream_state, self.streams.len(), delta);
-            }
-            (BrowseLevel::Streams, Focus::List) => {
-                move_table(&mut self.stream_state, self.streams.len(), delta);
-                self.maybe_autoload_datasets().await;
-            }
-            (BrowseLevel::Datasets, Focus::List) => {
-                move_table(&mut self.dataset_state, self.datasets.len(), delta);
-                self.maybe_autoload_signals().await;
-            }
-            (BrowseLevel::Streams, Focus::Table) => {
-                move_table(&mut self.dataset_state, self.datasets.len(), delta);
-            }
-            (BrowseLevel::Datasets, Focus::Table) => {
-                move_table(&mut self.signal_state, self.signals.len(), delta);
-            }
-        }
+        self.apply_selection(|state, len| move_table(state, len, delta))
+            .await;
     }
 
     async fn goto_sel(&mut self, jump: Jump) {
+        self.apply_selection(|state, len| state.select(jump.resolve(len)))
+            .await;
+    }
+
+    async fn apply_selection(&mut self, select: impl FnOnce(&mut TableState, usize)) {
         if self.info_expanded {
             self.info_scroll = 0;
         }
         match (self.browse_level, self.focus) {
-            (BrowseLevel::Root, _) => {
-                self.stream_state.select(jump.resolve(self.streams.len()));
-            }
+            (BrowseLevel::Root, _) => select(&mut self.stream_state, self.streams.len()),
             (BrowseLevel::Streams, Focus::List) => {
-                self.stream_state.select(jump.resolve(self.streams.len()));
+                select(&mut self.stream_state, self.streams.len());
                 self.maybe_autoload_datasets().await;
             }
             (BrowseLevel::Datasets, Focus::List) => {
-                self.dataset_state.select(jump.resolve(self.datasets.len()));
+                select(&mut self.dataset_state, self.datasets.len());
                 self.maybe_autoload_signals().await;
             }
             (BrowseLevel::Streams, Focus::Table) => {
-                self.dataset_state.select(jump.resolve(self.datasets.len()));
+                select(&mut self.dataset_state, self.datasets.len());
             }
             (BrowseLevel::Datasets, Focus::Table) => {
-                self.signal_state.select(jump.resolve(self.signals.len()));
+                select(&mut self.signal_state, self.signals.len());
             }
         }
     }
@@ -797,8 +772,8 @@ fn clamp_scroll(scroll: u16, delta: i32, lines: u16, view: u16) -> u16 {
     (scroll as i32 + delta).clamp(0, max as i32) as u16
 }
 
-fn same_path(left: &PathBuf, right: &PathBuf) -> bool {
-    let canon = |path: &PathBuf| std::fs::canonicalize(path).unwrap_or_else(|_| path.clone());
+fn same_path(left: &Path, right: &Path) -> bool {
+    let canon = |path: &Path| std::fs::canonicalize(path).unwrap_or_else(|_| path.to_path_buf());
     canon(left) == canon(right)
 }
 

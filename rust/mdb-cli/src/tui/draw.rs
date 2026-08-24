@@ -1,5 +1,7 @@
 use super::{AUTO_LOAD_LIMIT, App, BrowseLevel, Focus};
-use marple_db::{Dataset, Signal, Stream, StreamType};
+use marple_db::{
+    CurrentWorkspace, Dataset, LicenseType, Signal, StorageQuota, StorageStatus, Stream, StreamType,
+};
 use ratatui::Frame;
 use ratatui::layout::{Constraint, Direction, Layout, Rect};
 use ratatui::style::{Color, Modifier, Style};
@@ -158,29 +160,46 @@ fn hint_row(text: &str, columns: usize) -> Row<'static> {
     Row::new(cells)
 }
 
+fn load_hint(count: Option<u64>, noun: &str) -> String {
+    match count {
+        Some(count) if count >= AUTO_LOAD_LIMIT => format!("→ to load ({count} {noun})"),
+        _ => format!("→ to load {noun}"),
+    }
+}
+
+fn table_or_hint<T>(
+    loaded: bool,
+    items: &[T],
+    hint: &str,
+    empty: &str,
+    columns: usize,
+    row: impl Fn(&T) -> Row<'static>,
+) -> Vec<Row<'static>> {
+    if !loaded {
+        vec![hint_row(hint, columns)]
+    } else if items.is_empty() {
+        vec![hint_row(empty, columns)]
+    } else {
+        items.iter().map(row).collect()
+    }
+}
+
 fn draw_table(frame: &mut Frame, app: &mut App, area: Rect) {
     let focused = app.focus == Focus::Table;
     match app.browse_level {
         BrowseLevel::Root => {
-            let rows: Vec<Row> = if app.streams.is_empty() {
-                vec![hint_row("no streams", 8)]
-            } else {
-                app.streams
-                    .iter()
-                    .map(|stream| {
-                        Row::new(vec![
-                            Cell::from(stream.id.to_string()),
-                            Cell::from(stream_kind(stream)),
-                            Cell::from(stream.name.clone()),
-                            Cell::from(opt_text(stream.plugin.as_deref())),
-                            Cell::from(clip_args(stream.plugin_args.as_deref(), 40)),
-                            Cell::from(opt_count(stream.n_datasets)),
-                            Cell::from(opt_bytes(stream.cold_bytes)),
-                            Cell::from(opt_bytes(stream.hot_bytes)),
-                        ])
-                    })
-                    .collect()
-            };
+            let rows = table_or_hint(true, &app.streams, "", "no streams", 8, |stream| {
+                Row::new(vec![
+                    Cell::from(stream.id.to_string()),
+                    Cell::from(stream_kind(stream)),
+                    Cell::from(stream.name.clone()),
+                    Cell::from(opt_text(stream.plugin.as_deref())),
+                    Cell::from(clip_args(stream.plugin_args.as_deref(), 40)),
+                    Cell::from(opt_count(stream.n_datasets)),
+                    Cell::from(opt_bytes(stream.cold_bytes)),
+                    Cell::from(opt_bytes(stream.hot_bytes)),
+                ])
+            });
             let table = Table::new(
                 rows,
                 [
@@ -205,33 +224,22 @@ fn draw_table(frame: &mut Frame, app: &mut App, area: Rect) {
         BrowseLevel::Streams => {
             let stream_id = app.selected_stream().map(|stream| stream.id);
             let loaded = stream_id.is_some() && app.loaded_stream_id == stream_id;
-            let rows: Vec<Row> = if !loaded {
-                let hint = app
-                    .selected_stream()
-                    .and_then(|stream| stream.n_datasets)
-                    .filter(|count| *count >= AUTO_LOAD_LIMIT)
-                    .map(|count| format!("→ to load ({count} datasets)"))
-                    .unwrap_or_else(|| "→ to load datasets".to_string());
-                vec![hint_row(&hint, 8)]
-            } else if app.datasets.is_empty() {
-                vec![hint_row("no datasets", 8)]
-            } else {
-                app.datasets
-                    .iter()
-                    .map(|dataset| {
-                        Row::new(vec![
-                            Cell::from(dataset.id.to_string()),
-                            Cell::from(dataset.path.clone()),
-                            Cell::from(opt_count(dataset.n_signals)),
-                            Cell::from(compact_count(dataset.n_datapoints)),
-                            Cell::from(opt_bytes(dataset.backup_size)),
-                            Cell::from(opt_bytes(dataset.cold_bytes)),
-                            Cell::from(opt_bytes(dataset.hot_bytes)),
-                            Cell::from(crate::format_import_status(dataset.import_status)),
-                        ])
-                    })
-                    .collect()
-            };
+            let hint = load_hint(
+                app.selected_stream().and_then(|stream| stream.n_datasets),
+                "datasets",
+            );
+            let rows = table_or_hint(loaded, &app.datasets, &hint, "no datasets", 8, |dataset| {
+                Row::new(vec![
+                    Cell::from(dataset.id.to_string()),
+                    Cell::from(dataset.path.clone()),
+                    Cell::from(opt_count(dataset.n_signals)),
+                    Cell::from(compact_count(dataset.n_datapoints)),
+                    Cell::from(opt_bytes(dataset.backup_size)),
+                    Cell::from(opt_bytes(dataset.cold_bytes)),
+                    Cell::from(opt_bytes(dataset.hot_bytes)),
+                    Cell::from(crate::format_import_status(dataset.import_status)),
+                ])
+            });
             let title = app
                 .selected_stream()
                 .map(|stream| format!("datasets  /{}", stream.name))
@@ -267,13 +275,11 @@ fn draw_table(frame: &mut Frame, app: &mut App, area: Rect) {
         BrowseLevel::Datasets => {
             let dataset_id = app.selected_dataset().map(|dataset| dataset.id);
             let loaded = dataset_id.is_some() && app.signals_dataset_id == dataset_id;
-            let rows: Vec<Row> = if !loaded {
-                let hint = app
-                    .selected_dataset()
-                    .and_then(|dataset| dataset.n_signals)
-                    .filter(|count| *count >= AUTO_LOAD_LIMIT)
-                    .map(|count| format!("→ to load ({count} signals)"))
-                    .unwrap_or_else(|| "→ to load signals".to_string());
+            let hint = load_hint(
+                app.selected_dataset().and_then(|dataset| dataset.n_signals),
+                "signals",
+            );
+            let rows = if !loaded {
                 vec![hint_row(&hint, 8)]
             } else if app.signals.is_empty() {
                 vec![hint_row("no signals", 8)]
@@ -391,21 +397,51 @@ pub(super) fn workspace_info(app: &App) -> (String, Vec<Line<'static>>) {
         .iter()
         .filter_map(|stream| stream.n_datasets)
         .sum();
-    let (title, id, cold, hot, archive) = match &app.workspace {
-        Some(workspace) => (
-            format!("workspace  {}", workspace.name),
-            workspace.id.clone(),
-            opt_bytes(workspace.cold_bytes),
-            opt_bytes(workspace.hot_bytes),
-            opt_bytes(workspace.archive_bytes),
-        ),
+    workspace_summary(
+        app.workspace.as_ref(),
+        app.streams.len(),
+        datasets,
+        sum_bytes(app.streams.iter().map(|stream| stream.cold_bytes)),
+        sum_bytes(app.streams.iter().map(|stream| stream.hot_bytes)),
+    )
+}
+
+fn workspace_summary(
+    workspace: Option<&CurrentWorkspace>,
+    streams: usize,
+    datasets: u64,
+    fallback_cold: Option<u64>,
+    fallback_hot: Option<u64>,
+) -> (String, Vec<Line<'static>>) {
+    let (title, id, license, cold, hot, archive) = match workspace {
+        Some(workspace) => {
+            let features = workspace
+                .license
+                .as_ref()
+                .map(|license| &license.payload.features);
+            (
+                format!("workspace  {}", workspace.name),
+                workspace.id.clone(),
+                workspace
+                    .license
+                    .as_ref()
+                    .map(|license| license_type(license.payload.license_type))
+                    .unwrap_or("—")
+                    .to_string(),
+                format_usage(workspace.cold_bytes, features.and_then(|f| f.cold_bytes)),
+                format_usage(workspace.hot_bytes, features.and_then(|f| f.hot_bytes)),
+                format_usage(
+                    workspace.archive_bytes,
+                    features.and_then(|f| f.archive_bytes),
+                ),
+            )
+        }
         None => (
             "workspace".to_string(),
             "—".to_string(),
-            opt_bytes(sum_bytes(
-                app.streams.iter().map(|stream| stream.cold_bytes),
-            )),
-            opt_bytes(sum_bytes(app.streams.iter().map(|stream| stream.hot_bytes))),
+            "—".to_string(),
+            opt_bytes(fallback_cold),
+            opt_bytes(fallback_hot),
             "—".to_string(),
         ),
     };
@@ -413,7 +449,8 @@ pub(super) fn workspace_info(app: &App) -> (String, Vec<Line<'static>>) {
         title,
         vec![
             kv("id", id),
-            kv("streams", app.streams.len()),
+            kv("license", license),
+            kv("streams", streams),
             kv("datasets", datasets),
             kv("cold", cold),
             kv("hot", hot),
@@ -479,7 +516,7 @@ pub(super) fn dataset_info(
             lines.push(kv("created by", created_by.clone()));
         }
         if dataset.created_at > 0.0 {
-            lines.push(kv("created at", format_epoch(dataset.created_at)));
+            lines.push(kv("created at", crate::format_epoch_utc(dataset.created_at)));
         }
         push_metadata(&mut lines, &dataset.metadata, false);
     } else if !dataset.metadata.is_empty() {
@@ -500,10 +537,7 @@ pub(super) fn signal_info(signal: Option<&Signal>) -> (String, Vec<Line<'static>
         kv("points", compact_count(signal.count)),
         kv("cold", opt_bytes(signal.cold_bytes)),
         kv("hot", opt_bytes(signal.hot_bytes)),
-        kv(
-            "storage",
-            format!("{:?}", signal.storage_status).to_uppercase(),
-        ),
+        kv("storage", storage_status(signal.storage_status)),
     ];
     if let Some(description) = &signal.description
         && !description.is_empty()
@@ -621,8 +655,37 @@ fn opt_speed(value: Option<f64>) -> String {
         .unwrap_or_else(|| "—".to_string())
 }
 
-fn format_epoch(seconds: f64) -> String {
-    crate::format_epoch_utc(seconds)
+fn format_usage(used: Option<u64>, quota: Option<StorageQuota>) -> String {
+    let used = opt_bytes(used);
+    match quota {
+        Some(StorageQuota::Unlimited) => format!("{used} / unlimited"),
+        Some(StorageQuota::Bytes(limit)) => format!("{used} / {}", opt_bytes(Some(limit))),
+        None => used,
+    }
+}
+
+fn license_type(license_type: LicenseType) -> &'static str {
+    match license_type {
+        LicenseType::Dev => "DEV",
+        LicenseType::Free => "FREE",
+        LicenseType::Trial => "TRIAL",
+        LicenseType::Paid => "PAID",
+        LicenseType::Poc => "POC",
+        LicenseType::Sponsorship => "SPONSORSHIP",
+        LicenseType::Unknown => "UNKNOWN",
+        _ => "UNKNOWN",
+    }
+}
+
+fn storage_status(status: StorageStatus) -> &'static str {
+    match status {
+        StorageStatus::FrozenToCold => "FROZEN_TO_COLD",
+        StorageStatus::Cold => "COLD",
+        StorageStatus::ColdToHot => "COLD_TO_HOT",
+        StorageStatus::Hot => "HOT",
+        StorageStatus::Unknown => "UNKNOWN",
+        _ => "UNKNOWN",
+    }
 }
 
 fn signal_source(signal: &Signal) -> &'static str {
@@ -765,7 +828,8 @@ fn centered(area: Rect, percent_x: u16, percent_y: u16) -> Rect {
 
 #[cfg(test)]
 mod tests {
-    use super::ellipsis;
+    use super::{ellipsis, format_usage, license_type, storage_status};
+    use marple_db::{LicenseType, StorageQuota, StorageStatus};
 
     #[test]
     fn ellipsis_keeps_short_text() {
@@ -780,5 +844,27 @@ mod tests {
         );
         assert_eq!(ellipsis("ab", 1), "…");
         assert_eq!(ellipsis("hello", 0), "");
+    }
+
+    #[test]
+    fn usage_shows_quota_when_present() {
+        assert_eq!(format_usage(Some(1024), None), "1.0 KiB");
+        assert_eq!(
+            format_usage(Some(1024), Some(StorageQuota::Unlimited)),
+            "1.0 KiB / unlimited"
+        );
+        assert_eq!(
+            format_usage(Some(1024), Some(StorageQuota::Bytes(2048))),
+            "1.0 KiB / 2.0 KiB"
+        );
+    }
+
+    #[test]
+    fn labels_match_api_enum_names() {
+        assert_eq!(license_type(LicenseType::Paid), "PAID");
+        assert_eq!(
+            storage_status(StorageStatus::FrozenToCold),
+            "FROZEN_TO_COLD"
+        );
     }
 }

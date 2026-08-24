@@ -19,7 +19,7 @@ pub(crate) struct TuiSettings {
     pub stream_id: Option<i32>,
 }
 
-pub(crate) fn git_root() -> Result<PathBuf> {
+fn git_root() -> Result<PathBuf> {
     let cwd = std::env::current_dir().context("current directory")?;
     Ok(PathBuf::from(git_in(
         &cwd,
@@ -47,11 +47,11 @@ fn xdg_home(var: &str, fallback: &str) -> PathBuf {
         .unwrap_or_else(|| PathBuf::from("."))
 }
 
-pub(crate) fn config_dir() -> PathBuf {
+fn config_dir() -> PathBuf {
     xdg_home("XDG_CONFIG_HOME", ".config").join("mdb")
 }
 
-pub(crate) fn settings_path() -> PathBuf {
+fn settings_path() -> PathBuf {
     config_dir().join("tui.toml")
 }
 
