@@ -20,6 +20,7 @@ use session::{
     remember_recent, save_settings,
 };
 use std::path::PathBuf;
+use std::time::Duration;
 
 pub(super) const AUTO_LOAD_LIMIT: u64 = 100;
 const PAGE_SIZE: i32 = 10;
@@ -190,52 +191,61 @@ async fn run_pending_load(terminal: &mut ratatui::DefaultTerminal, app: &mut App
     }
 }
 
-async fn handle_key(app: &mut App, key: KeyEvent) -> bool {
-    if matches!(key.code, KeyCode::Esc) && app.has_pending_motion() {
-        app.clear_motion();
-        return false;
-    }
-    if app.env_picker.as_ref().is_some_and(|picker| picker.editing) {
-        return handle_env_input(app, key).await;
-    }
-    if app.search.editing {
-        handle_search_key(&mut app.search, key);
-        app.snap_search();
-        return false;
-    }
-    match read_motion(app, key) {
-        MotionRead::Pending => return false,
-        MotionRead::Act(motion) => {
-            apply_motion(app, motion);
+async fn handle_key(app: &mut App, mut key: KeyEvent) -> bool {
+    loop {
+        if matches!(key.code, KeyCode::Esc) && app.has_pending_motion() {
+            app.clear_motion();
             return false;
         }
-        MotionRead::None => {}
-    }
-    if app.env_picker.is_some() {
-        return handle_env_key(app, key).await;
-    }
-    if matches!(key.code, KeyCode::Char('/')) && !app.info_expanded {
-        app.clear_motion();
-        app.search.start();
-        return false;
-    }
-    if matches!(key.code, KeyCode::Esc) && app.search.active() {
-        app.search.clear();
-        return false;
-    }
-    match key.code {
-        KeyCode::Char('q') => return true,
-        KeyCode::Tab | KeyCode::BackTab => {
-            app.focus = app.cycle_focus();
-            app.snap_search();
+        if app.env_picker.as_ref().is_some_and(|picker| picker.editing) {
+            return handle_env_input(app, key).await;
         }
-        KeyCode::Esc | KeyCode::Char('h') | KeyCode::Left => app.go_back(),
-        KeyCode::Char('l') | KeyCode::Right | KeyCode::Enter => app.activate(),
-        KeyCode::Char('i') => app.toggle_info(),
-        KeyCode::Char('v') => app.open_env(),
-        _ => {}
+        if app.search.editing {
+            handle_search_key(&mut app.search, key);
+            app.snap_search();
+            return false;
+        }
+        match read_motion(app, key) {
+            MotionRead::Pending => return false,
+            MotionRead::Act(motion) => {
+                let (motion, leftover) = coalesce_motion(motion);
+                apply_motion(app, motion);
+                match leftover {
+                    Some(next) => {
+                        key = next;
+                        continue;
+                    }
+                    None => return false,
+                }
+            }
+            MotionRead::None => {}
+        }
+        if app.env_picker.is_some() {
+            return handle_env_key(app, key).await;
+        }
+        if matches!(key.code, KeyCode::Char('/')) && !app.info_expanded {
+            app.clear_motion();
+            app.search.start();
+            return false;
+        }
+        if matches!(key.code, KeyCode::Esc) && app.search.active() {
+            app.search.clear();
+            return false;
+        }
+        match key.code {
+            KeyCode::Char('q') => return true,
+            KeyCode::Tab | KeyCode::BackTab => {
+                app.focus = app.cycle_focus();
+                app.snap_search();
+            }
+            KeyCode::Esc | KeyCode::Char('h') | KeyCode::Left => app.go_back(),
+            KeyCode::Char('l') | KeyCode::Right | KeyCode::Enter => app.activate(),
+            KeyCode::Char('i') => app.toggle_info(),
+            KeyCode::Char('v') => app.open_env(),
+            _ => {}
+        }
+        return false;
     }
-    false
 }
 
 async fn handle_env_key(app: &mut App, key: KeyEvent) -> bool {
@@ -352,6 +362,40 @@ fn read_motion(app: &mut App, key: KeyEvent) -> MotionRead {
     };
     app.clear_motion();
     MotionRead::Act(motion)
+}
+
+fn arrow_delta(key: KeyEvent) -> Option<i32> {
+    if !matches!(key.kind, KeyEventKind::Press | KeyEventKind::Repeat) {
+        return None;
+    }
+    match key.code {
+        KeyCode::Down => Some(1),
+        KeyCode::Up => Some(-1),
+        _ => None,
+    }
+}
+
+fn coalesce_motion(motion: Motion) -> (Motion, Option<KeyEvent>) {
+    let Motion::Delta(mut delta) = motion else {
+        return (motion, None);
+    };
+    let leftover = drain_arrow_delta(&mut delta);
+    (Motion::Delta(delta), leftover)
+}
+
+fn drain_arrow_delta(delta: &mut i32) -> Option<KeyEvent> {
+    while event::poll(Duration::ZERO).ok()? {
+        match event::read() {
+            Ok(Event::Key(key)) => match arrow_delta(key) {
+                Some(step) => *delta += step,
+                None if key.kind != KeyEventKind::Press => {}
+                None => return Some(key),
+            },
+            Ok(_) => {}
+            Err(_) => break,
+        }
+    }
+    None
 }
 
 fn apply_motion(app: &mut App, motion: Motion) {

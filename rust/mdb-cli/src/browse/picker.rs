@@ -1,4 +1,5 @@
 use super::session::RecentEnv;
+use crate::table::wrap_index;
 use std::fs;
 use std::path::{Path, PathBuf};
 
@@ -59,7 +60,7 @@ impl FilePicker {
             return;
         }
         let current = self.selected as i32;
-        self.selected = (current + delta).clamp(0, self.len() as i32 - 1) as usize;
+        self.selected = wrap_index(self.len(), current, delta);
         if !self.editing {
             self.sync_input();
         }

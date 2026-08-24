@@ -116,8 +116,14 @@ pub(crate) fn step_visible(
     let pos = selected
         .and_then(|selected| visible.iter().position(|&index| index == selected))
         .unwrap_or(0) as i32;
-    let next = (pos + delta).clamp(0, visible.len() as i32 - 1) as usize;
-    Some(visible[next])
+    Some(visible[wrap_index(visible.len(), pos, delta)])
+}
+
+pub(crate) fn wrap_index(len: usize, index: i32, delta: i32) -> usize {
+    if len == 0 {
+        return 0;
+    }
+    (index + delta).rem_euclid(len as i32) as usize
 }
 
 pub(crate) fn goto_visible(visible: &[usize], index: usize) -> Option<usize> {
@@ -234,7 +240,7 @@ pub(crate) fn visible_range(len: usize, selected: Option<usize>, view: usize) ->
 mod tests {
     use super::{
         TableSearch, filter_indices, goto_visible, handle_search_key, row_matches, search_title,
-        snap_visible, step_visible, visible_range, window_title,
+        snap_visible, step_visible, visible_range, window_title, wrap_index,
     };
     use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
 
@@ -318,12 +324,18 @@ mod tests {
         let visible = vec![2, 5, 9];
         assert_eq!(step_visible(&visible, Some(5), 1), Some(9));
         assert_eq!(step_visible(&visible, Some(5), -1), Some(2));
-        assert_eq!(step_visible(&visible, Some(2), -1), Some(2));
+        assert_eq!(step_visible(&visible, Some(2), -1), Some(9));
+        assert_eq!(step_visible(&visible, Some(9), 1), Some(2));
+        assert_eq!(step_visible(&visible, Some(9), 4), Some(2));
         assert_eq!(goto_visible(&visible, 0), Some(2));
         assert_eq!(goto_visible(&visible, 99), Some(9));
         assert_eq!(snap_visible(&visible, Some(5)), Some(5));
         assert_eq!(snap_visible(&visible, Some(1)), Some(2));
         assert_eq!(step_visible(&[], Some(0), 1), None);
+        assert_eq!(wrap_index(3, 0, -1), 2);
+        assert_eq!(wrap_index(3, 2, 1), 0);
+        assert_eq!(wrap_index(3, 1, -4), 0);
+        assert_eq!(wrap_index(0, 0, 1), 0);
     }
 
     #[test]
