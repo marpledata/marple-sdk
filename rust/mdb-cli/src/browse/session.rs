@@ -13,7 +13,7 @@ pub(crate) struct RecentEnv {
 }
 
 #[derive(Clone, Debug, Default, Serialize, Deserialize)]
-pub(crate) struct TuiSettings {
+pub(crate) struct BrowseSettings {
     pub env_file: Option<PathBuf>,
     #[serde(default)]
     pub stream_id: Option<i32>,
@@ -53,17 +53,17 @@ fn config_dir() -> PathBuf {
 }
 
 pub(crate) fn settings_path() -> PathBuf {
-    config_dir().join("tui.toml")
+    config_dir().join("browse.toml")
 }
 
-pub(crate) fn load_settings() -> TuiSettings {
+pub(crate) fn load_settings() -> BrowseSettings {
     fs::read_to_string(settings_path())
         .ok()
         .and_then(|body| toml::from_str(&body).ok())
         .unwrap_or_default()
 }
 
-pub(crate) fn save_settings(settings: &TuiSettings) -> Result<()> {
+pub(crate) fn save_settings(settings: &BrowseSettings) -> Result<()> {
     let path = settings_path();
     if let Some(parent) = path.parent() {
         fs::create_dir_all(parent)?;
@@ -105,7 +105,7 @@ pub(crate) fn env_label(path: &Path) -> String {
 
 #[cfg(test)]
 mod tests {
-    use super::{RecentEnv, TuiSettings, load_settings, remember_recent, save_settings};
+    use super::{BrowseSettings, RecentEnv, load_settings, remember_recent, save_settings};
     use std::fs;
     use std::path::{Path, PathBuf};
     use std::sync::Mutex;
@@ -131,7 +131,7 @@ mod tests {
     fn persists_env_file_in_xdg_config() {
         let tmp = tempfile::tempdir().unwrap();
         with_xdg(tmp.path(), || {
-            let settings = TuiSettings {
+            let settings = BrowseSettings {
                 env_file: Some(PathBuf::from("/tmp/custom.env")),
                 stream_id: Some(5),
                 recents: vec![RecentEnv {
@@ -147,7 +147,7 @@ mod tests {
             );
             assert_eq!(loaded.stream_id, Some(5));
             assert_eq!(loaded.recents[0].workspace, "Staging");
-            assert!(tmp.path().join("mdb/tui.toml").is_file());
+            assert!(tmp.path().join("mdb/browse.toml").is_file());
         });
     }
 

@@ -9,12 +9,12 @@ use crossterm::event::{self, Event, KeyCode, KeyEvent, KeyEventKind, KeyModifier
 use draw::draw;
 use format::{dataset_info, signal_info, stream_info};
 use marple_db::{CurrentWorkspace, Dataset, ImportStatus, MarpleDB, Signal, Stream};
+use picker::FilePicker;
 use ratatui::text::Line;
 use ratatui::widgets::TableState;
-use picker::FilePicker;
 use session::{
-    RecentEnv, TuiSettings, apply_env_file, env_label, load_settings, local_dotenv, remember_recent,
-    save_settings,
+    BrowseSettings, RecentEnv, apply_env_file, env_label, load_settings, local_dotenv,
+    remember_recent, save_settings,
 };
 use std::path::PathBuf;
 
@@ -24,7 +24,7 @@ const NOT_CONNECTED: &str = "not connected — pick an env file (v)";
 const SPINNER: [&str; 3] = [".", "..", "..."];
 const SPINNER_TICK: std::time::Duration = std::time::Duration::from_millis(200);
 
-pub(super) fn is_cheap(count: Option<u64>) -> bool {
+fn is_cheap(count: Option<u64>) -> bool {
     count.is_some_and(|count| count < AUTO_LOAD_LIMIT)
 }
 
@@ -220,49 +220,33 @@ async fn handle_key(app: &mut App, key: KeyEvent) -> bool {
 async fn handle_env_key(app: &mut App, key: KeyEvent) -> bool {
     match key.code {
         KeyCode::Esc | KeyCode::Char('q') => app.env_picker = None,
-        KeyCode::Char('h') | KeyCode::Left | KeyCode::Backspace => {
-            if let Some(picker) = &mut app.env_picker {
-                picker.go_parent();
-            }
-        }
-        KeyCode::Char('l') | KeyCode::Right => {
-            if let Some(picker) = &mut app.env_picker
-                && picker.selected_entry().is_some_and(|entry| entry.is_dir)
-            {
-                picker.enter_selected();
-            }
-        }
-        KeyCode::Tab | KeyCode::BackTab => {
-            if let Some(picker) = &mut app.env_picker {
-                picker.cycle_section();
-            }
-        }
-        KeyCode::Char('/') => {
-            if let Some(picker) = &mut app.env_picker {
-                picker.start_editing();
-            }
-        }
         KeyCode::Enter => {
-            let path = app
-                .env_picker
-                .as_mut()
-                .and_then(FilePicker::enter_selected);
-            if let Some(path) = path {
+            if let Some(path) = app.env_picker.as_mut().and_then(FilePicker::enter_selected) {
                 app.use_env_file(path).await;
             }
         }
-        _ => {}
+        other => {
+            let Some(picker) = app.env_picker.as_mut() else {
+                return false;
+            };
+            match other {
+                KeyCode::Char('h') | KeyCode::Left | KeyCode::Backspace => picker.go_parent(),
+                KeyCode::Char('l') | KeyCode::Right
+                    if picker.selected_entry().is_some_and(|entry| entry.is_dir) =>
+                {
+                    picker.enter_selected();
+                }
+                KeyCode::Tab | KeyCode::BackTab => picker.cycle_section(),
+                KeyCode::Char('/') => picker.start_editing(),
+                _ => {}
+            }
+        }
     }
     false
 }
 
 async fn handle_env_input(app: &mut App, key: KeyEvent) -> bool {
     match key.code {
-        KeyCode::Esc => {
-            if let Some(picker) = &mut app.env_picker {
-                picker.cancel_editing();
-            }
-        }
         KeyCode::Enter => {
             let result = app
                 .env_picker
@@ -275,17 +259,19 @@ async fn handle_env_input(app: &mut App, key: KeyEvent) -> bool {
                 Err(error) => app.status = error,
             }
         }
-        KeyCode::Backspace => {
-            if let Some(picker) = &mut app.env_picker {
-                picker.backspace();
+        other => {
+            let Some(picker) = app.env_picker.as_mut() else {
+                return false;
+            };
+            match other {
+                KeyCode::Esc => picker.cancel_editing(),
+                KeyCode::Backspace => picker.backspace(),
+                KeyCode::Char(ch) if !key.modifiers.contains(KeyModifiers::CONTROL) => {
+                    picker.push_char(ch);
+                }
+                _ => {}
             }
         }
-        KeyCode::Char(ch) if !key.modifiers.contains(KeyModifiers::CONTROL) => {
-            if let Some(picker) = &mut app.env_picker {
-                picker.push_char(ch);
-            }
-        }
-        _ => {}
     }
     false
 }
@@ -546,13 +532,16 @@ impl App {
     }
 
     fn open_signals(&mut self) {
-        let Some(dataset) = self.selected_dataset().cloned() else {
+        let Some((stream_id, dataset_id)) = self
+            .selected_dataset()
+            .map(|dataset| (dataset.datastream_id, dataset.id))
+        else {
             return;
         };
         self.browse_level = BrowseLevel::Datasets;
         self.focus = Focus::Table;
         self.status.clear();
-        self.request_signals(dataset.datastream_id, dataset.id);
+        self.request_signals(stream_id, dataset_id);
     }
 
     fn maybe_autoload_datasets(&mut self) {
@@ -568,11 +557,14 @@ impl App {
     }
 
     fn maybe_autoload_signals(&mut self) {
-        let Some(dataset) = self.selected_dataset().cloned() else {
+        let Some((stream_id, dataset_id, n_signals)) = self
+            .selected_dataset()
+            .map(|dataset| (dataset.datastream_id, dataset.id, dataset.n_signals))
+        else {
             return;
         };
-        if is_cheap(dataset.n_signals) {
-            self.request_signals(dataset.datastream_id, dataset.id);
+        if is_cheap(n_signals) {
+            self.request_signals(stream_id, dataset_id);
         }
     }
 
@@ -813,7 +805,7 @@ impl App {
     }
 
     fn persist_settings(&self) {
-        let settings = TuiSettings {
+        let settings = BrowseSettings {
             env_file: self.env_file.clone(),
             stream_id: self.loaded_stream_id,
             recents: self.recents.clone(),
@@ -821,7 +813,7 @@ impl App {
         let _ = save_settings(&settings);
     }
 
-    async fn restore_session(&mut self, settings: &TuiSettings) {
+    async fn restore_session(&mut self, settings: &BrowseSettings) {
         if let Some(stream_id) = settings.stream_id
             && let Some(index) = self
                 .streams
@@ -871,14 +863,12 @@ impl App {
 
     fn info_for_inspect(&self) -> (String, Vec<Line<'static>>) {
         match (self.browse_level, self.focus) {
-            (BrowseLevel::Root, _) => {
+            (BrowseLevel::Root, _) | (BrowseLevel::Streams, Focus::List) => {
                 stream_info(self.selected_stream(), true, self.loaded_import_counts())
             }
-            (BrowseLevel::Streams, Focus::List) => {
-                stream_info(self.selected_stream(), true, self.loaded_import_counts())
+            (BrowseLevel::Streams, Focus::Table) | (BrowseLevel::Datasets, Focus::List) => {
+                dataset_info(self.selected_dataset(), true)
             }
-            (BrowseLevel::Streams, Focus::Table) => dataset_info(self.selected_dataset(), true),
-            (BrowseLevel::Datasets, Focus::List) => dataset_info(self.selected_dataset(), true),
             (BrowseLevel::Datasets, Focus::Table) => signal_info(self.selected_signal()),
         }
     }

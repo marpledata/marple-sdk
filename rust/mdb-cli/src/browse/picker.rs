@@ -41,7 +41,7 @@ impl FilePicker {
         self.recents.len() + self.entries.len()
     }
 
-    pub(crate) fn set_dir(&mut self, dir: PathBuf, select: Option<&Path>) {
+    fn set_dir(&mut self, dir: PathBuf, select: Option<&Path>) {
         let dir = fs::canonicalize(&dir).unwrap_or(dir);
         self.entries = list_dir(&dir);
         self.dir = dir;
@@ -80,7 +80,7 @@ impl FilePicker {
         self.item(self.selected)
     }
 
-    pub(crate) fn items(&self) -> impl Iterator<Item = &PickerEntry> {
+    fn items(&self) -> impl Iterator<Item = &PickerEntry> {
         self.recents.iter().chain(self.entries.iter())
     }
 
@@ -248,16 +248,16 @@ fn list_dir(dir: &Path) -> Vec<PickerEntry> {
     entries
 }
 
-pub(crate) fn expand_path(input: &str) -> PathBuf {
+fn expand_path(input: &str) -> PathBuf {
     if input == "~" {
         return std::env::var_os("HOME")
             .map(PathBuf::from)
             .unwrap_or_else(|| PathBuf::from(input));
     }
-    if let Some(rest) = input.strip_prefix("~/") {
-        if let Some(home) = std::env::var_os("HOME") {
-            return PathBuf::from(home).join(rest);
-        }
+    if let Some(rest) = input.strip_prefix("~/")
+        && let Some(home) = std::env::var_os("HOME")
+    {
+        return PathBuf::from(home).join(rest);
     }
     PathBuf::from(input)
 }
@@ -270,7 +270,7 @@ fn same_path(left: &Path, right: &Path) -> bool {
 #[cfg(test)]
 mod tests {
     use super::{FilePicker, expand_path, list_dir, parent_dir};
-    use crate::tui::session::RecentEnv;
+    use crate::browse::session::RecentEnv;
     use std::fs;
     use std::path::PathBuf;
     use std::sync::Mutex;

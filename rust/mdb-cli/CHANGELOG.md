@@ -9,16 +9,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
-- `mdb tui` browses streams, datasets, and signals, with an env-file picker and a workspace card (license chip, usage bars, env/host).
-
-### Changed
-
-- `v` opens a filesystem picker for `--env-file` (browse folders or type a path), with recent files labeled by workspace name.
-- The TUI drops the duplicate status footer; counts and FINISHED/LIVE stay on table titles, and errors reuse the help line.
-
-### Fixed
-
-- Workspace name no longer shows `not connected` when streams have already loaded.
+- `mdb` and `mdb browse` open a stream / dataset / signal browser (bare `mdb` only when stdin and stdout are a terminal; otherwise help is printed). Press `v` for an env-file picker (folders, typed path, recent files labeled by workspace). Session is saved in `$XDG_CONFIG_HOME/mdb/browse.toml`. The workspace card shows license and usage.
 
 ## [0.3.0] - 2026-08-20
 

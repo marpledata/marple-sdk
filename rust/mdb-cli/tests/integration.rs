@@ -185,8 +185,25 @@ fn test_env_file_appears_in_help() {
         "help should mention --env-file, got: {stdout}"
     );
     assert!(
-        stdout.contains("tui"),
-        "help should mention the tui command, got: {stdout}"
+        stdout.contains("browse"),
+        "help should mention the browse command, got: {stdout}"
+    );
+}
+
+#[test]
+fn test_no_args_without_tty_prints_help() {
+    let mut cmd = cargo_bin_cmd!("mdb");
+    cmd.env("NO_COLOR", "1");
+    let output = cmd.assert().success();
+    let stdout = String::from_utf8_lossy(&output.get_output().stdout);
+
+    assert!(
+        stdout.contains("Usage:"),
+        "bare mdb without a TTY should print help, got: {stdout}"
+    );
+    assert!(
+        stdout.contains("browse"),
+        "help should mention the browse command, got: {stdout}"
     );
 }
 

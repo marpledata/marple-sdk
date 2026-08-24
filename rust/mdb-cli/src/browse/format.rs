@@ -17,10 +17,7 @@ pub(super) fn body_style() -> Style {
 }
 
 pub(super) fn kv(key: &str, value: impl std::fmt::Display) -> Line<'static> {
-    Line::from(vec![
-        Span::styled(format!("{key:<18}"), Style::default().fg(Color::DarkGray)),
-        Span::styled(value.to_string(), body_style()),
-    ])
+    kv_styled(key, value, body_style())
 }
 
 pub(super) fn kv_styled(key: &str, value: impl std::fmt::Display, style: Style) -> Line<'static> {

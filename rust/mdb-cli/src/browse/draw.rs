@@ -22,7 +22,11 @@ const COUNT_COL: u16 = 8;
 pub(super) fn draw(frame: &mut Frame, app: &mut App) {
     let root = Layout::default()
         .direction(Direction::Vertical)
-        .constraints([Constraint::Length(1), Constraint::Min(8), Constraint::Length(1)])
+        .constraints([
+            Constraint::Length(1),
+            Constraint::Min(8),
+            Constraint::Length(1),
+        ])
         .split(frame.area());
     draw_breadcrumb(frame, app, root[0]);
     if app.browse_level == BrowseLevel::Root {
@@ -165,7 +169,13 @@ fn loaded_or_hint(
     empty: bool,
 ) -> bool {
     if loading {
-        draw_hint(frame, area, title, focused, &format!("loading {noun} {dots}"));
+        draw_hint(
+            frame,
+            area,
+            title,
+            focused,
+            &format!("loading {noun} {dots}"),
+        );
         return false;
     }
     if !loaded {
@@ -188,11 +198,11 @@ fn render_table(
     widths: impl IntoIterator<Item = Constraint>,
     len: usize,
     selected: Option<usize>,
-    mut row_at: impl FnMut(usize) -> Row<'static>,
+    row_at: impl FnMut(usize) -> Row<'static>,
 ) {
     let (start, end) = visible_range(len, selected, table_view_rows(area.height));
     let title = window_title(title, start, end, len);
-    let rows: Vec<Row> = (start..end).map(|index| row_at(index)).collect();
+    let rows: Vec<Row> = (start..end).map(row_at).collect();
     let mut table = Table::new(rows, widths)
         .block(block(&title, focused))
         .style(body_style())
@@ -249,11 +259,11 @@ fn draw_table(frame: &mut Frame, app: &App, area: Rect) {
             );
         }
         BrowseLevel::Streams => {
-            let title = app
-                .selected_stream()
+            let stream = app.selected_stream();
+            let title = stream
                 .map(|stream| format!("datasets  /{}", stream.name))
                 .unwrap_or_else(|| "datasets".to_string());
-            let stream_id = app.selected_stream().map(|stream| stream.id);
+            let stream_id = stream.map(|stream| stream.id);
             let loaded = stream_id.is_some() && app.loaded_stream_id == stream_id;
             if !loaded_or_hint(
                 frame,
@@ -263,7 +273,7 @@ fn draw_table(frame: &mut Frame, app: &App, area: Rect) {
                 loaded,
                 app.is_loading_datasets(),
                 app.loading_dots(),
-                app.selected_stream().and_then(|stream| stream.n_datasets),
+                stream.and_then(|stream| stream.n_datasets),
                 "datasets",
                 app.datasets.is_empty(),
             ) {
@@ -312,10 +322,10 @@ fn draw_table(frame: &mut Frame, app: &App, area: Rect) {
             );
         }
         BrowseLevel::Datasets => {
-            let dataset_id = app.selected_dataset().map(|dataset| dataset.id);
+            let dataset = app.selected_dataset();
+            let dataset_id = dataset.map(|dataset| dataset.id);
             let loaded = dataset_id.is_some() && app.signals_dataset_id == dataset_id;
-            let title = app
-                .selected_dataset()
+            let title = dataset
                 .map(|dataset| format!("signals  /{}", dataset.path))
                 .unwrap_or_else(|| "signals".to_string());
             if !loaded_or_hint(
@@ -326,7 +336,7 @@ fn draw_table(frame: &mut Frame, app: &App, area: Rect) {
                 loaded,
                 app.is_loading_signals(),
                 app.loading_dots(),
-                app.selected_dataset().and_then(|dataset| dataset.n_signals),
+                dataset.and_then(|dataset| dataset.n_signals),
                 "signals",
                 app.signals.is_empty(),
             ) {
@@ -552,12 +562,9 @@ fn workspace_usage(app: &App) -> (Option<u64>, Option<u64>, Option<u64>) {
     }
 }
 
-fn inner_cols(area: Rect) -> usize {
-    area.width.saturating_sub(2) as usize
-}
-
 fn text_col(area: Rect, reserved: u16, gaps: u16) -> usize {
-    inner_cols(area).saturating_sub(usize::from(reserved) + usize::from(gaps))
+    (area.width.saturating_sub(2) as usize)
+        .saturating_sub(usize::from(reserved) + usize::from(gaps))
 }
 
 fn table_view_rows(height: u16) -> usize {
@@ -645,10 +652,7 @@ fn draw_file_picker(frame: &mut Frame, picker: &FilePicker) {
             .map(|entry| {
                 let workspace = entry.workspace.as_deref().unwrap_or("—");
                 ListItem::new(Line::from(vec![
-                    Span::styled(
-                        format!("{workspace:<22}"),
-                        Style::default().fg(Color::Cyan),
-                    ),
+                    Span::styled(format!("{workspace:<22}"), Style::default().fg(Color::Cyan)),
                     Span::styled(entry.name.clone(), Style::default().fg(Color::DarkGray)),
                 ]))
             })
@@ -669,7 +673,8 @@ fn draw_file_picker(frame: &mut Frame, picker: &FilePicker) {
     }
 
     frame.render_widget(
-        Paragraph::new(picker.dir.display().to_string()).style(Style::default().fg(Color::DarkGray)),
+        Paragraph::new(picker.dir.display().to_string())
+            .style(Style::default().fg(Color::DarkGray)),
         chunks[index],
     );
     index += 1;

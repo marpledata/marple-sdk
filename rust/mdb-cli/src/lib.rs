@@ -3,7 +3,7 @@ use clap::ValueEnum;
 use indicatif::{ProgressBar, ProgressStyle};
 use marple_db::{Dataset, ImportStatus, MarpleDB, ProgressReporter, Stream};
 
-pub mod tui;
+pub mod browse;
 
 #[derive(Clone, Copy, Debug, Default, ValueEnum)]
 #[clap(rename_all = "lowercase")]
