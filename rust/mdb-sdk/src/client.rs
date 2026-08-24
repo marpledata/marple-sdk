@@ -1,5 +1,8 @@
 use crate::errors::{Error, Result};
-use crate::models::{Dataset, HealthResponse, ImportStatus, StreamsResponse};
+use crate::models::{
+    CurrentWorkspace, Dataset, HealthResponse, ImportStatus, Signal, StreamsResponse, UsageSeries,
+    UsageType, UserInfo, WorkspaceLicense,
+};
 use reqwest::{
     Client, Method, Response, Url,
     header::{AUTHORIZATION, HeaderMap, HeaderName, HeaderValue, USER_AGENT},
@@ -181,6 +184,79 @@ impl MarpleDB {
         self.get("health", &()).await
     }
 
+    /// Fetches the license for the workspace bound to this token.
+    ///
+    /// Returns `Ok(None)` when the workspace has no license. The top-level
+    /// `workspace` field is the workspace slug, not the license row id.
+    pub async fn get_workspace_license(&self) -> Result<Option<WorkspaceLicense>> {
+        self.get("workspace/license", &()).await
+    }
+
+    /// Fetches the authenticated user profile, including workspace memberships.
+    pub async fn get_user_info(&self) -> Result<UserInfo> {
+        self.get("user/info", &()).await
+    }
+
+    /// Fetches a workspace usage series (`cold_storage`, `hot_storage`, …).
+    pub async fn get_usage_series(
+        &self,
+        usage_type: UsageType,
+        start_time: Option<i64>,
+        end_time: Option<i64>,
+    ) -> Result<UsageSeries> {
+        #[derive(Serialize)]
+        struct Query {
+            #[serde(skip_serializing_if = "Option::is_none")]
+            start_time: Option<i64>,
+            #[serde(skip_serializing_if = "Option::is_none")]
+            end_time: Option<i64>,
+        }
+        self.get(
+            &format!("usage/series/{usage_type}"),
+            &Query {
+                start_time,
+                end_time,
+            },
+        )
+        .await
+    }
+
+    /// Resolves the current workspace name, id, and latest storage usage.
+    ///
+    /// Name comes from `/user/info` when a membership matches the license
+    /// slug; otherwise the slug is used. Usage points are best-effort.
+    pub async fn get_current_workspace(&self) -> Result<CurrentWorkspace> {
+        let license = self
+            .get_workspace_license()
+            .await?
+            .ok_or_else(|| Error::Protocol("workspace has no license".to_string()))?;
+        let id = license.workspace;
+        let name = match self.get_user_info().await {
+            Ok(info) => info
+                .workspaces
+                .into_iter()
+                .find(|membership| membership.workspace_id == id)
+                .map(|membership| membership.name)
+                .filter(|name| !name.is_empty())
+                .unwrap_or_else(|| id.clone()),
+            Err(_) => id.clone(),
+        };
+        Ok(CurrentWorkspace {
+            id,
+            name,
+            cold_bytes: self.latest_usage(UsageType::ColdStorage).await,
+            hot_bytes: self.latest_usage(UsageType::HotStorage).await,
+            archive_bytes: self.latest_usage(UsageType::ArchiveStorage).await,
+        })
+    }
+
+    async fn latest_usage(&self, usage_type: UsageType) -> Option<u64> {
+        self.get_usage_series(usage_type, None, None)
+            .await
+            .ok()
+            .and_then(|series| series.latest())
+    }
+
     /// Lists all streams visible to the token.
     pub async fn get_streams(&self) -> Result<Vec<crate::Stream>> {
         let streams_response: StreamsResponse = self.get("streams", &()).await?;
@@ -259,6 +335,15 @@ impl MarpleDB {
     pub async fn get_dataset(&self, stream_id: i32, dataset_id: i32) -> Result<Dataset> {
         self.get(&format!("stream/{}/dataset/{}", stream_id, dataset_id), &())
             .await
+    }
+
+    /// Lists signals in a dataset.
+    pub async fn get_signals(&self, stream_id: i32, dataset_id: i32) -> Result<Vec<Signal>> {
+        self.get(
+            &format!("stream/{stream_id}/dataset/{dataset_id}/signals"),
+            &(),
+        )
+        .await
     }
 
     /// Returns a pre-signed URL for downloading a dataset's original uploaded file.

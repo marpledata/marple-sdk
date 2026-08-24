@@ -17,6 +17,173 @@ pub struct HealthResponse {
     pub status: String,
 }
 
+/// Workspace storage usage category used by `/usage/series/{usage_type}`.
+#[non_exhaustive]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum UsageType {
+    ColdStorage,
+    HotStorage,
+    ArchiveStorage,
+    Import,
+    ImportLive,
+}
+
+impl UsageType {
+    /// Returns the API path segment for this usage type.
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::ColdStorage => "cold_storage",
+            Self::HotStorage => "hot_storage",
+            Self::ArchiveStorage => "archive_storage",
+            Self::Import => "import",
+            Self::ImportLive => "import_live",
+        }
+    }
+}
+
+impl fmt::Display for UsageType {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.write_str(self.as_str())
+    }
+}
+
+/// Time series returned by `/usage/series/{usage_type}`.
+#[non_exhaustive]
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct UsageSeries {
+    /// Sample timestamps as epoch seconds.
+    #[serde(default)]
+    pub timestamps: Vec<f64>,
+    /// Sample values. Storage series are in bytes.
+    #[serde(default)]
+    pub values: Vec<f64>,
+    /// True when the series is a running integral (storage).
+    #[serde(default)]
+    pub integrated: bool,
+    /// Unit advertised by the API, usually `bytes`.
+    #[serde(default)]
+    pub unit: String,
+}
+
+impl UsageSeries {
+    /// Returns the latest sample as a non-negative integer, if present.
+    pub fn latest(&self) -> Option<u64> {
+        self.values
+            .last()
+            .copied()
+            .map(|value| value.max(0.0) as u64)
+    }
+}
+
+/// License type issued for a MarpleDB workspace.
+#[non_exhaustive]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "SCREAMING_SNAKE_CASE")]
+pub enum LicenseType {
+    Dev,
+    Free,
+    Trial,
+    Paid,
+    Poc,
+    Sponsorship,
+}
+
+/// Realtime ingest tier from the workspace license.
+#[non_exhaustive]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "SCREAMING_SNAKE_CASE")]
+pub enum RealtimeTier {
+    Disabled,
+    Slow,
+    Fast,
+    Unlimited,
+}
+
+/// Storage and ingest limits from a workspace license.
+#[non_exhaustive]
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct LicenseLimits {
+    pub hot_bytes: u64,
+    pub cold_bytes: u64,
+    pub archive_bytes: u64,
+    #[serde(default)]
+    pub ingestion_workers: u32,
+    #[serde(default)]
+    pub realtime: Option<RealtimeTier>,
+}
+
+/// Signed license payload returned by `/workspace/license`.
+#[non_exhaustive]
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct LicensePayload {
+    #[serde(rename = "type")]
+    pub license_type: LicenseType,
+    pub product: String,
+    pub deployment: String,
+    #[serde(default)]
+    pub workspace: Option<String>,
+    pub expiry_date: i64,
+    pub features: LicenseLimits,
+}
+
+/// Workspace license returned by `/workspace/license`.
+///
+/// `id` is the license row id. `workspace` is the workspace slug.
+#[non_exhaustive]
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct WorkspaceLicense {
+    pub id: i32,
+    #[serde(default)]
+    pub version: String,
+    #[serde(default)]
+    pub issued_at: i64,
+    #[serde(default)]
+    pub cached_at: i64,
+    pub workspace: String,
+    pub payload: LicensePayload,
+}
+
+/// Workspace membership returned by `/user/info`.
+#[non_exhaustive]
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct WorkspaceMembership {
+    pub workspace_id: String,
+    pub name: String,
+    #[serde(default)]
+    pub role: String,
+    #[serde(default)]
+    pub last_active: Option<i64>,
+}
+
+/// Current user profile returned by `/user/info`.
+#[non_exhaustive]
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct UserInfo {
+    pub id: i32,
+    #[serde(default)]
+    pub email: String,
+    #[serde(default)]
+    pub workspaces: Vec<WorkspaceMembership>,
+    #[serde(default)]
+    pub license: Option<WorkspaceLicense>,
+    #[serde(flatten)]
+    pub extra: Value,
+}
+
+/// Resolved current workspace for the connected token.
+#[non_exhaustive]
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct CurrentWorkspace {
+    /// Workspace slug (`AuthWorkspace.id`).
+    pub id: String,
+    /// Display name, or the slug when `/user/info` has no match.
+    pub name: String,
+    pub cold_bytes: Option<u64>,
+    pub hot_bytes: Option<u64>,
+    pub archive_bytes: Option<u64>,
+}
+
 /// MarpleDB stream metadata.
 #[non_exhaustive]
 #[derive(Clone, Debug, Serialize, Deserialize)]
@@ -151,6 +318,65 @@ pub struct Dataset {
     pub timestamp_stop: Option<f64>,
     /// Import speed, if known.
     pub import_speed: Option<f64>,
+}
+
+/// Storage lifecycle of a signal.
+#[non_exhaustive]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "SCREAMING_SNAKE_CASE")]
+pub enum StorageStatus {
+    FrozenToCold,
+    Cold,
+    ColdToHot,
+    Hot,
+}
+
+/// Signal metadata returned by the MarpleDB API.
+#[non_exhaustive]
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct Signal {
+    /// Signal id.
+    pub id: i32,
+    /// Signal name.
+    pub name: String,
+    /// Engineering unit, if set.
+    #[serde(default)]
+    pub unit: Option<String>,
+    /// Description, if set.
+    #[serde(default)]
+    pub description: Option<String>,
+    /// User-defined signal metadata.
+    #[serde(default)]
+    pub metadata: Metadata,
+    /// Current storage status.
+    pub storage_status: StorageStatus,
+    /// Cold-storage byte size, if known.
+    #[serde(default)]
+    pub cold_bytes: Option<u64>,
+    /// Hot-storage byte size, if known.
+    #[serde(default)]
+    pub hot_bytes: Option<u64>,
+    /// Number of samples, if known.
+    #[serde(default)]
+    pub count: Option<u64>,
+    /// Numeric sample count, if known.
+    #[serde(default)]
+    pub count_value: Option<u64>,
+    /// Text sample count, if known.
+    #[serde(default)]
+    pub count_text: Option<u64>,
+    /// First timestamp (nanoseconds), if known.
+    #[serde(default)]
+    pub time_min: Option<i64>,
+    /// Last timestamp (nanoseconds), if known.
+    #[serde(default)]
+    pub time_max: Option<i64>,
+    /// Owning stream id.
+    #[serde(default)]
+    pub datastream_id: Option<i32>,
+    /// Owning dataset id.
+    #[serde(default)]
+    pub dataset_id: Option<i32>,
 }
 
 /// Upload mode preference for `MarpleDB::push_file`.

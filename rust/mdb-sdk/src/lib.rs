@@ -39,6 +39,7 @@
 //! - [`MarpleDB`] is the API client.
 //! - [`PushFileOptions`] configures uploads.
 //! - [`ImportStatus`] describes dataset import state.
+//! - [`Signal`] is dataset signal metadata from [`MarpleDB::get_signals`].
 //! - [`Error`] is the structured SDK error type.
 //! - [`ProgressReporter`] receives transfer progress updates.
 //!
@@ -69,7 +70,9 @@ mod upload;
 pub use client::{MarpleDB, MarpleDBBuilder};
 pub use errors::{Error, Result};
 pub use models::{
-    Dataset, HealthResponse, ImportStatus, Metadata, PushFileOptions, PushFileOptionsBuilder,
-    Stream, StreamType, UploadModeOverride,
+    CurrentWorkspace, Dataset, HealthResponse, ImportStatus, LicenseLimits, LicensePayload,
+    LicenseType, Metadata, PushFileOptions, PushFileOptionsBuilder, RealtimeTier, Signal,
+    StorageStatus, Stream, StreamType, UploadModeOverride, UsageSeries, UsageType, UserInfo,
+    WorkspaceLicense, WorkspaceMembership,
 };
 pub use progress::{NoopProgress, ProgressReporter};

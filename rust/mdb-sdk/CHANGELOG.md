@@ -5,6 +5,13 @@ All notable changes to `marple-db` will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+### Added
+
+- Typed helpers for `/workspace/license`, `/user/info`, and `/usage/series/{usage_type}`, plus `get_current_workspace()` to resolve the connected workspace name, id, and latest storage usage.
+- `get_signals()` and a typed `Signal` model for dataset signal metadata.
+
 ## [0.3.0] - 2026-08-20
 
 ### Added
