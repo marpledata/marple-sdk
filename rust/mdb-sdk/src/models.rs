@@ -216,7 +216,7 @@ pub struct WorkspaceMembership {
     pub name: String,
     #[serde(default)]
     pub role: String,
-    #[serde(default)]
+    #[serde(default, deserialize_with = "deserialize_optional_epoch")]
     pub last_active: Option<i64>,
 }
 
@@ -331,6 +331,25 @@ where
     D: serde::Deserializer<'de>,
 {
     Ok(Option::<String>::deserialize(deserializer)?.unwrap_or_default())
+}
+
+/// `/user/info` sends `EXTRACT(EPOCH FROM last_active)`, a Postgres float.
+fn deserialize_optional_epoch<'de, D>(deserializer: D) -> std::result::Result<Option<i64>, D::Error>
+where
+    D: serde::Deserializer<'de>,
+{
+    #[derive(Deserialize)]
+    #[serde(untagged)]
+    enum Epoch {
+        Int(i64),
+        Float(f64),
+    }
+    Ok(match Option::<Epoch>::deserialize(deserializer)? {
+        None => None,
+        Some(Epoch::Int(value)) => Some(value),
+        Some(Epoch::Float(value)) if value.is_finite() => Some(value.round() as i64),
+        Some(Epoch::Float(_)) => None,
+    })
 }
 
 /// Dataset import lifecycle status.

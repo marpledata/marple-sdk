@@ -359,7 +359,11 @@ async fn run_server_upload_flow(db: &MarpleDB) -> anyhow::Result<()> {
 
 async fn run_overwrite_flow(db: &MarpleDB) -> anyhow::Result<()> {
     let tmp = tempfile::tempdir()?;
-    let csv_path = tmp.path().join("overwrite_test.csv");
+    let stamp = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .expect("clock")
+        .as_secs();
+    let csv_path = tmp.path().join(format!("overwrite_test_{stamp}.csv"));
     fs::copy(example_csv_path(), &csv_path)?;
     let stream = create_test_stream(db, "overwrite").await?;
 

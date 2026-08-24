@@ -134,7 +134,7 @@ fn deserializes_user_info_workspaces() {
                 "workspace_id": "acme",
                 "name": "Acme Racing",
                 "role": "editor",
-                "last_active": 1_710_000_000
+                "last_active": 1_780_905_024.258647
             }
         ],
         "superuser": false,
@@ -144,6 +144,7 @@ fn deserializes_user_info_workspaces() {
 
     assert_eq!(info.email, "dev@example.com");
     assert_eq!(info.workspaces[0].name, "Acme Racing");
+    assert_eq!(info.workspaces[0].last_active, Some(1_780_905_024));
     assert_eq!(info.extra.get("superuser"), Some(&json!(false)));
 }
 
