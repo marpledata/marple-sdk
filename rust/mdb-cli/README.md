@@ -1,6 +1,6 @@
 # `mdb`
 
-`mdb` is a command-line client for the MarpleDB API, providing direct access to manage streams, ingest files, query datasets, and interact with the MarpleDB service from your terminal.
+`mdb` is a command-line client for the MarpleDB API, providing direct access to manage streams, ingest files, query datasets, browse a workspace in a terminal UI, and interact with the MarpleDB service from your terminal.
 
 ## Installation
 
@@ -55,6 +55,7 @@ Exported shell variables take precedence over values in dotenv files, and explic
 - `mdb dataset <stream-name> download [--output-dir DIR] [dataset-id]` downloads original uploaded files.
 - `mdb datapool datasets [--pool POOL] [--queue] [--format short|long]` lists datapool datasets.
 - `mdb get`, `mdb post`, and `mdb delete` call raw API endpoints.
+- `mdb tui` opens a stream / dataset / signal browser. Use `v` to pick an env file; the last env and stream are saved in `~/.config/mdb/tui.toml`. The TUI starts without a hard API check so you can choose credentials from the picker.
 
 ## Examples
 

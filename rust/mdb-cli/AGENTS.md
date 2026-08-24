@@ -7,6 +7,8 @@ the Rust SDK crate `marple-db`.
 
 - `src/main.rs`: clap command definitions, argument parsing, command handlers,
   progress output, and process exit behavior.
+- `src/tui/`: stream / dataset / signal browser started by `mdb tui`. Session
+  (env file and last stream) is saved in `~/.config/mdb/tui.toml`.
 - `tests/test_db_cli.rs`: CLI tests using `assert_cmd`.
 - `README.md`: user-facing CLI documentation and examples.
 - `CONTRIBUTING.md`: contributor setup notes.
@@ -22,7 +24,8 @@ the Rust SDK crate `marple-db`.
 ## Conventions
 
 - CLI command definitions should stay close to their handlers in `src/main.rs`
-  unless the file is intentionally split into modules.
+  unless the file is intentionally split into modules. The TUI is split on
+  purpose (`src/tui/`).
 - User-facing command output belongs in the CLI crate, not the SDK crate.
 - Write CLI behavior tests in `tests/test_db_cli.rs`. Use `assert_cmd` to spawn
   the `mdb` binary and assert on stdout, stderr, and exit status.

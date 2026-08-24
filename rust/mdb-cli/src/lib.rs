@@ -1,7 +1,9 @@
 use anyhow::Result;
 use clap::ValueEnum;
 use indicatif::{ProgressBar, ProgressStyle};
-use marple_db::{Dataset, ImportStatus, ProgressReporter, Stream};
+use marple_db::{Dataset, ImportStatus, MarpleDB, ProgressReporter, Stream};
+
+pub mod tui;
 
 #[derive(Clone, Copy, Debug, Default, ValueEnum)]
 #[clap(rename_all = "lowercase")]
@@ -109,11 +111,17 @@ impl ProgressReporter for IndicatifProgress {
     }
 }
 
-fn format_count(value: Option<u64>) -> String {
-    value.map_or_else(|| "?".to_string(), |value| value.to_string())
+const CLI_MISSING: &str = "?";
+
+pub fn connect(url: &str, token: &str) -> Result<MarpleDB> {
+    Ok(MarpleDB::builder()
+        .url(url)
+        .token(token)
+        .request_source(concat!("cli/rust:", env!("CARGO_PKG_VERSION")))
+        .build()?)
 }
 
-fn format_import_status(status: ImportStatus) -> String {
+pub(crate) fn format_import_status(status: ImportStatus) -> String {
     match status {
         ImportStatus::Uploading => "UPLOADING",
         ImportStatus::Waiting => "WAITING",
@@ -130,47 +138,102 @@ fn format_import_status(status: ImportStatus) -> String {
     .to_string()
 }
 
+fn format_count(value: Option<u64>) -> String {
+    format_count_with(value, CLI_MISSING)
+}
+
 fn format_progress(value: Option<f64>) -> String {
+    format_progress_with(value, CLI_MISSING)
+}
+
+fn format_compact_count(value: Option<u64>) -> String {
+    format_compact_count_with(value, CLI_MISSING, "G")
+}
+
+fn format_bytes(value: Option<u64>) -> String {
+    format_bytes_with(value, CLI_MISSING)
+}
+
+pub(crate) fn format_count_with(value: Option<u64>, missing: &str) -> String {
+    value.map_or_else(|| missing.to_string(), |value| value.to_string())
+}
+
+pub(crate) fn format_progress_with(value: Option<f64>, missing: &str) -> String {
     let Some(value) = value else {
-        return "?".to_string();
+        return missing.to_string();
     };
     let percent = if value <= 1.0 { value * 100.0 } else { value };
     format!("{percent:.0}%")
 }
 
-fn format_compact_count(value: Option<u64>) -> String {
+pub(crate) fn format_compact_count_with(
+    value: Option<u64>,
+    missing: &str,
+    billion: &str,
+) -> String {
     let Some(value) = value else {
-        return "?".to_string();
+        return missing.to_string();
     };
-    let units = ["", "K", "M", "G", "T", "P"];
+    format_scaled(value, &["", "K", "M", billion, "T", "P"], 1000.0, "", true)
+}
+
+pub(crate) fn format_bytes_with(value: Option<u64>, missing: &str) -> String {
+    let Some(value) = value else {
+        return missing.to_string();
+    };
+    format_scaled(
+        value,
+        &["B", "KiB", "MiB", "GiB", "TiB", "PiB"],
+        1024.0,
+        " ",
+        false,
+    )
+}
+
+fn format_scaled(value: u64, units: &[&str], base: f64, join: &str, trim_zero: bool) -> String {
     let mut scaled = value as f64;
     let mut unit = 0;
-    while scaled >= 1000.0 && unit < units.len() - 1 {
-        scaled /= 1000.0;
+    while scaled >= base && unit < units.len() - 1 {
+        scaled /= base;
         unit += 1;
     }
     if unit == 0 {
-        value.to_string()
+        if join.is_empty() {
+            value.to_string()
+        } else {
+            format!("{value}{join}{}", units[0])
+        }
     } else {
         let formatted = format!("{scaled:.1}");
-        format!("{}{}", formatted.trim_end_matches(".0"), units[unit])
+        let number = if trim_zero {
+            formatted.trim_end_matches(".0")
+        } else {
+            formatted.as_str()
+        };
+        format!("{number}{join}{}", units[unit])
     }
 }
 
-fn format_bytes(value: Option<u64>) -> String {
-    let Some(value) = value else {
-        return "?".to_string();
-    };
-    let units = ["B", "KiB", "MiB", "GiB", "TiB", "PiB"];
-    let mut scaled = value as f64;
-    let mut unit = 0;
-    while scaled >= 1024.0 && unit < units.len() - 1 {
-        scaled /= 1024.0;
-        unit += 1;
-    }
-    if unit == 0 {
-        format!("{value} B")
-    } else {
-        format!("{scaled:.1} {}", units[unit])
-    }
+pub(crate) fn format_epoch_utc(seconds: f64) -> String {
+    let secs = seconds as i64;
+    let days = secs.div_euclid(86_400);
+    let rem = secs.rem_euclid(86_400);
+    let hours = rem / 3600;
+    let minutes = (rem % 3600) / 60;
+    let (year, month, day) = civil_from_days(days);
+    format!("{year:04}-{month:02}-{day:02} {hours:02}:{minutes:02} UTC")
+}
+
+fn civil_from_days(mut days: i64) -> (i32, u32, u32) {
+    days += 719_468;
+    let era = if days >= 0 { days } else { days - 146_096 } / 146_097;
+    let doe = (days - era * 146_097) as u32;
+    let yoe = (doe - doe / 1460 + doe / 36524 - doe / 146096) / 365;
+    let year = yoe as i64 + era * 400;
+    let doy = doe - (365 * yoe + yoe / 4 - yoe / 100);
+    let mp = (5 * doy + 2) / 153;
+    let day = doy - (153 * mp + 2) / 5 + 1;
+    let month = if mp < 10 { mp + 3 } else { mp - 9 };
+    let year = if month <= 2 { year + 1 } else { year };
+    (year as i32, month, day)
 }

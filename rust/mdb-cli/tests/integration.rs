@@ -184,6 +184,10 @@ fn test_env_file_appears_in_help() {
         stdout.contains("--env-file <PATH>"),
         "help should mention --env-file, got: {stdout}"
     );
+    assert!(
+        stdout.contains("tui"),
+        "help should mention the tui command, got: {stdout}"
+    );
 }
 
 #[test]

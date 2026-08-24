@@ -24,3 +24,6 @@ tokio-util = { version = "0.7.17", features = ["io"] }
 tracing = { version = "0.1.43", default-features = false, features = ["attributes"] }
 url = "2.5.7"
 walkdir = "2.5.0"
+crossterm = "0.28.1"
+ratatui = "0.29.0"
+toml = "0.8.23"

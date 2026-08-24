@@ -146,6 +146,9 @@ enum Commands {
         #[arg(num_args = 0.., value_parser = parse_key_val)]
         data: Vec<(String, Value)>,
     },
+
+    /// Browse streams, datasets, and signals
+    Tui,
 }
 
 #[derive(Subcommand)]
@@ -640,11 +643,7 @@ async fn handle_delete(
 async fn main() -> Result<()> {
     load_env()?;
     let cli = Cli::parse();
-    let marpledb = MarpleDB::builder()
-        .url(&cli.mdb_url)
-        .token(&cli.mdb_token)
-        .request_source(concat!("cli/rust:", env!("CARGO_PKG_VERSION")))
-        .build()?;
+    let marpledb = mdb_cli::connect(&cli.mdb_url, &cli.mdb_token)?;
 
     let Some(command) = cli.command else {
         if cli.version {
@@ -655,16 +654,16 @@ async fn main() -> Result<()> {
         return Ok(());
     };
 
-    // Check health
-    if marpledb.health().await.is_err() {
-        eprintln!("{} {} is not responding", "✗".red(), cli.mdb_url);
-        std::process::exit(1);
-    }
-
-    // Check token
-    if marpledb.get_streams().await.is_err() {
-        eprintln!("{} Invalid token", "✗".red());
-        std::process::exit(1);
+    let needs_api = !matches!(command, Commands::Tui);
+    if needs_api {
+        if marpledb.health().await.is_err() {
+            eprintln!("{} {} is not responding", "✗".red(), cli.mdb_url);
+            std::process::exit(1);
+        }
+        if marpledb.get_streams().await.is_err() {
+            eprintln!("{} Invalid token", "✗".red());
+            std::process::exit(1);
+        }
     }
 
     match command {
@@ -706,6 +705,9 @@ async fn main() -> Result<()> {
         Commands::Get { endpoint, params } => handle_get(&marpledb, &endpoint, params).await?,
         Commands::Post { endpoint, data } => handle_post(&marpledb, &endpoint, data).await?,
         Commands::Delete { endpoint, data } => handle_delete(&marpledb, &endpoint, data).await?,
+        Commands::Tui => {
+            mdb_cli::tui::run(marpledb, cli.mdb_url, cli.mdb_token, cli.env_file).await?
+        }
     }
 
     Ok(())
