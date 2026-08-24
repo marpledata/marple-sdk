@@ -22,12 +22,7 @@ const COUNT_COL: u16 = 8;
 pub(super) fn draw(frame: &mut Frame, app: &mut App) {
     let root = Layout::default()
         .direction(Direction::Vertical)
-        .constraints([
-            Constraint::Length(1),
-            Constraint::Min(8),
-            Constraint::Length(1),
-            Constraint::Length(1),
-        ])
+        .constraints([Constraint::Length(1), Constraint::Min(8), Constraint::Length(1)])
         .split(frame.area());
     draw_breadcrumb(frame, app, root[0]);
     if app.browse_level == BrowseLevel::Root {
@@ -59,10 +54,6 @@ pub(super) fn draw(frame: &mut Frame, app: &mut App) {
         }
     }
     draw_help(frame, app, root[2]);
-    frame.render_widget(
-        Paragraph::new(app.status.clone()).style(Style::default().fg(Color::Gray)),
-        root[3],
-    );
 
     if let Some(picker) = &app.env_picker {
         draw_file_picker(frame, picker);
@@ -167,10 +158,16 @@ fn loaded_or_hint(
     title: &str,
     focused: bool,
     loaded: bool,
+    loading: bool,
+    dots: &str,
     count: Option<u64>,
     noun: &str,
     empty: bool,
 ) -> bool {
+    if loading {
+        draw_hint(frame, area, title, focused, &format!("loading {noun} {dots}"));
+        return false;
+    }
     if !loaded {
         draw_hint(frame, area, title, focused, &load_hint(count, noun));
         return false;
@@ -264,6 +261,8 @@ fn draw_table(frame: &mut Frame, app: &App, area: Rect) {
                 &title,
                 focused,
                 loaded,
+                app.is_loading_datasets(),
+                app.loading_dots(),
                 app.selected_stream().and_then(|stream| stream.n_datasets),
                 "datasets",
                 app.datasets.is_empty(),
@@ -325,6 +324,8 @@ fn draw_table(frame: &mut Frame, app: &App, area: Rect) {
                 &title,
                 focused,
                 loaded,
+                app.is_loading_signals(),
+                app.loading_dots(),
                 app.selected_dataset().and_then(|dataset| dataset.n_signals),
                 "signals",
                 app.signals.is_empty(),
@@ -584,11 +585,13 @@ fn visible_range(len: usize, selected: Option<usize>, view: usize) -> (usize, us
 
 fn draw_help(frame: &mut Frame, app: &App, area: Rect) {
     let env = app.env_label();
-    let help = if let Some(picker) = &app.env_picker {
+    let help = if !app.status.is_empty() {
+        app.status.clone()
+    } else if let Some(picker) = &app.env_picker {
         if picker.editing {
             "enter use or open  esc cancel".to_string()
         } else {
-            "j/k  S-↓/↑ page  gg/G  enter open/use  ← parent  / path  esc close".to_string()
+            "j/k  tab recent|files  enter open/use  ← parent  / path  esc close".to_string()
         }
     } else if app.info_expanded {
         format!("j/k next  S-↓/↑ page  gg/G  i/esc close  v env ({env})  q quit")
@@ -613,18 +616,63 @@ fn draw_file_picker(frame: &mut Frame, picker: &FilePicker) {
     frame.render_widget(ratatui::widgets::Clear, area);
     frame.render_widget(bordered, area);
 
+    let mut constraints = Vec::new();
+    if !picker.recents.is_empty() {
+        constraints.push(Constraint::Length(1));
+        constraints.push(Constraint::Length(picker.recents.len() as u16));
+        constraints.push(Constraint::Length(1));
+    }
+    constraints.push(Constraint::Length(1));
+    constraints.push(Constraint::Min(3));
+    if picker.editing {
+        constraints.push(Constraint::Length(1));
+    }
     let chunks = Layout::default()
         .direction(Direction::Vertical)
-        .constraints([
-            Constraint::Length(1),
-            Constraint::Min(3),
-            Constraint::Length(1),
-        ])
+        .constraints(constraints)
         .split(inner);
+
+    let mut index = 0;
+    if !picker.recents.is_empty() {
+        frame.render_widget(
+            Paragraph::new("recent").style(Style::default().fg(Color::DarkGray)),
+            chunks[index],
+        );
+        index += 1;
+        let items: Vec<ListItem> = picker
+            .recents
+            .iter()
+            .map(|entry| {
+                let workspace = entry.workspace.as_deref().unwrap_or("—");
+                ListItem::new(Line::from(vec![
+                    Span::styled(
+                        format!("{workspace:<22}"),
+                        Style::default().fg(Color::Cyan),
+                    ),
+                    Span::styled(entry.name.clone(), Style::default().fg(Color::DarkGray)),
+                ]))
+            })
+            .collect();
+        let in_recents = picker.selected < picker.recents.len();
+        let list = List::new(items)
+            .style(body_style())
+            .highlight_style(highlight());
+        let mut state = ListState::default().with_selected(in_recents.then_some(picker.selected));
+        frame.render_stateful_widget(list, chunks[index], &mut state);
+        index += 1;
+        frame.render_widget(
+            Paragraph::new("─".repeat(chunks[index].width as usize))
+                .style(Style::default().fg(Color::DarkGray)),
+            chunks[index],
+        );
+        index += 1;
+    }
+
     frame.render_widget(
         Paragraph::new(picker.dir.display().to_string()).style(Style::default().fg(Color::DarkGray)),
-        chunks[0],
+        chunks[index],
     );
+    index += 1;
     let items: Vec<ListItem> = picker
         .entries
         .iter()
@@ -637,22 +685,26 @@ fn draw_file_picker(frame: &mut Frame, picker: &FilePicker) {
             ListItem::new(label)
         })
         .collect();
+    let file_selected = picker
+        .selected
+        .checked_sub(picker.recents.len())
+        .filter(|_| picker.selected >= picker.recents.len());
     let list = List::new(items)
         .style(body_style())
         .highlight_style(highlight());
-    let mut state = ListState::default().with_selected(Some(picker.selected));
-    frame.render_stateful_widget(list, chunks[1], &mut state);
-    let input_style = if picker.editing {
-        Style::default()
-            .fg(Color::Cyan)
-            .add_modifier(Modifier::BOLD)
-    } else {
-        Style::default().fg(Color::DarkGray)
-    };
-    frame.render_widget(
-        Paragraph::new(format!("path  {}", picker.input)).style(input_style),
-        chunks[2],
-    );
+    let mut state = ListState::default().with_selected(file_selected);
+    frame.render_stateful_widget(list, chunks[index], &mut state);
+    index += 1;
+    if picker.editing {
+        frame.render_widget(
+            Paragraph::new(format!("path  {}", picker.input)).style(
+                Style::default()
+                    .fg(Color::Cyan)
+                    .add_modifier(Modifier::BOLD),
+            ),
+            chunks[index],
+        );
+    }
 }
 
 fn block(title: &str, focused: bool) -> Block<'_> {

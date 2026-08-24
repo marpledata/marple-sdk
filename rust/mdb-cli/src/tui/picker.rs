@@ -1,3 +1,4 @@
+use super::session::RecentEnv;
 use std::fs;
 use std::path::{Path, PathBuf};
 
@@ -6,11 +7,13 @@ pub(crate) struct PickerEntry {
     pub name: String,
     pub path: PathBuf,
     pub is_dir: bool,
+    pub workspace: Option<String>,
 }
 
 #[derive(Clone, Debug)]
 pub(crate) struct FilePicker {
     pub dir: PathBuf,
+    pub recents: Vec<PickerEntry>,
     pub entries: Vec<PickerEntry>,
     pub selected: usize,
     pub input: String,
@@ -18,10 +21,11 @@ pub(crate) struct FilePicker {
 }
 
 impl FilePicker {
-    pub(crate) fn open(start: Option<&Path>) -> Self {
+    pub(crate) fn open(start: Option<&Path>, recents: &[RecentEnv]) -> Self {
         let dir = start_dir(start);
         let mut picker = Self {
             dir: PathBuf::new(),
+            recents: recent_entries(recents),
             entries: Vec::new(),
             selected: 0,
             input: start
@@ -33,47 +37,62 @@ impl FilePicker {
         picker
     }
 
+    pub(crate) fn len(&self) -> usize {
+        self.recents.len() + self.entries.len()
+    }
+
     pub(crate) fn set_dir(&mut self, dir: PathBuf, select: Option<&Path>) {
         let dir = fs::canonicalize(&dir).unwrap_or(dir);
         self.entries = list_dir(&dir);
         self.dir = dir;
         self.selected = select
-            .and_then(|target| {
-                self.entries
-                    .iter()
-                    .position(|entry| same_path(&entry.path, target))
-            })
-            .unwrap_or(0);
+            .and_then(|target| self.index_of(target))
+            .unwrap_or_else(|| self.recents.len().min(self.len().saturating_sub(1)));
         if !self.editing {
             self.sync_input();
         }
     }
 
     pub(crate) fn move_sel(&mut self, delta: i32) {
-        if self.entries.is_empty() {
+        if self.len() == 0 {
             self.selected = 0;
             return;
         }
         let current = self.selected as i32;
-        self.selected = (current + delta).clamp(0, self.entries.len() as i32 - 1) as usize;
+        self.selected = (current + delta).clamp(0, self.len() as i32 - 1) as usize;
         if !self.editing {
             self.sync_input();
         }
     }
 
     pub(crate) fn goto(&mut self, index: usize) {
-        if self.entries.is_empty() {
+        if self.len() == 0 {
             self.selected = 0;
             return;
         }
-        self.selected = index.min(self.entries.len() - 1);
+        self.selected = index.min(self.len() - 1);
         if !self.editing {
             self.sync_input();
         }
     }
 
     pub(crate) fn selected_entry(&self) -> Option<&PickerEntry> {
-        self.entries.get(self.selected)
+        self.item(self.selected)
+    }
+
+    pub(crate) fn items(&self) -> impl Iterator<Item = &PickerEntry> {
+        self.recents.iter().chain(self.entries.iter())
+    }
+
+    fn item(&self, index: usize) -> Option<&PickerEntry> {
+        self.recents
+            .get(index)
+            .or_else(|| self.entries.get(index.checked_sub(self.recents.len())?))
+    }
+
+    fn index_of(&self, target: &Path) -> Option<usize> {
+        self.items()
+            .position(|entry| same_path(&entry.path, target))
     }
 
     pub(crate) fn enter_selected(&mut self) -> Option<PathBuf> {
@@ -93,6 +112,17 @@ impl FilePicker {
             let current = self.dir.clone();
             self.editing = false;
             self.set_dir(parent, Some(&current));
+        }
+    }
+
+    pub(crate) fn cycle_section(&mut self) {
+        if self.recents.is_empty() || self.entries.is_empty() {
+            return;
+        }
+        if self.selected < self.recents.len() {
+            self.goto(self.recents.len());
+        } else {
+            self.goto(0);
         }
     }
 
@@ -141,6 +171,23 @@ impl FilePicker {
     }
 }
 
+fn recent_entries(recents: &[RecentEnv]) -> Vec<PickerEntry> {
+    recents
+        .iter()
+        .filter(|recent| recent.path.is_file())
+        .map(|recent| PickerEntry {
+            name: recent
+                .path
+                .file_name()
+                .map(|name| name.to_string_lossy().into_owned())
+                .unwrap_or_else(|| recent.path.display().to_string()),
+            path: recent.path.clone(),
+            is_dir: false,
+            workspace: Some(recent.workspace.clone()),
+        })
+        .collect()
+}
+
 fn start_dir(start: Option<&Path>) -> PathBuf {
     start
         .and_then(|path| {
@@ -171,6 +218,7 @@ fn list_dir(dir: &Path) -> Vec<PickerEntry> {
             name: "..".to_string(),
             path: parent,
             is_dir: true,
+            workspace: None,
         });
     }
     let mut children = Vec::new();
@@ -182,7 +230,12 @@ fn list_dir(dir: &Path) -> Vec<PickerEntry> {
             }
             let path = entry.path();
             let is_dir = path.is_dir();
-            children.push(PickerEntry { name, path, is_dir });
+            children.push(PickerEntry {
+                name,
+                path,
+                is_dir,
+                workspace: None,
+            });
         }
     }
     children.sort_by(|left, right| {
@@ -217,6 +270,7 @@ fn same_path(left: &Path, right: &Path) -> bool {
 #[cfg(test)]
 mod tests {
     use super::{FilePicker, expand_path, list_dir, parent_dir};
+    use crate::tui::session::RecentEnv;
     use std::fs;
     use std::path::PathBuf;
     use std::sync::Mutex;
@@ -254,14 +308,14 @@ mod tests {
         let env = names.iter().position(|name| *name == ".env").unwrap();
         assert!(python < env);
 
-        let mut picker = FilePicker::open(Some(&tmp.path().join(".env")));
+        let mut picker = FilePicker::open(Some(&tmp.path().join(".env")), &[]);
         assert_eq!(
             picker.selected_entry().map(|entry| entry.name.as_str()),
             Some(".env")
         );
         assert!(picker.enter_selected().is_some());
 
-        picker = FilePicker::open(Some(tmp.path()));
+        picker = FilePicker::open(Some(tmp.path()), &[]);
         picker.goto(
             picker
                 .entries
@@ -283,7 +337,7 @@ mod tests {
         let tmp = tempfile::tempdir().unwrap();
         let file = tmp.path().join("custom.env");
         fs::write(&file, "MDB_TOKEN=saved\n").unwrap();
-        let mut picker = FilePicker::open(Some(tmp.path()));
+        let mut picker = FilePicker::open(Some(tmp.path()), &[]);
         picker.input = file.display().to_string();
         assert_eq!(picker.submit_input().unwrap(), Some(file));
 
@@ -303,5 +357,32 @@ mod tests {
             assert_eq!(expand_path("~/.env"), tmp.path().join(".env"));
             assert_eq!(expand_path("/abs/path.env"), PathBuf::from("/abs/path.env"));
         });
+    }
+
+    #[test]
+    fn recents_sit_above_directory_listing() {
+        let tmp = tempfile::tempdir().unwrap();
+        let saved = tmp.path().join("saved.env");
+        fs::write(&saved, "MDB_TOKEN=saved\n").unwrap();
+        fs::write(tmp.path().join(".env"), "MDB_TOKEN=local\n").unwrap();
+        let recents = [RecentEnv {
+            path: saved.clone(),
+            workspace: "Staging".to_string(),
+        }];
+        let picker = FilePicker::open(Some(&saved), &recents);
+        assert_eq!(picker.recents[0].workspace.as_deref(), Some("Staging"));
+        assert_eq!(picker.recents[0].name, "saved.env");
+        assert!(picker.entries.iter().any(|entry| entry.name == ".env"));
+        assert_eq!(
+            picker.selected_entry().map(|entry| entry.path.as_path()),
+            Some(saved.as_path())
+        );
+
+        let mut browsing = FilePicker::open(Some(tmp.path()), &recents);
+        browsing.goto(browsing.recents.len());
+        browsing.cycle_section();
+        assert!(browsing.selected < browsing.recents.len());
+        browsing.cycle_section();
+        assert!(browsing.selected >= browsing.recents.len());
     }
 }

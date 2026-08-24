@@ -30,7 +30,11 @@ pub(super) fn kv_styled(key: &str, value: impl std::fmt::Display, style: Style) 
     ])
 }
 
-pub(super) fn stream_info(stream: Option<&Stream>, expanded: bool) -> (String, Vec<Line<'static>>) {
+pub(super) fn stream_info(
+    stream: Option<&Stream>,
+    expanded: bool,
+    import: Option<(usize, usize)>,
+) -> (String, Vec<Line<'static>>) {
     let Some(stream) = stream else {
         return ("info".to_string(), vec![Line::from("no stream selected")]);
     };
@@ -38,11 +42,17 @@ pub(super) fn stream_info(stream: Option<&Stream>, expanded: bool) -> (String, V
         kv("id", stream.id),
         kv("type", stream_kind(stream)),
         kv("datasets", opt_count(stream.n_datasets)),
+    ];
+    if let Some((finished, live)) = import {
+        lines.push(kv("finished", finished));
+        lines.push(kv("live", live));
+    }
+    lines.extend([
         kv("plugin", opt_text(stream.plugin.as_deref())),
         kv("args", opt_text(stream.plugin_args.as_deref())),
         kv("cold", opt_bytes(stream.cold_bytes)),
         kv("hot", opt_bytes(stream.hot_bytes)),
-    ];
+    ]);
     if expanded {
         lines.push(kv("points", compact_count(stream.n_datapoints)));
         if !stream.description.is_empty() {

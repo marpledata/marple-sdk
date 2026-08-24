@@ -4,12 +4,41 @@ use std::fs;
 use std::path::{Path, PathBuf};
 
 const SAAS_URL: &str = "https://db.marpledata.com/api/v1";
+const RECENT_LIMIT: usize = 8;
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub(crate) struct RecentEnv {
+    pub path: PathBuf,
+    pub workspace: String,
+}
 
 #[derive(Clone, Debug, Default, Serialize, Deserialize)]
 pub(crate) struct TuiSettings {
     pub env_file: Option<PathBuf>,
     #[serde(default)]
     pub stream_id: Option<i32>,
+    #[serde(default)]
+    pub recents: Vec<RecentEnv>,
+}
+
+pub(crate) fn remember_recent(
+    recents: Vec<RecentEnv>,
+    path: PathBuf,
+    workspace: String,
+) -> Vec<RecentEnv> {
+    let key = fs::canonicalize(&path).unwrap_or_else(|_| path.clone());
+    let mut next = vec![RecentEnv { path, workspace }];
+    for recent in recents {
+        if !recent.path.is_file() {
+            continue;
+        }
+        let other = fs::canonicalize(&recent.path).unwrap_or_else(|_| recent.path.clone());
+        if other != key {
+            next.push(recent);
+        }
+    }
+    next.truncate(RECENT_LIMIT);
+    next
 }
 
 fn xdg_home(var: &str, fallback: &str) -> PathBuf {
@@ -76,7 +105,8 @@ pub(crate) fn env_label(path: &Path) -> String {
 
 #[cfg(test)]
 mod tests {
-    use super::{TuiSettings, load_settings, save_settings};
+    use super::{RecentEnv, TuiSettings, load_settings, remember_recent, save_settings};
+    use std::fs;
     use std::path::{Path, PathBuf};
     use std::sync::Mutex;
 
@@ -104,6 +134,10 @@ mod tests {
             let settings = TuiSettings {
                 env_file: Some(PathBuf::from("/tmp/custom.env")),
                 stream_id: Some(5),
+                recents: vec![RecentEnv {
+                    path: PathBuf::from("/tmp/custom.env"),
+                    workspace: "Staging".to_string(),
+                }],
             };
             save_settings(&settings).unwrap();
             let loaded = load_settings();
@@ -112,7 +146,43 @@ mod tests {
                 Some(Path::new("/tmp/custom.env"))
             );
             assert_eq!(loaded.stream_id, Some(5));
+            assert_eq!(loaded.recents[0].workspace, "Staging");
             assert!(tmp.path().join("mdb/tui.toml").is_file());
         });
+    }
+
+    #[test]
+    fn remember_recent_moves_to_front_and_drops_missing() {
+        let tmp = tempfile::tempdir().unwrap();
+        let first = tmp.path().join("a.env");
+        let second = tmp.path().join("b.env");
+        let gone = tmp.path().join("missing.env");
+        fs::write(&first, "a\n").unwrap();
+        fs::write(&second, "b\n").unwrap();
+
+        let recents = vec![
+            RecentEnv {
+                path: first.clone(),
+                workspace: "One".to_string(),
+            },
+            RecentEnv {
+                path: gone,
+                workspace: "Gone".to_string(),
+            },
+        ];
+        let recents = remember_recent(recents, second.clone(), "Two".to_string());
+        assert_eq!(
+            recents,
+            vec![
+                RecentEnv {
+                    path: second,
+                    workspace: "Two".to_string(),
+                },
+                RecentEnv {
+                    path: first,
+                    workspace: "One".to_string(),
+                },
+            ]
+        );
     }
 }
