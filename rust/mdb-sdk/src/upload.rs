@@ -131,7 +131,7 @@ impl MarpleDB {
             "metadata": metadata,
             "overwrite": overwrite,
         });
-        self.post_json("ingestion", &body).await
+        self.post("ingestion", &body).await
     }
 
     async fn get_part_urls(
@@ -141,7 +141,7 @@ impl MarpleDB {
         count: usize,
     ) -> Result<PartUrlsResponse> {
         let endpoint = format!("ingestion/{}/upload/part-urls", ingestion_id);
-        self.get_json(
+        self.get(
             &endpoint,
             &[("start_part", start_part), ("count", count as u32)],
         )
@@ -150,14 +150,14 @@ impl MarpleDB {
 
     async fn complete_upload(&self, ingestion_id: i32) -> Result<()> {
         let endpoint = format!("ingestion/{}/upload/complete", ingestion_id);
-        self.post_json::<_, Value>(&endpoint, &serde_json::json!({}))
+        self.post::<_, Value>(&endpoint, &serde_json::json!({}))
             .await?;
         Ok(())
     }
 
     async fn abort_upload(&self, ingestion_id: i32, reason: &str) -> Result<()> {
         let endpoint = format!("ingestion/{}/abort", ingestion_id);
-        self.post_json::<_, Value>(&endpoint, &serde_json::json!({ "reason": reason }))
+        self.post::<_, Value>(&endpoint, &serde_json::json!({ "reason": reason }))
             .await?;
         Ok(())
     }

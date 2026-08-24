@@ -66,6 +66,10 @@ async fn main() -> anyhow::Result<()> {
 ## Common Operations
 
 - `db.health()` checks the API health endpoint.
+- `db.get_user_info()` fetches the authenticated user profile and workspace memberships.
+- `db.get_current_workspace()` resolves the connected workspace name, license, and latest storage usage.
+- `db.get_workspace_license()` fetches the license for the workspace bound to the token.
+- `db.get_usage_series(UsageType::ColdStorage, None, None)` fetches a workspace usage series.
 - `db.get_streams()` lists streams.
 - `db.get_stream("runs")` finds a stream by name.
 - `db.create_stream("runs", &serde_json::json!({ "plugin": "csv" }))` creates a stream.
@@ -74,6 +78,7 @@ async fn main() -> anyhow::Result<()> {
 - `db.get_datapool_datasets("default")` lists datasets across a datapool.
 - `db.get_datapool_ingest_queue("default")` lists datasets currently in the ingest queue.
 - `db.get_dataset(stream_id, dataset_id)` fetches one dataset.
+- `db.get_signals(stream_id, dataset_id)` lists signals in a dataset.
 - `db.push_file(stream_id, path, PushFileOptions::default())` uploads a file.
 - `db.wait_for_import(stream_id, dataset_id, timeout)` polls until import reaches a terminal status.
 - `db.get_download_link(&dataset)` returns a pre-signed URL for the original uploaded file.

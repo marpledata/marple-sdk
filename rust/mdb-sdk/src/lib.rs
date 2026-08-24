@@ -1,8 +1,9 @@
 //! Rust SDK for the MarpleDB API.
 //!
-//! The SDK provides async helpers for checking API health, managing streams,
-//! listing datasets, uploading files, waiting for imports, and fetching
-//! pre-signed download links.
+//! The SDK provides async helpers for checking API health, resolving the
+//! current workspace and usage, managing streams, listing datasets and
+//! signals, uploading files, waiting for imports, and fetching pre-signed
+//! download links.
 //!
 //! # Quickstart
 //!
@@ -37,6 +38,9 @@
 //! # Core Types
 //!
 //! - [`MarpleDB`] is the API client.
+//! - [`CurrentWorkspace`] is the resolved workspace from [`MarpleDB::get_current_workspace`].
+//! - [`UserInfo`] and [`WorkspaceLicense`] come from `/user/info` and `/workspace/license`.
+//! - [`UsageSeries`] is a workspace usage series from [`MarpleDB::get_usage_series`].
 //! - [`PushFileOptions`] configures uploads.
 //! - [`ImportStatus`] describes dataset import state.
 //! - [`Signal`] is dataset signal metadata from [`MarpleDB::get_signals`].
@@ -72,7 +76,7 @@ pub use errors::{Error, Result};
 pub use models::{
     CurrentWorkspace, Dataset, HealthResponse, ImportStatus, LicenseLimits, LicensePayload,
     LicenseType, Metadata, PushFileOptions, PushFileOptionsBuilder, RealtimeTier, Signal,
-    StorageStatus, Stream, StreamType, UploadModeOverride, UsageSeries, UsageType, UserInfo,
-    WorkspaceLicense, WorkspaceMembership,
+    StorageQuota, StorageStatus, Stream, StreamType, UploadModeOverride, UsageSeries, UsageType,
+    UserInfo, WorkspaceLicense, WorkspaceMembership,
 };
 pub use progress::{NoopProgress, ProgressReporter};

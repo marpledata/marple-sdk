@@ -1,6 +1,6 @@
 use marple_db::{
-    LicenseType, Signal, StorageStatus, Stream, StreamType, UsageSeries, UserInfo,
-    WorkspaceLicense,
+    LicenseType, RealtimeTier, Signal, StorageQuota, StorageStatus, Stream, StreamType,
+    UsageSeries, UserInfo, WorkspaceLicense,
 };
 use serde_json::json;
 
@@ -114,10 +114,14 @@ fn deserializes_workspace_license() {
     }))
     .expect("license JSON");
 
-    assert_eq!(license.id, 7);
+    assert_eq!(license.id, Some(7));
     assert_eq!(license.workspace, "acme");
     assert_eq!(license.payload.license_type, LicenseType::Paid);
-    assert_eq!(license.payload.features.archive_bytes, 5_000_000_000);
+    assert_eq!(
+        license.payload.features.archive_bytes,
+        Some(StorageQuota::Bytes(5_000_000_000))
+    );
+    assert_eq!(license.payload.features.realtime, Some(RealtimeTier::Fast));
 }
 
 #[test]
@@ -130,7 +134,7 @@ fn deserializes_user_info_workspaces() {
                 "workspace_id": "acme",
                 "name": "Acme Racing",
                 "role": "editor",
-                "last_active": 1_710_000_000
+                "last_active": 1_780_905_024.258647
             }
         ],
         "superuser": false,
@@ -140,6 +144,7 @@ fn deserializes_user_info_workspaces() {
 
     assert_eq!(info.email, "dev@example.com");
     assert_eq!(info.workspaces[0].name, "Acme Racing");
+    assert_eq!(info.workspaces[0].last_active, Some(1_780_905_024));
     assert_eq!(info.extra.get("superuser"), Some(&json!(false)));
 }
 
@@ -153,7 +158,14 @@ fn usage_series_latest_is_last_sample() {
     }))
     .expect("usage series JSON");
 
-    assert_eq!(series.latest(), Some(250));
+    assert_eq!(series.latest(), Some(251));
+}
+
+#[test]
+fn usage_series_latest_skips_non_finite() {
+    let mut series: UsageSeries = serde_json::from_value(json!({ "values": [] })).expect("series");
+    series.values = vec![f64::NAN, f64::INFINITY];
+    assert_eq!(series.latest(), None);
 }
 
 #[test]
@@ -177,4 +189,121 @@ fn deserializes_signal_and_ignores_unknown_fields() {
     assert_eq!(signal.unit.as_deref(), Some("km/h"));
     assert_eq!(signal.storage_status, StorageStatus::Cold);
     assert_eq!(signal.count, Some(1200));
+    assert_eq!(signal.parquet_version, Some(1));
+}
+
+#[test]
+fn license_defaults_missing_fields_and_unknown_enums() {
+    let license: WorkspaceLicense = serde_json::from_value(json!({
+        "workspace": "acme",
+        "payload": {
+            "type": "ENTERPRISE",
+            "features": {
+                "hot_bytes": -1,
+                "cold_bytes": 10_000,
+                "realtime": "TURBO"
+            }
+        }
+    }))
+    .expect("partial license JSON");
+
+    assert_eq!(license.workspace_id(), Some("acme"));
+    assert_eq!(license.payload.license_type, LicenseType::Unknown);
+    assert_eq!(
+        license.payload.features.hot_bytes,
+        Some(StorageQuota::Unlimited)
+    );
+    assert_eq!(
+        license.payload.features.cold_bytes,
+        Some(StorageQuota::Bytes(10_000))
+    );
+    assert_eq!(license.payload.features.archive_bytes, None);
+    assert_eq!(
+        license.payload.features.realtime,
+        Some(RealtimeTier::Unknown)
+    );
+    assert_eq!(license.issued_at, None);
+}
+
+#[test]
+fn user_info_resolves_workspace_from_license() {
+    let info: UserInfo = serde_json::from_value(json!({
+        "id": 1,
+        "workspaces": [
+            {
+                "workspace_id": "other",
+                "name": "Other"
+            },
+            {
+                "workspace_id": "acme",
+                "name": "Acme Racing"
+            }
+        ],
+        "license": {
+            "workspace": "acme",
+            "payload": {
+                "type": "PAID",
+                "features": { "hot_bytes": 1024 }
+            }
+        }
+    }))
+    .expect("user info JSON");
+
+    assert_eq!(info.current_workspace_id(), Some("acme"));
+    assert_eq!(info.workspace_name("acme"), "Acme Racing");
+    assert_eq!(
+        info.license
+            .as_ref()
+            .and_then(|license| license.payload.features.hot_bytes),
+        Some(StorageQuota::Bytes(1024))
+    );
+}
+
+#[test]
+fn user_info_falls_back_to_sole_membership() {
+    let info: UserInfo = serde_json::from_value(json!({
+        "id": 1,
+        "workspaces": [{ "workspace_id": "solo", "name": "Solo Lab" }]
+    }))
+    .expect("user info JSON");
+
+    assert_eq!(info.current_workspace_id(), Some("solo"));
+    assert_eq!(info.workspace_name("solo"), "Solo Lab");
+}
+
+#[test]
+fn user_info_cannot_resolve_workspace_without_license_or_sole_membership() {
+    let info: UserInfo = serde_json::from_value(json!({
+        "id": 1,
+        "workspaces": [
+            { "workspace_id": "a", "name": "A" },
+            { "workspace_id": "b", "name": "B" }
+        ]
+    }))
+    .expect("user info JSON");
+
+    assert_eq!(info.current_workspace_id(), None);
+}
+
+#[test]
+fn usage_series_latest_skips_empty_and_clamps_negative() {
+    let empty: UsageSeries = serde_json::from_value(json!({ "values": [] })).expect("empty");
+    assert_eq!(empty.latest(), None);
+
+    let negative: UsageSeries =
+        serde_json::from_value(json!({ "values": [-3.2] })).expect("negative");
+    assert_eq!(negative.latest(), Some(0));
+}
+
+#[test]
+fn signal_defaults_unknown_storage_status() {
+    let signal: Signal = serde_json::from_value(json!({
+        "id": 1,
+        "name": "temp",
+        "storage_status": "ARCHIVING"
+    }))
+    .expect("signal");
+
+    assert_eq!(signal.storage_status, StorageStatus::Unknown);
+    assert_eq!(signal.parquet_version, None);
 }
