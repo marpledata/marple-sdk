@@ -9,7 +9,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
-- `mdb tui` browses streams, datasets, and signals, with an env-file picker and workspace info including license quotas.
+- `mdb tui` browses streams, datasets, and signals, with an env-file picker and a workspace card (license chip, usage bars, env/host).
 
 ## [0.3.0] - 2026-08-20
 

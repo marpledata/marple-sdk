@@ -4,7 +4,7 @@ mod session;
 use crate::connect;
 use anyhow::Result;
 use crossterm::event::{self, Event, KeyCode, KeyEvent, KeyEventKind, KeyModifiers};
-use draw::{dataset_info, draw, is_cheap, signal_info, stream_info, workspace_info};
+use draw::{dataset_info, draw, is_cheap, signal_info, stream_info};
 use marple_db::{CurrentWorkspace, Dataset, ImportStatus, MarpleDB, Signal, Stream};
 use ratatui::text::Line;
 use ratatui::widgets::{ListState, TableState};
@@ -628,11 +628,7 @@ impl App {
 
     fn breadcrumb_path(&self) -> String {
         match self.browse_level {
-            BrowseLevel::Root => self
-                .workspace
-                .as_ref()
-                .map(|workspace| format!("/{}", workspace.name))
-                .unwrap_or_else(|| "/".to_string()),
+            BrowseLevel::Root => "/".to_string(),
             BrowseLevel::Streams => self
                 .selected_stream()
                 .map(|stream| format!("/{}", stream.name))
@@ -734,8 +730,7 @@ impl App {
 
     fn info_for_highlight(&self) -> (String, Vec<Line<'static>>) {
         match self.browse_level {
-            BrowseLevel::Root => workspace_info(self),
-            BrowseLevel::Streams => stream_info(self.selected_stream(), false),
+            BrowseLevel::Root | BrowseLevel::Streams => stream_info(self.selected_stream(), false),
             BrowseLevel::Datasets => dataset_info(self.selected_dataset(), false),
         }
     }

@@ -3,13 +3,14 @@ use marple_db::{
     CurrentWorkspace, Dataset, LicenseType, Signal, StorageQuota, StorageStatus, Stream, StreamType,
 };
 use ratatui::Frame;
-use ratatui::layout::{Constraint, Direction, Layout, Rect};
+use ratatui::layout::{Alignment, Constraint, Direction, Layout, Rect};
 use ratatui::style::{Color, Modifier, Style};
 use ratatui::text::{Line, Span, Text};
 use ratatui::widgets::{
     Block, Borders, Cell, List, ListItem, ListState, Paragraph, Row, Table, TableState, Wrap,
 };
 use serde_json::Value;
+use std::time::{SystemTime, UNIX_EPOCH};
 
 const LEFT_PANE: [Constraint; 2] = [Constraint::Percentage(24), Constraint::Percentage(76)];
 const ID_COL: u16 = 6;
@@ -32,9 +33,9 @@ pub(super) fn draw(frame: &mut Frame, app: &mut App) {
         } else {
             let stack = Layout::default()
                 .direction(Direction::Vertical)
-                .constraints([Constraint::Length(11), Constraint::Min(8)])
+                .constraints([Constraint::Length(7), Constraint::Min(8)])
                 .split(root[1]);
-            draw_info(frame, app, stack[0]);
+            draw_workspace(frame, app, stack[0]);
             draw_table(frame, app, stack[1]);
         }
     } else {
@@ -111,6 +112,7 @@ fn draw_list(frame: &mut Frame, app: &mut App, area: Rect) {
                 ],
             )
             .block(block("streams", focused))
+            .style(body_style())
             .row_highlight_style(highlight())
             .highlight_symbol("");
             frame.render_stateful_widget(table, area, &mut app.stream_state);
@@ -133,6 +135,7 @@ fn draw_list(frame: &mut Frame, app: &mut App, area: Rect) {
                 .unwrap_or_else(|| "datasets".to_string());
             let table = Table::new(rows, [Constraint::Min(4), Constraint::Length(COUNT_COL)])
                 .block(block(&title, focused))
+                .style(body_style())
                 .row_highlight_style(highlight())
                 .highlight_symbol("");
             frame.render_stateful_widget(table, area, &mut app.dataset_state);
@@ -154,12 +157,6 @@ fn header_row(cells: &[&str]) -> Row<'static> {
     )
 }
 
-fn hint_row(text: &str, columns: usize) -> Row<'static> {
-    let mut cells = vec![Cell::from(text.to_string())];
-    cells.resize(columns, Cell::from(""));
-    Row::new(cells)
-}
-
 fn load_hint(count: Option<u64>, noun: &str) -> String {
     match count {
         Some(count) if count >= AUTO_LOAD_LIMIT => format!("→ to load ({count} {noun})"),
@@ -167,28 +164,24 @@ fn load_hint(count: Option<u64>, noun: &str) -> String {
     }
 }
 
-fn table_or_hint<T>(
-    loaded: bool,
-    items: &[T],
-    hint: &str,
-    empty: &str,
-    columns: usize,
-    row: impl Fn(&T) -> Row<'static>,
-) -> Vec<Row<'static>> {
-    if !loaded {
-        vec![hint_row(hint, columns)]
-    } else if items.is_empty() {
-        vec![hint_row(empty, columns)]
-    } else {
-        items.iter().map(row).collect()
-    }
+fn draw_hint(frame: &mut Frame, area: Rect, title: &str, focused: bool, message: &str) {
+    frame.render_widget(
+        Paragraph::new(message)
+            .style(body_style())
+            .block(block(title, focused)),
+        area,
+    );
 }
 
 fn draw_table(frame: &mut Frame, app: &mut App, area: Rect) {
     let focused = app.focus == Focus::Table;
     match app.browse_level {
         BrowseLevel::Root => {
-            let rows = table_or_hint(true, &app.streams, "", "no streams", 8, |stream| {
+            if app.streams.is_empty() {
+                draw_hint(frame, area, "streams", focused, "no streams");
+                return;
+            }
+            let rows = app.streams.iter().map(|stream| {
                 Row::new(vec![
                     Cell::from(stream.id.to_string()),
                     Cell::from(stream_kind(stream)),
@@ -217,6 +210,7 @@ fn draw_table(frame: &mut Frame, app: &mut App, area: Rect) {
                 "id", "type", "name", "plugin", "args", "datasets", "cold", "hot",
             ]))
             .block(block("streams", focused))
+            .style(body_style())
             .row_highlight_style(highlight())
             .highlight_symbol("");
             frame.render_stateful_widget(table, area, &mut app.stream_state);
@@ -224,11 +218,23 @@ fn draw_table(frame: &mut Frame, app: &mut App, area: Rect) {
         BrowseLevel::Streams => {
             let stream_id = app.selected_stream().map(|stream| stream.id);
             let loaded = stream_id.is_some() && app.loaded_stream_id == stream_id;
-            let hint = load_hint(
-                app.selected_stream().and_then(|stream| stream.n_datasets),
-                "datasets",
-            );
-            let rows = table_or_hint(loaded, &app.datasets, &hint, "no datasets", 8, |dataset| {
+            let title = app
+                .selected_stream()
+                .map(|stream| format!("datasets  /{}", stream.name))
+                .unwrap_or_else(|| "datasets".to_string());
+            if !loaded {
+                let hint = load_hint(
+                    app.selected_stream().and_then(|stream| stream.n_datasets),
+                    "datasets",
+                );
+                draw_hint(frame, area, &title, focused, &hint);
+                return;
+            }
+            if app.datasets.is_empty() {
+                draw_hint(frame, area, &title, focused, "no datasets");
+                return;
+            }
+            let rows = app.datasets.iter().map(|dataset| {
                 Row::new(vec![
                     Cell::from(dataset.id.to_string()),
                     Cell::from(dataset.path.clone()),
@@ -240,10 +246,6 @@ fn draw_table(frame: &mut Frame, app: &mut App, area: Rect) {
                     Cell::from(crate::format_import_status(dataset.import_status)),
                 ])
             });
-            let title = app
-                .selected_stream()
-                .map(|stream| format!("datasets  /{}", stream.name))
-                .unwrap_or_else(|| "datasets".to_string());
             let table = Table::new(
                 rows,
                 [
@@ -268,6 +270,7 @@ fn draw_table(frame: &mut Frame, app: &mut App, area: Rect) {
                 "status",
             ]))
             .block(block(&title, focused))
+            .style(body_style())
             .row_highlight_style(highlight())
             .highlight_symbol("");
             frame.render_stateful_widget(table, area, &mut app.dataset_state);
@@ -275,39 +278,39 @@ fn draw_table(frame: &mut Frame, app: &mut App, area: Rect) {
         BrowseLevel::Datasets => {
             let dataset_id = app.selected_dataset().map(|dataset| dataset.id);
             let loaded = dataset_id.is_some() && app.signals_dataset_id == dataset_id;
-            let hint = load_hint(
-                app.selected_dataset().and_then(|dataset| dataset.n_signals),
-                "signals",
-            );
-            let rows = if !loaded {
-                vec![hint_row(&hint, 8)]
-            } else if app.signals.is_empty() {
-                vec![hint_row("no signals", 8)]
-            } else {
-                let view = table_view_rows(area.height);
-                let selected = app.signal_state.selected();
-                let (start, end) = visible_range(app.signals.len(), selected, view);
-                app.signals[start..end]
-                    .iter()
-                    .map(|signal| {
-                        Row::new(vec![
-                            Cell::from(signal_kind(signal)),
-                            Cell::from(signal.id.to_string()),
-                            Cell::from(signal.name.clone()),
-                            Cell::from(signal.unit.clone().unwrap_or_default()),
-                            Cell::from(signal_source(signal)),
-                            Cell::from(compact_count(signal.count)),
-                            Cell::from(opt_bytes(signal.cold_bytes)),
-                            Cell::from(opt_bytes(signal.hot_bytes)),
-                        ])
-                    })
-                    .collect()
-            };
+            let title = app
+                .selected_dataset()
+                .map(|dataset| format!("signals  /{}", dataset.path))
+                .unwrap_or_else(|| "signals".to_string());
+            if !loaded {
+                let hint = load_hint(
+                    app.selected_dataset().and_then(|dataset| dataset.n_signals),
+                    "signals",
+                );
+                draw_hint(frame, area, &title, focused, &hint);
+                return;
+            }
+            if app.signals.is_empty() {
+                draw_hint(frame, area, &title, focused, "no signals");
+                return;
+            }
+            let view = table_view_rows(area.height);
+            let selected = app.signal_state.selected();
+            let (start, end) = visible_range(app.signals.len(), selected, view);
+            let rows = app.signals[start..end].iter().map(|signal| {
+                Row::new(vec![
+                    Cell::from(signal_kind(signal)),
+                    Cell::from(signal.id.to_string()),
+                    Cell::from(signal.name.clone()),
+                    Cell::from(signal.unit.clone().unwrap_or_default()),
+                    Cell::from(signal_source(signal)),
+                    Cell::from(compact_count(signal.count)),
+                    Cell::from(opt_bytes(signal.cold_bytes)),
+                    Cell::from(opt_bytes(signal.hot_bytes)),
+                ])
+            });
             let title = match app.selected_dataset() {
-                Some(dataset) if !app.signals.is_empty() => {
-                    let selected = app.signal_state.selected().unwrap_or(0);
-                    let view = table_view_rows(area.height);
-                    let (start, end) = visible_range(app.signals.len(), Some(selected), view);
+                Some(dataset) => {
                     format!(
                         "signals  /{}  {}–{} of {}",
                         dataset.path,
@@ -316,7 +319,6 @@ fn draw_table(frame: &mut Frame, app: &mut App, area: Rect) {
                         app.signals.len()
                     )
                 }
-                Some(dataset) => format!("signals  /{}", dataset.path),
                 None => "signals".to_string(),
             };
             let table = Table::new(
@@ -343,18 +345,12 @@ fn draw_table(frame: &mut Frame, app: &mut App, area: Rect) {
                 "hot",
             ]))
             .block(block(&title, focused))
+            .style(body_style())
             .row_highlight_style(highlight())
             .highlight_symbol("");
-            if app.signals.is_empty() || !loaded {
-                frame.render_stateful_widget(table, area, &mut app.signal_state);
-            } else {
-                let selected = app.signal_state.selected();
-                let (start, _) =
-                    visible_range(app.signals.len(), selected, table_view_rows(area.height));
-                let mut window =
-                    TableState::default().with_selected(selected.map(|index| index - start));
-                frame.render_stateful_widget(table, area, &mut window);
-            }
+            let mut window =
+                TableState::default().with_selected(selected.map(|index| index - start));
+            frame.render_stateful_widget(table, area, &mut window);
         }
     }
 }
@@ -383,80 +379,176 @@ fn draw_info(frame: &mut Frame, app: &mut App, area: Rect) {
 fn kv(key: &str, value: impl std::fmt::Display) -> Line<'static> {
     Line::from(vec![
         Span::styled(format!("{key:<18}"), Style::default().fg(Color::DarkGray)),
-        Span::raw(value.to_string()),
+        Span::styled(value.to_string(), body_style()),
     ])
+}
+
+fn body_style() -> Style {
+    Style::default().fg(Color::White)
 }
 
 pub(super) fn is_cheap(count: Option<u64>) -> bool {
     count.is_some_and(|count| count < AUTO_LOAD_LIMIT)
 }
 
-pub(super) fn workspace_info(app: &App) -> (String, Vec<Line<'static>>) {
+fn draw_workspace(frame: &mut Frame, app: &App, area: Rect) {
+    let bordered = block("workspace", false);
+    let inner = bordered.inner(area);
+    frame.render_widget(bordered, area);
+
+    let cols = Layout::default()
+        .direction(Direction::Horizontal)
+        .constraints([Constraint::Min(28), Constraint::Length(50)])
+        .split(inner);
+
     let datasets: u64 = app
         .streams
         .iter()
         .filter_map(|stream| stream.n_datasets)
         .sum();
-    workspace_summary(
-        app.workspace.as_ref(),
-        app.streams.len(),
-        datasets,
-        sum_bytes(app.streams.iter().map(|stream| stream.cold_bytes)),
-        sum_bytes(app.streams.iter().map(|stream| stream.hot_bytes)),
-    )
+    let (name, slug) = match &app.workspace {
+        Some(workspace) => (workspace.name.as_str(), workspace.id.as_str()),
+        None => ("not connected", "—"),
+    };
+    frame.render_widget(
+        Paragraph::new(vec![
+            kv_styled(
+                "name",
+                name,
+                Style::default()
+                    .fg(Color::Cyan)
+                    .add_modifier(Modifier::BOLD),
+            ),
+            kv("id", slug),
+            kv("host", host_from_url(&app.url)),
+            kv("streams", app.streams.len()),
+            kv("datasets", datasets),
+        ]),
+        cols[0],
+    );
+
+    let rows = Layout::default()
+        .direction(Direction::Vertical)
+        .constraints([
+            Constraint::Length(1),
+            Constraint::Length(1),
+            Constraint::Length(1),
+            Constraint::Length(1),
+            Constraint::Length(1),
+        ])
+        .split(cols[1]);
+    let (archive, cold, hot) = workspace_usage(app);
+    let features = app
+        .workspace
+        .as_ref()
+        .and_then(|workspace| workspace.license.as_ref())
+        .map(|license| &license.payload.features);
+    draw_license_row(frame, rows[1], app.workspace.as_ref());
+    draw_usage_row(
+        frame,
+        rows[2],
+        "archive",
+        archive,
+        features.and_then(|f| f.archive_bytes),
+    );
+    draw_usage_row(
+        frame,
+        rows[3],
+        "cold",
+        cold,
+        features.and_then(|f| f.cold_bytes),
+    );
+    draw_usage_row(
+        frame,
+        rows[4],
+        "hot",
+        hot,
+        features.and_then(|f| f.hot_bytes),
+    );
 }
 
-fn workspace_summary(
-    workspace: Option<&CurrentWorkspace>,
-    streams: usize,
-    datasets: u64,
-    fallback_cold: Option<u64>,
-    fallback_hot: Option<u64>,
-) -> (String, Vec<Line<'static>>) {
-    let (title, id, license, cold, hot, archive) = match workspace {
-        Some(workspace) => {
-            let features = workspace
-                .license
-                .as_ref()
-                .map(|license| &license.payload.features);
-            (
-                format!("workspace  {}", workspace.name),
-                workspace.id.clone(),
-                workspace
-                    .license
-                    .as_ref()
-                    .map(|license| license_type(license.payload.license_type))
-                    .unwrap_or("—")
-                    .to_string(),
-                format_usage(workspace.cold_bytes, features.and_then(|f| f.cold_bytes)),
-                format_usage(workspace.hot_bytes, features.and_then(|f| f.hot_bytes)),
-                format_usage(
-                    workspace.archive_bytes,
-                    features.and_then(|f| f.archive_bytes),
-                ),
-            )
-        }
-        None => (
-            "workspace".to_string(),
-            "—".to_string(),
-            "—".to_string(),
-            opt_bytes(fallback_cold),
-            opt_bytes(fallback_hot),
-            "—".to_string(),
-        ),
+fn kv_styled(key: &str, value: impl std::fmt::Display, style: Style) -> Line<'static> {
+    Line::from(vec![
+        Span::styled(format!("{key:<18}"), Style::default().fg(Color::DarkGray)),
+        Span::styled(value.to_string(), style),
+    ])
+}
+
+fn metric_cols(area: Rect) -> [Rect; 3] {
+    let cols = Layout::default()
+        .direction(Direction::Horizontal)
+        .constraints([
+            Constraint::Length(9),
+            Constraint::Length(19),
+            Constraint::Length(22),
+        ])
+        .split(area);
+    [cols[0], cols[1], cols[2]]
+}
+
+fn draw_license_row(frame: &mut Frame, area: Rect, workspace: Option<&CurrentWorkspace>) {
+    let [label, middle, value] = metric_cols(area);
+    frame.render_widget(
+        Paragraph::new("license").style(Style::default().fg(Color::DarkGray)),
+        label,
+    );
+    let Some(license) = workspace.and_then(|workspace| workspace.license.as_ref()) else {
+        frame.render_widget(Paragraph::new("—").style(body_style()), middle);
+        return;
     };
-    (
-        title,
-        vec![
-            kv("id", id),
-            kv("license", license),
-            kv("streams", streams),
-            kv("datasets", datasets),
-            kv("cold", cold),
-            kv("hot", hot),
-            kv("archive", archive),
-        ],
-    )
+    let kind = license.payload.license_type;
+    let (expiry, expiry_color) = format_expiry(license.payload.expiry_date, now_epoch());
+    frame.render_widget(
+        Paragraph::new(Span::styled(
+            license_type(kind),
+            Style::default()
+                .fg(license_color(kind))
+                .add_modifier(Modifier::BOLD),
+        )),
+        middle,
+    );
+    frame.render_widget(
+        Paragraph::new(expiry)
+            .style(Style::default().fg(expiry_color))
+            .alignment(Alignment::Right),
+        value,
+    );
+}
+
+fn draw_usage_row(
+    frame: &mut Frame,
+    area: Rect,
+    name: &str,
+    used: Option<u64>,
+    quota: Option<StorageQuota>,
+) {
+    let [label, middle, value] = metric_cols(area);
+    frame.render_widget(
+        Paragraph::new(name).style(Style::default().fg(Color::DarkGray)),
+        label,
+    );
+    frame.render_widget(Paragraph::new(usage_bar(used, quota, middle.width)), middle);
+    frame.render_widget(
+        Paragraph::new(format_usage(used, quota))
+            .style(body_style())
+            .alignment(Alignment::Right),
+        value,
+    );
+}
+
+fn workspace_usage(app: &App) -> (Option<u64>, Option<u64>, Option<u64>) {
+    match &app.workspace {
+        Some(workspace) => (
+            workspace.archive_bytes,
+            workspace.cold_bytes,
+            workspace.hot_bytes,
+        ),
+        None => (
+            None,
+            sum_bytes(app.streams.iter().map(|stream| stream.cold_bytes)),
+            sum_bytes(app.streams.iter().map(|stream| stream.hot_bytes)),
+        ),
+    }
 }
 
 pub(super) fn stream_info(stream: Option<&Stream>, expanded: bool) -> (String, Vec<Line<'static>>) {
@@ -516,7 +608,10 @@ pub(super) fn dataset_info(
             lines.push(kv("created by", created_by.clone()));
         }
         if dataset.created_at > 0.0 {
-            lines.push(kv("created at", crate::format_epoch_utc(dataset.created_at)));
+            lines.push(kv(
+                "created at",
+                crate::format_epoch_utc(dataset.created_at),
+            ));
         }
         push_metadata(&mut lines, &dataset.metadata, false);
     } else if !dataset.metadata.is_empty() {
@@ -664,6 +759,85 @@ fn format_usage(used: Option<u64>, quota: Option<StorageQuota>) -> String {
     }
 }
 
+fn usage_ratio(used: Option<u64>, quota: Option<StorageQuota>) -> Option<f64> {
+    match (used, quota) {
+        (Some(used), Some(StorageQuota::Bytes(limit))) if limit > 0 => {
+            Some(used as f64 / limit as f64)
+        }
+        _ => None,
+    }
+}
+
+fn bar_color(ratio: f64) -> Color {
+    if ratio >= 0.9 {
+        Color::Red
+    } else if ratio >= 0.7 {
+        Color::Yellow
+    } else {
+        Color::Cyan
+    }
+}
+
+fn usage_bar(used: Option<u64>, quota: Option<StorageQuota>, width: u16) -> Line<'static> {
+    let width = usize::from(width).max(4);
+    let (filled, color) = match usage_ratio(used, quota) {
+        Some(ratio) => (
+            ((ratio * width as f64).round() as usize).min(width),
+            bar_color(ratio),
+        ),
+        None => (0, Color::DarkGray),
+    };
+    Line::from(Span::styled(
+        format!("{}{}", "█".repeat(filled), "░".repeat(width - filled)),
+        Style::default().fg(color),
+    ))
+}
+
+fn license_color(license_type: LicenseType) -> Color {
+    match license_type {
+        LicenseType::Paid => Color::Green,
+        LicenseType::Sponsorship => Color::Yellow,
+        LicenseType::Poc => Color::Magenta,
+        LicenseType::Dev => Color::LightMagenta,
+        _ => Color::Gray,
+    }
+}
+
+fn now_epoch() -> i64 {
+    SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .map(|elapsed| elapsed.as_secs() as i64)
+        .unwrap_or(0)
+}
+
+fn format_expiry(expiry: Option<i64>, now: i64) -> (String, Color) {
+    let Some(secs) = expiry else {
+        return ("no expiry".to_string(), Color::Gray);
+    };
+    let date = crate::format_epoch_utc(secs as f64)
+        .chars()
+        .take(10)
+        .collect::<String>();
+    if secs < now {
+        (format!("expired {date}"), Color::Red)
+    } else if secs - now < 30 * 86_400 {
+        (format!("expires {date}"), Color::Yellow)
+    } else {
+        (format!("expires {date}"), Color::Gray)
+    }
+}
+
+fn host_from_url(url: &str) -> &str {
+    let rest = url
+        .strip_prefix("https://")
+        .or_else(|| url.strip_prefix("http://"))
+        .unwrap_or(url);
+    rest.split('/')
+        .next()
+        .filter(|host| !host.is_empty())
+        .unwrap_or(rest)
+}
+
 fn license_type(license_type: LicenseType) -> &'static str {
     match license_type {
         LicenseType::Dev => "DEV",
@@ -778,12 +952,7 @@ fn draw_help(frame: &mut Frame, app: &App, area: Rect) {
 fn draw_picker(frame: &mut Frame, title: &str, items: Vec<String>, state: &mut ListState) {
     let area = centered(frame.area(), 70, 50);
     let list = List::new(items.into_iter().map(ListItem::new).collect::<Vec<_>>())
-        .block(
-            Block::default()
-                .title(title)
-                .borders(Borders::ALL)
-                .border_style(Style::default().fg(Color::Cyan)),
-        )
+        .block(block(title, true))
         .highlight_style(highlight());
     frame.render_widget(ratatui::widgets::Clear, area);
     frame.render_stateful_widget(list, area, state);
@@ -791,7 +960,7 @@ fn draw_picker(frame: &mut Frame, title: &str, items: Vec<String>, state: &mut L
 
 fn block(title: &str, focused: bool) -> Block<'_> {
     Block::default()
-        .title(title)
+        .title(Span::styled(title, Style::default().fg(Color::White)))
         .borders(Borders::ALL)
         .border_style(if focused {
             Style::default().fg(Color::Cyan)
@@ -828,8 +997,12 @@ fn centered(area: Rect, percent_x: u16, percent_y: u16) -> Rect {
 
 #[cfg(test)]
 mod tests {
-    use super::{ellipsis, format_usage, license_type, storage_status};
+    use super::{
+        bar_color, ellipsis, format_expiry, format_usage, host_from_url, license_color,
+        license_type, storage_status, usage_bar, usage_ratio,
+    };
     use marple_db::{LicenseType, StorageQuota, StorageStatus};
+    use ratatui::style::Color;
 
     #[test]
     fn ellipsis_keeps_short_text() {
@@ -865,6 +1038,65 @@ mod tests {
         assert_eq!(
             storage_status(StorageStatus::FrozenToCold),
             "FROZEN_TO_COLD"
+        );
+    }
+
+    #[test]
+    fn license_colors_match_muhandis_badges() {
+        assert_eq!(license_color(LicenseType::Paid), Color::Green);
+        assert_eq!(license_color(LicenseType::Sponsorship), Color::Yellow);
+        assert_eq!(license_color(LicenseType::Poc), Color::Magenta);
+        assert_eq!(license_color(LicenseType::Dev), Color::LightMagenta);
+        assert_eq!(license_color(LicenseType::Trial), Color::Gray);
+        assert_eq!(license_color(LicenseType::Free), Color::Gray);
+    }
+
+    #[test]
+    fn usage_ratio_and_bar_color() {
+        assert_eq!(
+            usage_ratio(Some(50), Some(StorageQuota::Bytes(100))),
+            Some(0.5)
+        );
+        assert_eq!(usage_ratio(Some(10), Some(StorageQuota::Unlimited)), None);
+        assert_eq!(bar_color(0.5), Color::Cyan);
+        assert_eq!(bar_color(0.7), Color::Yellow);
+        assert_eq!(bar_color(0.9), Color::Red);
+        assert_eq!(
+            usage_bar(Some(50), Some(StorageQuota::Bytes(100)), 20).width() as usize,
+            20
+        );
+    }
+
+    #[test]
+    fn host_and_env_are_compact() {
+        assert_eq!(
+            host_from_url("https://db.marpledata.com/api/v1"),
+            "db.marpledata.com"
+        );
+        assert_eq!(
+            host_from_url("http://localhost:8080/api/v1"),
+            "localhost:8080"
+        );
+    }
+
+    #[test]
+    fn expiry_warns_when_close_or_past() {
+        let now = 1_800_000_000;
+        assert_eq!(
+            format_expiry(Some(now + 60 * 86_400), now),
+            ("expires 2027-03-16".to_string(), Color::Gray)
+        );
+        assert_eq!(
+            format_expiry(Some(now + 10 * 86_400), now),
+            ("expires 2027-01-25".to_string(), Color::Yellow)
+        );
+        assert_eq!(
+            format_expiry(Some(now - 86_400), now),
+            ("expired 2027-01-14".to_string(), Color::Red)
+        );
+        assert_eq!(
+            format_expiry(None, now),
+            ("no expiry".to_string(), Color::Gray)
         );
     }
 }
