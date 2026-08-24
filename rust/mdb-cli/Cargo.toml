@@ -25,7 +25,7 @@ features = ["tokio"]
 version = "0.18.3"
 
 [dependencies.tokio]
-features = ["rt-multi-thread", "macros", "fs", "io-util", "sync", "time"]
+features = ["rt-multi-thread", "macros", "fs", "io-util", "time"]
 workspace = true
 
 [dev-dependencies]

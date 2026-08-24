@@ -1,8 +1,8 @@
 use anyhow::{Context, Result, bail};
 use serde::{Deserialize, Serialize};
+use std::collections::HashSet;
 use std::fs;
 use std::path::{Path, PathBuf};
-use std::process::Command;
 
 const SAAS_URL: &str = "https://db.marpledata.com/api/v1";
 
@@ -19,27 +19,6 @@ pub(crate) struct TuiSettings {
     pub stream_id: Option<i32>,
 }
 
-fn git_root() -> Result<PathBuf> {
-    let cwd = std::env::current_dir().context("current directory")?;
-    Ok(PathBuf::from(git_in(
-        &cwd,
-        &["rev-parse", "--show-toplevel"],
-    )?))
-}
-
-fn git_in(dir: &Path, args: &[&str]) -> Result<String> {
-    let output = Command::new("git")
-        .args(args)
-        .current_dir(dir)
-        .output()
-        .context("failed to run git")?;
-    if !output.status.success() {
-        let stderr = String::from_utf8_lossy(&output.stderr);
-        bail!("git {} failed: {}", args.join(" "), stderr.trim());
-    }
-    Ok(String::from_utf8_lossy(&output.stdout).trim().to_string())
-}
-
 fn xdg_home(var: &str, fallback: &str) -> PathBuf {
     std::env::var_os(var)
         .map(PathBuf::from)
@@ -51,7 +30,7 @@ fn config_dir() -> PathBuf {
     xdg_home("XDG_CONFIG_HOME", ".config").join("mdb")
 }
 
-fn settings_path() -> PathBuf {
+pub(crate) fn settings_path() -> PathBuf {
     config_dir().join("tui.toml")
 }
 
@@ -83,30 +62,36 @@ pub(crate) fn apply_env_file(path: &Path) -> Result<(String, String)> {
     Ok((url, token))
 }
 
-pub(crate) fn discover_env_files() -> Vec<EnvChoice> {
+pub(crate) fn local_dotenv() -> Option<PathBuf> {
+    std::env::current_dir()
+        .ok()
+        .map(|cwd| cwd.join(".env"))
+        .filter(|path| path.is_file())
+}
+
+pub(crate) fn discover_env_files(saved: Option<&Path>) -> Vec<EnvChoice> {
+    discover_env_files_in(std::env::current_dir().ok().as_deref(), saved)
+}
+
+fn discover_env_files_in(cwd: Option<&Path>, saved: Option<&Path>) -> Vec<EnvChoice> {
     let mut choices = Vec::new();
-    let mut seen = std::collections::HashSet::new();
-    let mut dirs = Vec::new();
-    if let Ok(cwd) = std::env::current_dir() {
-        dirs.push(cwd);
-    }
-    if let Ok(root) = git_root() {
-        dirs.push(root.join("python"));
-        dirs.push(root);
-    }
-    for dir in dirs {
-        for name in [".env.staging", ".env.local", ".env.nightly", ".env"] {
-            let path = dir.join(name);
-            if path.is_file() {
-                let key = std::fs::canonicalize(&path).unwrap_or_else(|_| path.clone());
-                if seen.insert(key) {
-                    choices.push(EnvChoice {
-                        label: env_label(&path),
-                        path,
-                    });
-                }
+    let mut seen = HashSet::new();
+    let mut push = |path: PathBuf| {
+        if path.is_file() {
+            let key = fs::canonicalize(&path).unwrap_or_else(|_| path.clone());
+            if seen.insert(key) {
+                choices.push(EnvChoice {
+                    label: env_label(&path),
+                    path,
+                });
             }
         }
+    };
+    if let Some(cwd) = cwd {
+        push(cwd.join(".env"));
+    }
+    if let Some(saved) = saved {
+        push(saved.to_path_buf());
     }
     choices
 }
@@ -125,10 +110,15 @@ fn env_label(path: &Path) -> String {
 
 #[cfg(test)]
 mod tests {
-    use super::{TuiSettings, load_settings, save_settings};
+    use super::{TuiSettings, discover_env_files_in, load_settings, save_settings};
+    use std::fs;
     use std::path::{Path, PathBuf};
+    use std::sync::Mutex;
+
+    static ENV_LOCK: Mutex<()> = Mutex::new(());
 
     fn with_xdg(var: &str, path: &Path, body: impl FnOnce()) {
+        let _guard = ENV_LOCK.lock().expect("env lock");
         let previous = std::env::var_os(var);
         unsafe {
             std::env::set_var(var, path);
@@ -159,5 +149,38 @@ mod tests {
             assert_eq!(loaded.stream_id, Some(5));
             assert!(tmp.path().join("mdb/tui.toml").is_file());
         });
+    }
+
+    #[test]
+    fn discovers_cwd_dotenv_and_saved_file() {
+        let tmp = tempfile::tempdir().unwrap();
+        let local = tmp.path().join(".env");
+        fs::write(&local, "MDB_TOKEN=local\n").unwrap();
+        let saved = tmp.path().join("custom.env");
+        fs::write(&saved, "MDB_TOKEN=saved\n").unwrap();
+
+        let both = discover_env_files_in(Some(tmp.path()), Some(&saved));
+        assert_eq!(both.len(), 2);
+        assert_eq!(both[0].path, local);
+        assert_eq!(both[1].path, saved);
+
+        let empty = tempfile::tempdir().unwrap();
+        assert!(discover_env_files_in(Some(empty.path()), None).is_empty());
+        assert_eq!(
+            discover_env_files_in(Some(empty.path()), Some(&saved)).len(),
+            1
+        );
+        assert_eq!(
+            discover_env_files_in(Some(tmp.path()), Some(&local)).len(),
+            1
+        );
+        assert!(
+            discover_env_files_in(
+                Some(tmp.path()),
+                Some(empty.path().join("missing").as_path())
+            )
+            .len()
+                == 1
+        );
     }
 }

@@ -1,23 +1,29 @@
 mod draw;
+mod format;
 mod session;
 
 use crate::connect;
 use anyhow::Result;
 use crossterm::event::{self, Event, KeyCode, KeyEvent, KeyEventKind, KeyModifiers};
-use draw::{dataset_info, draw, is_cheap, signal_info, stream_info};
+use draw::draw;
+use format::{dataset_info, signal_info, stream_info};
 use marple_db::{CurrentWorkspace, Dataset, ImportStatus, MarpleDB, Signal, Stream};
 use ratatui::text::Line;
 use ratatui::widgets::{ListState, TableState};
 use session::{
-    EnvChoice, TuiSettings, apply_env_file, discover_env_files, load_settings, save_settings,
+    EnvChoice, TuiSettings, apply_env_file, discover_env_files, load_settings, local_dotenv,
+    save_settings,
 };
 use std::path::{Path, PathBuf};
-use std::time::Duration;
-use tokio::sync::mpsc;
 
 pub(super) const AUTO_LOAD_LIMIT: u64 = 100;
 const PAGE_SIZE: i32 = 10;
-const NOT_CONNECTED: &str = "not connected — pick an env file (v)";
+const NOT_CONNECTED: &str = "not connected — pass --env-file PATH";
+const PICK_ENV: &str = "not connected — pick an env file (v)";
+
+pub(super) fn is_cheap(count: Option<u64>) -> bool {
+    count.is_some_and(|count| count < AUTO_LOAD_LIMIT)
+}
 
 enum Motion {
     Delta(i32),
@@ -25,25 +31,6 @@ enum Motion {
     First,
     Last,
     Goto(usize),
-}
-
-enum Jump {
-    First,
-    Last,
-    Index(usize),
-}
-
-impl Jump {
-    fn resolve(self, len: usize) -> Option<usize> {
-        if len == 0 {
-            return None;
-        }
-        Some(match self {
-            Jump::First => 0,
-            Jump::Last => len - 1,
-            Jump::Index(index) => index.min(len - 1),
-        })
-    }
 }
 
 #[derive(Clone, Copy, PartialEq, Eq)]
@@ -104,7 +91,11 @@ pub async fn run(mut db: MarpleDB, mut url: String, env_file: Option<PathBuf>) -
             let _ = save_settings(&settings);
             Some(path)
         }
-        None => settings.env_file.clone().filter(|path| path.is_file()),
+        None => settings
+            .env_file
+            .clone()
+            .filter(|path| path.is_file())
+            .or_else(local_dotenv),
     };
     if let Some(path) = &env_file
         && let Ok((next_url, next_token)) = apply_env_file(path)
@@ -128,49 +119,31 @@ pub async fn run(mut db: MarpleDB, mut url: String, env_file: Option<PathBuf>) -
 }
 
 async fn event_loop(terminal: &mut ratatui::DefaultTerminal, app: &mut App) -> Result<()> {
-    let (tx, mut rx) = mpsc::unbounded_channel();
-    std::thread::spawn(move || {
-        loop {
-            let timeout = Duration::from_millis(200);
-            let event = if event::poll(timeout).unwrap_or(false) {
-                match event::read() {
-                    Ok(Event::Key(key)) if key.kind == KeyEventKind::Press => Some(key),
-                    _ => None,
-                }
-            } else {
-                None
-            };
-            if tx.send(event).is_err() {
-                break;
-            }
-        }
-    });
-
     loop {
         terminal.draw(|frame| draw(frame, app))?;
-        match rx.recv().await {
-            Some(Some(key)) => {
-                if handle_key(app, key).await? {
-                    break;
-                }
-            }
-            Some(None) => {}
-            None => break,
+        let Event::Key(key) = event::read()? else {
+            continue;
+        };
+        if key.kind != KeyEventKind::Press {
+            continue;
+        }
+        if handle_key(app, key).await {
+            break;
         }
     }
     Ok(())
 }
 
-async fn handle_key(app: &mut App, key: KeyEvent) -> Result<bool> {
+async fn handle_key(app: &mut App, key: KeyEvent) -> bool {
     if matches!(key.code, KeyCode::Esc) && app.has_pending_motion() {
         app.clear_motion();
-        return Ok(false);
+        return false;
     }
     match read_motion(app, key) {
-        MotionRead::Pending => return Ok(false),
+        MotionRead::Pending => return false,
         MotionRead::Act(motion) => {
             apply_motion(app, motion).await;
-            return Ok(false);
+            return false;
         }
         MotionRead::None => {}
     }
@@ -178,19 +151,18 @@ async fn handle_key(app: &mut App, key: KeyEvent) -> Result<bool> {
         return handle_env_key(app, key).await;
     }
     match key.code {
-        KeyCode::Char('q') => return Ok(true),
-        KeyCode::Tab => app.focus = app.cycle_focus(),
-        KeyCode::BackTab => app.focus = app.focus.other(),
+        KeyCode::Char('q') => return true,
+        KeyCode::Tab | KeyCode::BackTab => app.focus = app.cycle_focus(),
         KeyCode::Esc | KeyCode::Char('h') | KeyCode::Left => app.go_back(),
         KeyCode::Char('l') | KeyCode::Right | KeyCode::Enter => app.activate().await,
         KeyCode::Char('i') => app.toggle_info(),
         KeyCode::Char('v') => app.open_env(),
         _ => {}
     }
-    Ok(false)
+    false
 }
 
-async fn handle_env_key(app: &mut App, key: KeyEvent) -> Result<bool> {
+async fn handle_env_key(app: &mut App, key: KeyEvent) -> bool {
     match key.code {
         KeyCode::Esc | KeyCode::Char('q') => app.show_env = false,
         KeyCode::Enter => {
@@ -203,7 +175,7 @@ async fn handle_env_key(app: &mut App, key: KeyEvent) -> Result<bool> {
         }
         _ => {}
     }
-    Ok(false)
+    false
 }
 
 enum MotionRead {
@@ -274,11 +246,17 @@ async fn apply_motion(app: &mut App, motion: Motion) {
 fn apply_env_motion(app: &mut App, motion: Motion) {
     let len = app.env_files.len();
     match motion {
-        Motion::Delta(delta) => move_list(&mut app.env_state, len, delta),
-        Motion::Page(pages) => move_list(&mut app.env_state, len, pages * PAGE_SIZE),
-        Motion::First => app.env_state.select(Jump::First.resolve(len)),
-        Motion::Last => app.env_state.select(Jump::Last.resolve(len)),
-        Motion::Goto(index) => app.env_state.select(Jump::Index(index).resolve(len)),
+        Motion::Delta(delta) => {
+            app.env_state
+                .select(step_index(app.env_state.selected(), len, delta));
+        }
+        Motion::Page(pages) => {
+            app.env_state
+                .select(step_index(app.env_state.selected(), len, pages * PAGE_SIZE));
+        }
+        Motion::First => app.env_state.select(resolve(len, 0)),
+        Motion::Last => app.env_state.select(resolve(len, len.saturating_sub(1))),
+        Motion::Goto(index) => app.env_state.select(resolve(len, index)),
     }
 }
 
@@ -293,15 +271,15 @@ async fn apply_browse_motion(app: &mut App, motion: Motion) {
                 app.move_sel(delta).await;
             }
         }
-        Motion::First => app.goto_sel(Jump::First).await,
-        Motion::Last => app.goto_sel(Jump::Last).await,
-        Motion::Goto(index) => app.goto_sel(Jump::Index(index)).await,
+        Motion::First => app.goto_sel(0).await,
+        Motion::Last => app.goto_sel(usize::MAX).await,
+        Motion::Goto(index) => app.goto_sel(index).await,
     }
 }
 
 impl App {
     fn new(db: MarpleDB, url: String, env_file: Option<PathBuf>) -> Self {
-        let env_files = discover_env_files();
+        let env_files = discover_env_files(env_file.as_deref());
         let env_index = env_file
             .as_ref()
             .and_then(|selected| {
@@ -349,15 +327,21 @@ impl App {
     }
 
     fn prompt_for_env(&mut self) {
-        self.status = NOT_CONNECTED.to_string();
-        self.open_env();
+        if self.env_files.is_empty() {
+            self.status = NOT_CONNECTED.to_string();
+        } else {
+            self.status = PICK_ENV.to_string();
+            self.open_env();
+        }
     }
 
     fn open_env(&mut self) {
-        if !self.env_files.is_empty() {
-            self.show_env = true;
-            self.env_state.select(Some(self.env_index));
+        if self.env_files.is_empty() {
+            self.status = NOT_CONNECTED.to_string();
+            return;
         }
+        self.show_env = true;
+        self.env_state.select(Some(self.env_index));
     }
 
     fn go_back(&mut self) {
@@ -434,12 +418,12 @@ impl App {
             }
             (BrowseLevel::Streams, Focus::Table) => {
                 if self.table_shows_current_stream() {
-                    self.show_signals(true).await;
+                    self.show_signals().await;
                 } else {
                     self.load_stream_table().await;
                 }
             }
-            (BrowseLevel::Datasets, Focus::List) => self.show_signals(false).await,
+            (BrowseLevel::Datasets, Focus::List) => self.show_signals().await,
             (BrowseLevel::Datasets, Focus::Table) => self.toggle_info(),
         }
     }
@@ -483,7 +467,7 @@ impl App {
         );
     }
 
-    async fn show_signals(&mut self, drill: bool) {
+    async fn show_signals(&mut self) {
         let Some(dataset) = self.selected_dataset().cloned() else {
             return;
         };
@@ -491,9 +475,7 @@ impl App {
             self.status = error;
             return;
         }
-        if drill {
-            self.browse_level = BrowseLevel::Datasets;
-        }
+        self.browse_level = BrowseLevel::Datasets;
         self.focus = Focus::Table;
         self.status = format!(
             "{} · {} signals",
@@ -530,7 +512,7 @@ impl App {
     async fn ensure_datasets(&mut self, stream_id: i32) -> std::result::Result<(), String> {
         if !self.connected {
             self.prompt_for_env();
-            return Err(NOT_CONNECTED.to_string());
+            return Err(self.status.clone());
         }
         if self.loaded_stream_id == Some(stream_id) {
             return Ok(());
@@ -547,7 +529,6 @@ impl App {
                 } else {
                     Some(0)
                 });
-                self.persist_settings();
                 Ok(())
             }
             Err(error) => Err(error.to_string()),
@@ -555,6 +536,10 @@ impl App {
     }
 
     async fn ensure_signals(&mut self, dataset: &Dataset) -> std::result::Result<(), String> {
+        if !self.connected {
+            self.prompt_for_env();
+            return Err(self.status.clone());
+        }
         if self.signals_dataset_id == Some(dataset.id) {
             return Ok(());
         }
@@ -660,12 +645,14 @@ impl App {
     }
 
     async fn move_sel(&mut self, delta: i32) {
-        self.apply_selection(|state, len| move_table(state, len, delta))
-            .await;
+        self.apply_selection(|state, len| {
+            state.select(step_index(state.selected(), len, delta));
+        })
+        .await;
     }
 
-    async fn goto_sel(&mut self, jump: Jump) {
-        self.apply_selection(|state, len| state.select(jump.resolve(len)))
+    async fn goto_sel(&mut self, index: usize) {
+        self.apply_selection(|state, len| state.select(resolve(len, index)))
             .await;
     }
 
@@ -746,20 +733,16 @@ impl App {
     }
 }
 
-fn move_list(state: &mut ListState, len: usize, delta: i32) {
-    state.select(step_index(state.selected(), len, delta));
-}
-
-fn move_table(state: &mut TableState, len: usize, delta: i32) {
-    state.select(step_index(state.selected(), len, delta));
-}
-
 fn step_index(selected: Option<usize>, len: usize, delta: i32) -> Option<usize> {
     if len == 0 {
         return None;
     }
     let current = selected.unwrap_or(0) as i32;
     Some((current + delta).clamp(0, len as i32 - 1) as usize)
+}
+
+fn resolve(len: usize, index: usize) -> Option<usize> {
+    (len > 0).then(|| index.min(len - 1))
 }
 
 fn clamp_scroll(scroll: u16, delta: i32, lines: u16, view: u16) -> u16 {
@@ -774,7 +757,7 @@ fn same_path(left: &Path, right: &Path) -> bool {
 
 #[cfg(test)]
 mod tests {
-    use super::{Jump, step_index};
+    use super::{resolve, step_index};
 
     #[test]
     fn list_motion_clamps_instead_of_wrapping() {
@@ -787,10 +770,9 @@ mod tests {
 
     #[test]
     fn jump_is_one_based_count_clamped() {
-        assert_eq!(Jump::First.resolve(10), Some(0));
-        assert_eq!(Jump::Last.resolve(10), Some(9));
-        assert_eq!(Jump::Index(0).resolve(10), Some(0));
-        assert_eq!(Jump::Index(99).resolve(10), Some(9));
-        assert_eq!(Jump::Last.resolve(0), None);
+        assert_eq!(resolve(10, 0), Some(0));
+        assert_eq!(resolve(10, 9), Some(9));
+        assert_eq!(resolve(10, 99), Some(9));
+        assert_eq!(resolve(0, 0), None);
     }
 }

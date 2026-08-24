@@ -123,7 +123,7 @@ pub enum Error {
     Url(#[from] url::ParseError),
 
     /// JSON serialization or deserialization failed.
-    #[error("JSON error")]
+    #[error("JSON error: {0}")]
     Json(#[from] serde_json::Error),
 
     /// Integer conversion failed.

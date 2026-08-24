@@ -52,7 +52,7 @@ pub fn format_dataset_table_row(dataset: &Dataset) -> String {
     [
         dataset.id.to_string(),
         dataset.path.clone(),
-        format_import_status(dataset.import_status),
+        format_import_status(dataset.import_status).to_string(),
         format_compact_count(dataset.n_datapoints),
         format_count(dataset.n_signals),
         format_bytes(dataset.cold_bytes),
@@ -72,7 +72,7 @@ pub fn format_dataset_queue_table_row(dataset: &Dataset) -> String {
     [
         dataset.id.to_string(),
         dataset.path.clone(),
-        format_import_status(dataset.import_status),
+        format_import_status(dataset.import_status).to_string(),
         format_progress(dataset.import_progress),
         format_compact_count(dataset.n_datapoints),
         format_count(dataset.n_signals),
@@ -121,7 +121,7 @@ pub fn connect(url: &str, token: &str) -> Result<MarpleDB> {
         .build()?)
 }
 
-pub(crate) fn format_import_status(status: ImportStatus) -> String {
+pub(crate) fn format_import_status(status: ImportStatus) -> &'static str {
     match status {
         ImportStatus::Uploading => "UPLOADING",
         ImportStatus::Waiting => "WAITING",
@@ -135,7 +135,6 @@ pub(crate) fn format_import_status(status: ImportStatus) -> String {
         ImportStatus::CoolingFailed => "COOLING_FAILED",
         _ => "?",
     }
-    .to_string()
 }
 
 fn format_count(value: Option<u64>) -> String {
@@ -224,6 +223,8 @@ pub(crate) fn format_epoch_utc(seconds: f64) -> String {
     format!("{year:04}-{month:02}-{day:02} {hours:02}:{minutes:02} UTC")
 }
 
+// Howard Hinnant, "chrono-Compatible Low-Level Date Algorithms"
+// https://howardhinnant.github.io/date_algorithms.html#civil_from_days
 fn civil_from_days(mut days: i64) -> (i32, u32, u32) {
     days += 719_468;
     let era = if days >= 0 { days } else { days - 146_096 } / 146_097;

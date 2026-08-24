@@ -13,6 +13,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - `StorageQuota` for license byte caps (`limit < 0` is unlimited). Missing license/signal fields default; unknown enum values become `Unknown`.
 - `get_signals()` and a typed `Signal` model for dataset signal metadata.
 
+### Fixed
+
+- Parse JSON numbers that do not fit in `i64` (for example signal `stats` min/max stored as `±f64::MAX` integers) instead of failing with `JSON error`.
+
 ## [0.3.0] - 2026-08-20
 
 ### Added
