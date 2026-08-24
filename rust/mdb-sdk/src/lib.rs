@@ -72,7 +72,7 @@ pub use errors::{Error, Result};
 pub use models::{
     CurrentWorkspace, Dataset, HealthResponse, ImportStatus, LicenseLimits, LicensePayload,
     LicenseType, Metadata, PushFileOptions, PushFileOptionsBuilder, RealtimeTier, Signal,
-    StorageStatus, Stream, StreamType, UploadModeOverride, UsageSeries, UsageType, UserInfo,
-    WorkspaceLicense, WorkspaceMembership,
+    StorageQuota, StorageStatus, Stream, StreamType, UploadModeOverride, UsageSeries, UsageType,
+    UserInfo, WorkspaceLicense, WorkspaceMembership,
 };
 pub use progress::{NoopProgress, ProgressReporter};

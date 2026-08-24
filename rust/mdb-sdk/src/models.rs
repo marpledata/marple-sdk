@@ -69,16 +69,48 @@ pub struct UsageSeries {
 impl UsageSeries {
     /// Returns the latest sample as a non-negative integer, if present.
     pub fn latest(&self) -> Option<u64> {
-        self.values
-            .last()
-            .copied()
-            .map(|value| value.max(0.0) as u64)
+        let value = self.values.last().copied()?;
+        if !value.is_finite() {
+            return None;
+        }
+        Some(value.round().clamp(0.0, u64::MAX as f64) as u64)
+    }
+}
+
+/// Byte quota from a workspace license.
+///
+/// The API encodes unlimited as a negative limit.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(from = "i64", into = "i64")]
+pub enum StorageQuota {
+    /// No byte cap (`limit < 0`).
+    Unlimited,
+    /// Finite cap in bytes (`limit >= 0`).
+    Bytes(u64),
+}
+
+impl From<i64> for StorageQuota {
+    fn from(limit: i64) -> Self {
+        if limit < 0 {
+            Self::Unlimited
+        } else {
+            Self::Bytes(limit as u64)
+        }
+    }
+}
+
+impl From<StorageQuota> for i64 {
+    fn from(quota: StorageQuota) -> Self {
+        match quota {
+            StorageQuota::Unlimited => -1,
+            StorageQuota::Bytes(bytes) => i64::try_from(bytes).unwrap_or(i64::MAX),
+        }
     }
 }
 
 /// License type issued for a MarpleDB workspace.
 #[non_exhaustive]
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "SCREAMING_SNAKE_CASE")]
 pub enum LicenseType {
     Dev,
@@ -87,43 +119,56 @@ pub enum LicenseType {
     Paid,
     Poc,
     Sponsorship,
+    #[default]
+    #[serde(other)]
+    Unknown,
 }
 
 /// Realtime ingest tier from the workspace license.
 #[non_exhaustive]
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "SCREAMING_SNAKE_CASE")]
 pub enum RealtimeTier {
     Disabled,
     Slow,
     Fast,
     Unlimited,
+    #[default]
+    #[serde(other)]
+    Unknown,
 }
 
 /// Storage and ingest limits from a workspace license.
 #[non_exhaustive]
-#[derive(Clone, Debug, Serialize, Deserialize)]
+#[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
 pub struct LicenseLimits {
-    pub hot_bytes: u64,
-    pub cold_bytes: u64,
-    pub archive_bytes: u64,
     #[serde(default)]
-    pub ingestion_workers: u32,
+    pub hot_bytes: Option<StorageQuota>,
+    #[serde(default)]
+    pub cold_bytes: Option<StorageQuota>,
+    #[serde(default)]
+    pub archive_bytes: Option<StorageQuota>,
+    #[serde(default)]
+    pub ingestion_workers: Option<u32>,
     #[serde(default)]
     pub realtime: Option<RealtimeTier>,
 }
 
 /// Signed license payload returned by `/workspace/license`.
 #[non_exhaustive]
-#[derive(Clone, Debug, Serialize, Deserialize)]
+#[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
 pub struct LicensePayload {
-    #[serde(rename = "type")]
+    #[serde(rename = "type", default)]
     pub license_type: LicenseType,
+    #[serde(default)]
     pub product: String,
+    #[serde(default)]
     pub deployment: String,
     #[serde(default)]
     pub workspace: Option<String>,
-    pub expiry_date: i64,
+    #[serde(default)]
+    pub expiry_date: Option<i64>,
+    #[serde(default)]
     pub features: LicenseLimits,
 }
 
@@ -131,24 +176,43 @@ pub struct LicensePayload {
 ///
 /// `id` is the license row id. `workspace` is the workspace slug.
 #[non_exhaustive]
-#[derive(Clone, Debug, Serialize, Deserialize)]
+#[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
 pub struct WorkspaceLicense {
-    pub id: i32,
+    #[serde(default)]
+    pub id: Option<i32>,
     #[serde(default)]
     pub version: String,
     #[serde(default)]
-    pub issued_at: i64,
+    pub issued_at: Option<i64>,
     #[serde(default)]
-    pub cached_at: i64,
+    pub cached_at: Option<i64>,
+    #[serde(default)]
     pub workspace: String,
+    #[serde(default)]
     pub payload: LicensePayload,
+}
+
+impl WorkspaceLicense {
+    /// Workspace slug from the license row, or the payload copy when the row is empty.
+    pub fn workspace_id(&self) -> Option<&str> {
+        let slug = self.workspace.as_str();
+        if !slug.is_empty() {
+            return Some(slug);
+        }
+        self.payload
+            .workspace
+            .as_deref()
+            .filter(|id| !id.is_empty())
+    }
 }
 
 /// Workspace membership returned by `/user/info`.
 #[non_exhaustive]
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct WorkspaceMembership {
+    #[serde(default)]
     pub workspace_id: String,
+    #[serde(default)]
     pub name: String,
     #[serde(default)]
     pub role: String,
@@ -171,6 +235,34 @@ pub struct UserInfo {
     pub extra: Value,
 }
 
+impl UserInfo {
+    /// Slug of the workspace bound to this token.
+    ///
+    /// Prefers `license.workspace`, then `license.payload.workspace`, then the
+    /// sole membership when the user belongs to exactly one workspace.
+    pub fn current_workspace_id(&self) -> Option<&str> {
+        self.license
+            .as_ref()
+            .and_then(WorkspaceLicense::workspace_id)
+            .or_else(|| match self.workspaces.as_slice() {
+                [membership] if !membership.workspace_id.is_empty() => {
+                    Some(membership.workspace_id.as_str())
+                }
+                _ => None,
+            })
+    }
+
+    /// Display name for `workspace_id`, or the slug when no membership matches.
+    pub fn workspace_name<'a>(&'a self, workspace_id: &'a str) -> &'a str {
+        self.workspaces
+            .iter()
+            .find(|membership| membership.workspace_id == workspace_id)
+            .map(|membership| membership.name.as_str())
+            .filter(|name| !name.is_empty())
+            .unwrap_or(workspace_id)
+    }
+}
+
 /// Resolved current workspace for the connected token.
 #[non_exhaustive]
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -179,6 +271,8 @@ pub struct CurrentWorkspace {
     pub id: String,
     /// Display name, or the slug when `/user/info` has no match.
     pub name: String,
+    /// License from `/user/info`, including storage quotas.
+    pub license: Option<WorkspaceLicense>,
     pub cold_bytes: Option<u64>,
     pub hot_bytes: Option<u64>,
     pub archive_bytes: Option<u64>,
@@ -322,13 +416,16 @@ pub struct Dataset {
 
 /// Storage lifecycle of a signal.
 #[non_exhaustive]
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "SCREAMING_SNAKE_CASE")]
 pub enum StorageStatus {
     FrozenToCold,
     Cold,
     ColdToHot,
     Hot,
+    #[default]
+    #[serde(other)]
+    Unknown,
 }
 
 /// Signal metadata returned by the MarpleDB API.
@@ -349,6 +446,7 @@ pub struct Signal {
     #[serde(default)]
     pub metadata: Metadata,
     /// Current storage status.
+    #[serde(default)]
     pub storage_status: StorageStatus,
     /// Cold-storage byte size, if known.
     #[serde(default)]
@@ -359,6 +457,9 @@ pub struct Signal {
     /// Number of samples, if known.
     #[serde(default)]
     pub count: Option<u64>,
+    /// Aggregate stats, if the API returned them.
+    #[serde(default)]
+    pub stats: Option<Value>,
     /// Numeric sample count, if known.
     #[serde(default)]
     pub count_value: Option<u64>,
@@ -371,6 +472,9 @@ pub struct Signal {
     /// Last timestamp (nanoseconds), if known.
     #[serde(default)]
     pub time_max: Option<i64>,
+    /// Parquet format version, if known.
+    #[serde(default)]
+    pub parquet_version: Option<i32>,
     /// Owning stream id.
     #[serde(default)]
     pub datastream_id: Option<i32>,
@@ -567,4 +671,20 @@ pub(crate) struct PartUrlsResponse {
     #[serde(rename = "expires_in")]
     pub(crate) _expires_in: u64,
     pub(crate) next_part: Option<u32>,
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn usage_series_latest_skips_non_finite() {
+        let series = UsageSeries {
+            timestamps: Vec::new(),
+            values: vec![f64::NAN, f64::INFINITY],
+            integrated: false,
+            unit: String::new(),
+        };
+        assert_eq!(series.latest(), None);
+    }
 }

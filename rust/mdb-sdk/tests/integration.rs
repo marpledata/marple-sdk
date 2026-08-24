@@ -357,7 +357,10 @@ async fn run_overwrite_flow(db: &MarpleDB) -> anyhow::Result<()> {
     )
     .await?;
 
-    anyhow::ensure!(dataset_overwritten.id == dataset.id, "overwrite created a new dataset instead of updating");
+    anyhow::ensure!(
+        dataset_overwritten.id == dataset.id,
+        "overwrite created a new dataset instead of updating"
+    );
     let datasets = db.get_datasets(stream.id).await?;
     anyhow::ensure!(
         datasets.len() == 1,

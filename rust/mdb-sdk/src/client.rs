@@ -4,7 +4,7 @@ use crate::models::{
     UsageType, UserInfo, WorkspaceLicense,
 };
 use reqwest::{
-    Client, Method, Response, Url,
+    Client, Method, Response, StatusCode, Url,
     header::{AUTHORIZATION, HeaderMap, HeaderName, HeaderValue, USER_AGENT},
 };
 use serde::Serialize;
@@ -186,10 +186,14 @@ impl MarpleDB {
 
     /// Fetches the license for the workspace bound to this token.
     ///
-    /// Returns `Ok(None)` when the workspace has no license. The top-level
-    /// `workspace` field is the workspace slug, not the license row id.
+    /// Returns `Ok(None)` when the API returns JSON `null` or HTTP 404. The
+    /// top-level `workspace` field is the workspace slug, not the license row id.
     pub async fn get_workspace_license(&self) -> Result<Option<WorkspaceLicense>> {
-        self.get("workspace/license", &()).await
+        match self.get("workspace/license", &()).await {
+            Ok(license) => Ok(license),
+            Err(Error::Api { status, .. }) if status == StatusCode::NOT_FOUND => Ok(None),
+            Err(error) => Err(error),
+        }
     }
 
     /// Fetches the authenticated user profile, including workspace memberships.
@@ -221,32 +225,31 @@ impl MarpleDB {
         .await
     }
 
-    /// Resolves the current workspace name, id, and latest storage usage.
+    /// Resolves the current workspace name, license, and latest storage usage.
     ///
-    /// Name comes from `/user/info` when a membership matches the license
-    /// slug; otherwise the slug is used. Usage points are best-effort.
+    /// Identity comes from `/user/info`. Usage points are best-effort.
     pub async fn get_current_workspace(&self) -> Result<CurrentWorkspace> {
-        let license = self
-            .get_workspace_license()
-            .await?
-            .ok_or_else(|| Error::Protocol("workspace has no license".to_string()))?;
-        let id = license.workspace;
-        let name = match self.get_user_info().await {
-            Ok(info) => info
-                .workspaces
-                .into_iter()
-                .find(|membership| membership.workspace_id == id)
-                .map(|membership| membership.name)
-                .filter(|name| !name.is_empty())
-                .unwrap_or_else(|| id.clone()),
-            Err(_) => id.clone(),
-        };
+        let info = self.get_user_info().await?;
+        let id = info
+            .current_workspace_id()
+            .ok_or_else(|| {
+                Error::Protocol("could not resolve current workspace from /user/info".to_string())
+            })?
+            .to_string();
+        let name = info.workspace_name(&id).to_string();
+        let license = info.license;
+        let (cold_bytes, hot_bytes, archive_bytes) = tokio::join!(
+            self.latest_usage(UsageType::ColdStorage),
+            self.latest_usage(UsageType::HotStorage),
+            self.latest_usage(UsageType::ArchiveStorage),
+        );
         Ok(CurrentWorkspace {
             id,
             name,
-            cold_bytes: self.latest_usage(UsageType::ColdStorage).await,
-            hot_bytes: self.latest_usage(UsageType::HotStorage).await,
-            archive_bytes: self.latest_usage(UsageType::ArchiveStorage).await,
+            license,
+            cold_bytes,
+            hot_bytes,
+            archive_bytes,
         })
     }
 
@@ -339,11 +342,17 @@ impl MarpleDB {
 
     /// Lists signals in a dataset.
     pub async fn get_signals(&self, stream_id: i32, dataset_id: i32) -> Result<Vec<Signal>> {
-        self.get(
-            &format!("stream/{stream_id}/dataset/{dataset_id}/signals"),
-            &(),
-        )
-        .await
+        let mut signals: Vec<Signal> = self
+            .get(
+                &format!("stream/{stream_id}/dataset/{dataset_id}/signals"),
+                &(),
+            )
+            .await?;
+        for signal in &mut signals {
+            signal.datastream_id = Some(stream_id);
+            signal.dataset_id = Some(dataset_id);
+        }
+        Ok(signals)
     }
 
     /// Returns a pre-signed URL for downloading a dataset's original uploaded file.
