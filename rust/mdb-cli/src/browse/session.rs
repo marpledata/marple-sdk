@@ -74,9 +74,25 @@ pub(crate) fn save_settings(settings: &BrowseSettings) -> Result<()> {
 }
 
 pub(crate) fn apply_env_file(path: &Path) -> Result<(String, String)> {
-    dotenvy::from_path_override(path)
-        .with_context(|| format!("failed to load env file {}", path.display()))?;
-    let url = std::env::var("MDB_URL").unwrap_or_else(|_| SAAS_URL.to_string());
+    let mut file_url = None;
+    for item in dotenvy::from_path_iter(path)
+        .with_context(|| format!("failed to load env file {}", path.display()))?
+    {
+        let (key, value) = item
+            .with_context(|| format!("failed to load env file {}", path.display()))?;
+        if key == "MDB_URL" {
+            file_url = Some(value.clone());
+        }
+        unsafe {
+            std::env::set_var(&key, &value);
+        }
+    }
+    let url = file_url
+        .filter(|value| !value.is_empty())
+        .unwrap_or_else(|| SAAS_URL.to_string());
+    unsafe {
+        std::env::set_var("MDB_URL", &url);
+    }
     let token = std::env::var("MDB_TOKEN").unwrap_or_default();
     if token.is_empty() {
         bail!("{} does not set MDB_TOKEN", path.display());
@@ -105,12 +121,25 @@ pub(crate) fn env_label(path: &Path) -> String {
 
 #[cfg(test)]
 mod tests {
-    use super::{BrowseSettings, RecentEnv, load_settings, remember_recent, save_settings};
+    use super::{
+        BrowseSettings, RecentEnv, SAAS_URL, apply_env_file, load_settings, remember_recent,
+        save_settings,
+    };
+    use std::ffi::OsString;
     use std::fs;
     use std::path::{Path, PathBuf};
     use std::sync::Mutex;
 
     static ENV_LOCK: Mutex<()> = Mutex::new(());
+
+    fn restore_var(key: &str, previous: Option<OsString>) {
+        unsafe {
+            match previous {
+                Some(value) => std::env::set_var(key, value),
+                None => std::env::remove_var(key),
+            }
+        }
+    }
 
     fn with_xdg(path: &Path, body: impl FnOnce()) {
         let _guard = ENV_LOCK.lock().expect("env lock");
@@ -119,12 +148,16 @@ mod tests {
             std::env::set_var("XDG_CONFIG_HOME", path);
         }
         body();
-        unsafe {
-            match previous {
-                Some(value) => std::env::set_var("XDG_CONFIG_HOME", value),
-                None => std::env::remove_var("XDG_CONFIG_HOME"),
-            }
-        }
+        restore_var("XDG_CONFIG_HOME", previous);
+    }
+
+    fn with_mdb_env(body: impl FnOnce()) {
+        let _guard = ENV_LOCK.lock().expect("env lock");
+        let previous_url = std::env::var_os("MDB_URL");
+        let previous_token = std::env::var_os("MDB_TOKEN");
+        body();
+        restore_var("MDB_URL", previous_url);
+        restore_var("MDB_TOKEN", previous_token);
     }
 
     #[test]
@@ -184,5 +217,53 @@ mod tests {
                 },
             ]
         );
+    }
+
+    #[test]
+    fn apply_env_file_without_url_defaults_to_saas() {
+        let tmp = tempfile::tempdir().unwrap();
+        let path = tmp.path().join(".env");
+        fs::write(&path, "MDB_TOKEN=saas-token\n").unwrap();
+        with_mdb_env(|| {
+            unsafe {
+                std::env::set_var("MDB_URL", "https://staging.example/api/v1");
+                std::env::set_var("MDB_TOKEN", "staging-token");
+            }
+            let (url, token) = apply_env_file(&path).unwrap();
+            assert_eq!(url, SAAS_URL);
+            assert_eq!(token, "saas-token");
+            assert_eq!(std::env::var("MDB_URL").unwrap(), SAAS_URL);
+        });
+    }
+
+    #[test]
+    fn apply_env_file_keeps_url_from_file() {
+        let tmp = tempfile::tempdir().unwrap();
+        let path = tmp.path().join(".env");
+        fs::write(
+            &path,
+            "MDB_TOKEN=vpc-token\nMDB_URL=https://vpc.example/api/v1\n",
+        )
+        .unwrap();
+        with_mdb_env(|| {
+            unsafe {
+                std::env::set_var("MDB_URL", "https://staging.example/api/v1");
+            }
+            let (url, token) = apply_env_file(&path).unwrap();
+            assert_eq!(url, "https://vpc.example/api/v1");
+            assert_eq!(token, "vpc-token");
+        });
+    }
+
+    #[test]
+    fn apply_env_file_empty_url_defaults_to_saas() {
+        let tmp = tempfile::tempdir().unwrap();
+        let path = tmp.path().join(".env");
+        fs::write(&path, "MDB_TOKEN=saas-token\nMDB_URL=\n").unwrap();
+        with_mdb_env(|| {
+            let (url, token) = apply_env_file(&path).unwrap();
+            assert_eq!(url, SAAS_URL);
+            assert_eq!(token, "saas-token");
+        });
     }
 }

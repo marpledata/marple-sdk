@@ -4,10 +4,13 @@ mod picker;
 mod session;
 
 use crate::connect;
+use crate::table::{
+    TableSearch, filter_indices, goto_visible, handle_search_key, snap_visible, step_visible,
+};
 use anyhow::Result;
 use crossterm::event::{self, Event, KeyCode, KeyEvent, KeyEventKind, KeyModifiers};
 use draw::draw;
-use format::{dataset_info, signal_info, stream_info};
+use format::{dataset_info, signal_info, signal_kind, signal_source, stream_info, stream_kind};
 use marple_db::{CurrentWorkspace, Dataset, ImportStatus, MarpleDB, Signal, Stream};
 use picker::FilePicker;
 use ratatui::text::Line;
@@ -85,6 +88,7 @@ pub(super) struct App {
     motion_count: Option<u32>,
     pending_g: bool,
     load_tick: u8,
+    search: TableSearch,
 }
 
 pub async fn run(mut db: MarpleDB, mut url: String, env_file: Option<PathBuf>) -> Result<()> {
@@ -194,6 +198,11 @@ async fn handle_key(app: &mut App, key: KeyEvent) -> bool {
     if app.env_picker.as_ref().is_some_and(|picker| picker.editing) {
         return handle_env_input(app, key).await;
     }
+    if app.search.editing {
+        handle_search_key(&mut app.search, key);
+        app.snap_search();
+        return false;
+    }
     match read_motion(app, key) {
         MotionRead::Pending => return false,
         MotionRead::Act(motion) => {
@@ -205,9 +214,21 @@ async fn handle_key(app: &mut App, key: KeyEvent) -> bool {
     if app.env_picker.is_some() {
         return handle_env_key(app, key).await;
     }
+    if matches!(key.code, KeyCode::Char('/')) && !app.info_expanded {
+        app.clear_motion();
+        app.search.start();
+        return false;
+    }
+    if matches!(key.code, KeyCode::Esc) && app.search.active() {
+        app.search.clear();
+        return false;
+    }
     match key.code {
         KeyCode::Char('q') => return true,
-        KeyCode::Tab | KeyCode::BackTab => app.focus = app.cycle_focus(),
+        KeyCode::Tab | KeyCode::BackTab => {
+            app.focus = app.cycle_focus();
+            app.snap_search();
+        }
         KeyCode::Esc | KeyCode::Char('h') | KeyCode::Left => app.go_back(),
         KeyCode::Char('l') | KeyCode::Right | KeyCode::Enter => app.activate(),
         KeyCode::Char('i') => app.toggle_info(),
@@ -401,6 +422,7 @@ impl App {
             motion_count: None,
             pending_g: false,
             load_tick: 0,
+            search: TableSearch::default(),
         }
     }
 
@@ -495,6 +517,7 @@ impl App {
     }
 
     fn activate(&mut self) {
+        self.search.clear();
         match (self.browse_level, self.focus) {
             (BrowseLevel::Root, _) | (BrowseLevel::Streams, Focus::List) => {
                 self.open_stream_table();
@@ -759,14 +782,96 @@ impl App {
             .and_then(|index| self.signals.get(index))
     }
 
+    pub(super) fn stream_indices(&self, filtered: bool) -> Vec<usize> {
+        self.indices(filtered, self.streams.len(), |index| {
+            let stream = &self.streams[index];
+            vec![
+                stream.id.to_string(),
+                stream_kind(stream).to_string(),
+                stream.name.clone(),
+                stream.plugin.clone().unwrap_or_default(),
+                stream.plugin_args.clone().unwrap_or_default(),
+                stream
+                    .n_datasets
+                    .map(|count| count.to_string())
+                    .unwrap_or_default(),
+                stream.description.clone(),
+            ]
+        })
+    }
+
+    pub(super) fn dataset_indices(&self, filtered: bool) -> Vec<usize> {
+        self.indices(filtered, self.datasets.len(), |index| {
+            let dataset = &self.datasets[index];
+            vec![
+                dataset.id.to_string(),
+                dataset.path.clone(),
+                crate::format_import_status(dataset.import_status).to_string(),
+                dataset.import_message.clone().unwrap_or_default(),
+                dataset
+                    .n_signals
+                    .map(|count| count.to_string())
+                    .unwrap_or_default(),
+            ]
+        })
+    }
+
+    pub(super) fn signal_indices(&self, filtered: bool) -> Vec<usize> {
+        self.indices(filtered, self.signals.len(), |index| {
+            let signal = &self.signals[index];
+            vec![
+                signal_kind(signal).to_string(),
+                signal.id.to_string(),
+                signal.name.clone(),
+                signal.unit.clone().unwrap_or_default(),
+                signal_source(signal).to_string(),
+                signal.description.clone().unwrap_or_default(),
+            ]
+        })
+    }
+
+    fn indices(
+        &self,
+        filtered: bool,
+        len: usize,
+        fields_at: impl FnMut(usize) -> Vec<String>,
+    ) -> Vec<usize> {
+        if filtered && self.search.active() {
+            filter_indices(len, &self.search.query, fields_at)
+        } else {
+            (0..len).collect()
+        }
+    }
+
+    fn focused_visible(&self) -> Vec<usize> {
+        match (self.browse_level, self.focus) {
+            (BrowseLevel::Root, _) | (BrowseLevel::Streams, Focus::List) => {
+                self.stream_indices(true)
+            }
+            (BrowseLevel::Streams, Focus::Table) | (BrowseLevel::Datasets, Focus::List) => {
+                self.dataset_indices(true)
+            }
+            (BrowseLevel::Datasets, Focus::Table) => self.signal_indices(true),
+        }
+    }
+
+    fn snap_search(&mut self) {
+        let visible = self.focused_visible();
+        self.apply_selection(|state, _| {
+            state.select(snap_visible(&visible, state.selected()));
+        });
+    }
+
     fn move_sel(&mut self, delta: i32) {
-        self.apply_selection(|state, len| {
-            state.select(step_index(state.selected(), len, delta));
+        let visible = self.focused_visible();
+        self.apply_selection(|state, _| {
+            state.select(step_visible(&visible, state.selected(), delta));
         });
     }
 
     fn goto_sel(&mut self, index: usize) {
-        self.apply_selection(|state, len| state.select(resolve(len, index)));
+        let visible = self.focused_visible();
+        self.apply_selection(|state, _| state.select(goto_visible(&visible, index)));
     }
 
     fn apply_selection(&mut self, select: impl FnOnce(&mut TableState, usize)) {
@@ -874,18 +979,6 @@ impl App {
     }
 }
 
-fn step_index(selected: Option<usize>, len: usize, delta: i32) -> Option<usize> {
-    if len == 0 {
-        return None;
-    }
-    let current = selected.unwrap_or(0) as i32;
-    Some((current + delta).clamp(0, len as i32 - 1) as usize)
-}
-
-fn resolve(len: usize, index: usize) -> Option<usize> {
-    (len > 0).then(|| index.min(len - 1))
-}
-
 fn clamp_scroll(scroll: u16, delta: i32, lines: u16, view: u16) -> u16 {
     let max = lines.saturating_sub(view.saturating_sub(2).max(1));
     (scroll as i32 + delta).clamp(0, max as i32) as u16
@@ -897,7 +990,7 @@ fn spinner_frame(tick: u8) -> &'static str {
 
 #[cfg(test)]
 mod tests {
-    use super::{resolve, spinner_frame, step_index};
+    use super::spinner_frame;
 
     #[test]
     fn spinner_cycles_dots() {
@@ -905,22 +998,5 @@ mod tests {
         assert_eq!(spinner_frame(1), "..");
         assert_eq!(spinner_frame(2), "...");
         assert_eq!(spinner_frame(3), ".");
-    }
-
-    #[test]
-    fn list_motion_clamps_instead_of_wrapping() {
-        assert_eq!(step_index(Some(0), 5, -1), Some(0));
-        assert_eq!(step_index(Some(4), 5, 1), Some(4));
-        assert_eq!(step_index(Some(2), 5, 10), Some(4));
-        assert_eq!(step_index(None, 5, 1), Some(1));
-        assert_eq!(step_index(Some(0), 0, 1), None);
-    }
-
-    #[test]
-    fn jump_is_one_based_count_clamped() {
-        assert_eq!(resolve(10, 0), Some(0));
-        assert_eq!(resolve(10, 9), Some(9));
-        assert_eq!(resolve(10, 99), Some(9));
-        assert_eq!(resolve(0, 0), None);
     }
 }

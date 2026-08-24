@@ -4,6 +4,7 @@ use indicatif::{ProgressBar, ProgressStyle};
 use marple_db::{Dataset, ImportStatus, MarpleDB, ProgressReporter, Stream};
 
 pub mod browse;
+pub(crate) mod table;
 
 #[derive(Clone, Copy, Debug, Default, ValueEnum)]
 #[clap(rename_all = "lowercase")]

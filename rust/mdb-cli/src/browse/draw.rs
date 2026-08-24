@@ -1,19 +1,18 @@
 use super::format::{
-    body_style, clip_args, compact_count, count_cell, ellipsis, format_expiry, format_usage,
-    host_from_url, kv, kv_styled, license_color, license_type, now_epoch, opt_bytes, opt_count,
-    opt_text, signal_kind, signal_source, stream_kind, sum_bytes, usage_bar,
+    clip_args, compact_count, count_cell, ellipsis, format_expiry, format_usage, host_from_url, kv,
+    kv_styled, license_color, license_type, now_epoch, opt_bytes, opt_count, opt_text, signal_kind,
+    signal_source, stream_kind, sum_bytes, usage_bar,
 };
 use super::picker::FilePicker;
 use super::session::settings_path;
 use super::{AUTO_LOAD_LIMIT, App, BrowseLevel, Focus};
+use crate::table::{block, body_style, highlight, render_table, search_title, text_col};
 use marple_db::{CurrentWorkspace, StorageQuota};
 use ratatui::Frame;
 use ratatui::layout::{Alignment, Constraint, Direction, Layout, Rect};
 use ratatui::style::{Color, Modifier, Style};
 use ratatui::text::{Line, Span, Text};
-use ratatui::widgets::{
-    Block, Borders, Cell, List, ListItem, ListState, Paragraph, Row, Table, TableState, Wrap,
-};
+use ratatui::widgets::{Cell, List, ListItem, ListState, Paragraph, Row, Wrap};
 
 const LEFT_PANE: [Constraint; 2] = [Constraint::Percentage(24), Constraint::Percentage(76)];
 const ID_COL: u16 = 6;
@@ -81,10 +80,16 @@ fn draw_list(frame: &mut Frame, app: &App, area: Rect) {
     match app.browse_level {
         BrowseLevel::Streams => {
             let name_width = text_col(area, ID_COL + COUNT_COL, 2);
+            let indices = app.stream_indices(focused);
+            let title = if focused {
+                search_title("streams", &app.search)
+            } else {
+                "streams".to_string()
+            };
             render_table(
                 frame,
                 area,
-                "streams",
+                &title,
                 focused,
                 &[],
                 [
@@ -92,7 +97,7 @@ fn draw_list(frame: &mut Frame, app: &App, area: Rect) {
                     Constraint::Min(4),
                     Constraint::Length(COUNT_COL),
                 ],
-                app.streams.len(),
+                &indices,
                 app.stream_state.selected(),
                 |index| {
                     let stream = &app.streams[index];
@@ -110,6 +115,12 @@ fn draw_list(frame: &mut Frame, app: &App, area: Rect) {
                 .loaded_stream()
                 .map(|stream| format!("datasets  /{}", stream.name))
                 .unwrap_or_else(|| "datasets".to_string());
+            let indices = app.dataset_indices(focused);
+            let title = if focused {
+                search_title(&title, &app.search)
+            } else {
+                title
+            };
             render_table(
                 frame,
                 area,
@@ -117,7 +128,7 @@ fn draw_list(frame: &mut Frame, app: &App, area: Rect) {
                 focused,
                 &[],
                 [Constraint::Min(4), Constraint::Length(COUNT_COL)],
-                app.datasets.len(),
+                &indices,
                 app.dataset_state.selected(),
                 |index| {
                     let dataset = &app.datasets[index];
@@ -130,14 +141,6 @@ fn draw_list(frame: &mut Frame, app: &App, area: Rect) {
         }
         _ => {}
     }
-}
-
-fn header_row<'a>(cells: &'a [&str]) -> Row<'a> {
-    Row::new(cells.iter().copied().map(Cell::from).collect::<Vec<_>>()).style(
-        Style::default()
-            .fg(Color::DarkGray)
-            .add_modifier(Modifier::BOLD),
-    )
 }
 
 fn load_hint(count: Option<u64>, noun: &str) -> String {
@@ -189,32 +192,6 @@ fn loaded_or_hint(
     true
 }
 
-fn render_table(
-    frame: &mut Frame,
-    area: Rect,
-    title: &str,
-    focused: bool,
-    headers: &[&str],
-    widths: impl IntoIterator<Item = Constraint>,
-    len: usize,
-    selected: Option<usize>,
-    row_at: impl FnMut(usize) -> Row<'static>,
-) {
-    let (start, end) = visible_range(len, selected, table_view_rows(area.height));
-    let title = window_title(title, start, end, len);
-    let rows: Vec<Row> = (start..end).map(row_at).collect();
-    let mut table = Table::new(rows, widths)
-        .block(block(&title, focused))
-        .style(body_style())
-        .row_highlight_style(highlight())
-        .highlight_symbol("");
-    if !headers.is_empty() {
-        table = table.header(header_row(headers));
-    }
-    let mut window = TableState::default().with_selected(selected.map(|index| index - start));
-    frame.render_stateful_widget(table, area, &mut window);
-}
-
 fn draw_table(frame: &mut Frame, app: &App, area: Rect) {
     let focused = app.focus == Focus::Table;
     match app.browse_level {
@@ -223,10 +200,11 @@ fn draw_table(frame: &mut Frame, app: &App, area: Rect) {
                 draw_hint(frame, area, "streams", focused, "no streams");
                 return;
             }
+            let indices = app.stream_indices(true);
             render_table(
                 frame,
                 area,
-                "streams",
+                &search_title("streams", &app.search),
                 focused,
                 &[
                     "id", "type", "name", "plugin", "args", "datasets", "cold", "hot",
@@ -241,7 +219,7 @@ fn draw_table(frame: &mut Frame, app: &App, area: Rect) {
                     Constraint::Length(12),
                     Constraint::Length(12),
                 ],
-                app.streams.len(),
+                &indices,
                 app.stream_state.selected(),
                 |index| {
                     let stream = &app.streams[index];
@@ -279,10 +257,15 @@ fn draw_table(frame: &mut Frame, app: &App, area: Rect) {
             ) {
                 return;
             }
+            let indices = app.dataset_indices(focused);
             render_table(
                 frame,
                 area,
-                &title,
+                &if focused {
+                    search_title(&title, &app.search)
+                } else {
+                    title
+                },
                 focused,
                 &[
                     "id",
@@ -304,7 +287,7 @@ fn draw_table(frame: &mut Frame, app: &App, area: Rect) {
                     Constraint::Length(12),
                     Constraint::Length(12),
                 ],
-                app.datasets.len(),
+                &indices,
                 app.dataset_state.selected(),
                 |index| {
                     let dataset = &app.datasets[index];
@@ -342,10 +325,15 @@ fn draw_table(frame: &mut Frame, app: &App, area: Rect) {
             ) {
                 return;
             }
+            let indices = app.signal_indices(focused);
             render_table(
                 frame,
                 area,
-                &title,
+                &if focused {
+                    search_title(&title, &app.search)
+                } else {
+                    title
+                },
                 focused,
                 &[
                     "type",
@@ -367,7 +355,7 @@ fn draw_table(frame: &mut Frame, app: &App, area: Rect) {
                     Constraint::Length(12),
                     Constraint::Length(12),
                 ],
-                app.signals.len(),
+                &indices,
                 app.signal_state.selected(),
                 |index| {
                     let signal = &app.signals[index];
@@ -562,37 +550,11 @@ fn workspace_usage(app: &App) -> (Option<u64>, Option<u64>, Option<u64>) {
     }
 }
 
-fn text_col(area: Rect, reserved: u16, gaps: u16) -> usize {
-    (area.width.saturating_sub(2) as usize)
-        .saturating_sub(usize::from(reserved) + usize::from(gaps))
-}
-
-fn table_view_rows(height: u16) -> usize {
-    height.saturating_sub(3).max(1) as usize
-}
-
-fn window_title(title: &str, start: usize, end: usize, len: usize) -> String {
-    if len == 0 {
-        title.to_string()
-    } else {
-        format!("{title}  {}–{} of {len}", start + 1, end)
-    }
-}
-
-fn visible_range(len: usize, selected: Option<usize>, view: usize) -> (usize, usize) {
-    if len == 0 {
-        return (0, 0);
-    }
-    let selected = selected.unwrap_or(0).min(len - 1);
-    let start = selected
-        .saturating_sub(view / 2)
-        .min(len.saturating_sub(view));
-    (start, (start + view).min(len))
-}
-
 fn draw_help(frame: &mut Frame, app: &App, area: Rect) {
     let env = app.env_label();
-    let help = if !app.status.is_empty() {
+    let help = if app.search.editing {
+        format!("filter  /{}_  enter keep  esc cancel", app.search.query)
+    } else if !app.status.is_empty() {
         app.status.clone()
     } else if let Some(picker) = &app.env_picker {
         if picker.editing {
@@ -603,10 +565,10 @@ fn draw_help(frame: &mut Frame, app: &App, area: Rect) {
     } else if app.info_expanded {
         format!("j/k next  S-↓/↑ page  gg/G  i/esc close  v env ({env})  q quit")
     } else if app.browse_level == BrowseLevel::Root {
-        format!("j/k  S-↓/↑ page  gg/G  → open  i info  v env ({env})  q quit")
+        format!("j/k  S-↓/↑ page  gg/G  / filter  → open  i info  v env ({env})  q quit")
     } else {
         format!(
-            "tab list|table  j/k  S-↓/↑ page  gg/G  → open  i info  ← back  v env ({env})  q quit"
+            "tab list|table  j/k  S-↓/↑ page  gg/G  / filter  → open  i info  ← back  v env ({env})  q quit"
         )
     };
     frame.render_widget(
@@ -712,24 +674,6 @@ fn draw_file_picker(frame: &mut Frame, picker: &FilePicker) {
     }
 }
 
-fn block(title: &str, focused: bool) -> Block<'_> {
-    Block::default()
-        .title(Span::styled(title, Style::default().fg(Color::White)))
-        .borders(Borders::ALL)
-        .border_style(if focused {
-            Style::default().fg(Color::Cyan)
-        } else {
-            Style::default().fg(Color::DarkGray)
-        })
-}
-
-fn highlight() -> Style {
-    Style::default()
-        .fg(Color::Black)
-        .bg(Color::Cyan)
-        .add_modifier(Modifier::BOLD)
-}
-
 fn centered(area: Rect, percent_x: u16, percent_y: u16) -> Rect {
     let popup = Layout::default()
         .direction(Direction::Vertical)
@@ -747,28 +691,4 @@ fn centered(area: Rect, percent_x: u16, percent_y: u16) -> Rect {
             Constraint::Percentage((100 - percent_x) / 2),
         ])
         .split(popup[1])[1]
-}
-
-#[cfg(test)]
-mod tests {
-    use super::{visible_range, window_title};
-
-    #[test]
-    fn window_title_shows_visible_slice() {
-        assert_eq!(window_title("streams", 0, 0, 0), "streams");
-        assert_eq!(window_title("streams", 0, 5, 20), "streams  1–5 of 20");
-        assert_eq!(
-            window_title("signals  /speed", 8, 13, 20),
-            "signals  /speed  9–13 of 20"
-        );
-    }
-
-    #[test]
-    fn visible_range_keeps_selection_in_window() {
-        assert_eq!(visible_range(0, Some(0), 5), (0, 0));
-        assert_eq!(visible_range(3, Some(1), 10), (0, 3));
-        assert_eq!(visible_range(20, Some(0), 5), (0, 5));
-        assert_eq!(visible_range(20, Some(19), 5), (15, 20));
-        assert_eq!(visible_range(20, Some(10), 5), (8, 13));
-    }
 }

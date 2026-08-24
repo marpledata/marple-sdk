@@ -1,0 +1,347 @@
+use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
+use ratatui::Frame;
+use ratatui::layout::{Constraint, Rect};
+use ratatui::style::{Color, Modifier, Style};
+use ratatui::text::Span;
+use ratatui::widgets::{Block, Borders, Cell, Row, Table, TableState};
+
+#[derive(Clone, Debug, Default)]
+pub(crate) struct TableSearch {
+    pub query: String,
+    pub editing: bool,
+    saved: Option<String>,
+}
+
+impl TableSearch {
+    pub fn start(&mut self) {
+        self.saved = Some(self.query.clone());
+        self.query.clear();
+        self.editing = true;
+    }
+
+    pub fn active(&self) -> bool {
+        self.editing || !self.query.trim().is_empty()
+    }
+
+    pub fn clear(&mut self) {
+        self.query.clear();
+        self.saved = None;
+        self.editing = false;
+    }
+
+    pub fn cancel(&mut self) {
+        if let Some(saved) = self.saved.take() {
+            self.query = saved;
+        }
+        self.editing = false;
+    }
+
+    pub fn finish(&mut self) {
+        self.saved = None;
+        self.editing = false;
+    }
+
+    pub fn push(&mut self, ch: char) {
+        self.query.push(ch);
+    }
+
+    pub fn backspace(&mut self) {
+        self.query.pop();
+    }
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum SearchAction {
+    Changed,
+    Applied,
+    Closed,
+    Ignored,
+}
+
+pub(crate) fn handle_search_key(search: &mut TableSearch, key: KeyEvent) -> SearchAction {
+    match key.code {
+        KeyCode::Esc => {
+            search.cancel();
+            SearchAction::Closed
+        }
+        KeyCode::Enter => {
+            search.finish();
+            SearchAction::Applied
+        }
+        KeyCode::Backspace => {
+            search.backspace();
+            SearchAction::Changed
+        }
+        KeyCode::Char(ch) if !key.modifiers.contains(KeyModifiers::CONTROL) => {
+            search.push(ch);
+            SearchAction::Changed
+        }
+        _ => SearchAction::Ignored,
+    }
+}
+
+pub(crate) fn row_matches(query: &str, fields: impl IntoIterator<Item = impl AsRef<str>>) -> bool {
+    let query = query.trim();
+    if query.is_empty() {
+        return true;
+    }
+    let fields: Vec<String> = fields
+        .into_iter()
+        .map(|field| field.as_ref().to_lowercase())
+        .collect();
+    query.split_whitespace().all(|token| {
+        let token = token.to_lowercase();
+        fields.iter().any(|field| field.contains(&token))
+    })
+}
+
+pub(crate) fn filter_indices(
+    len: usize,
+    query: &str,
+    mut fields_at: impl FnMut(usize) -> Vec<String>,
+) -> Vec<usize> {
+    (0..len)
+        .filter(|&index| row_matches(query, fields_at(index)))
+        .collect()
+}
+
+pub(crate) fn step_visible(
+    visible: &[usize],
+    selected: Option<usize>,
+    delta: i32,
+) -> Option<usize> {
+    if visible.is_empty() {
+        return None;
+    }
+    let pos = selected
+        .and_then(|selected| visible.iter().position(|&index| index == selected))
+        .unwrap_or(0) as i32;
+    let next = (pos + delta).clamp(0, visible.len() as i32 - 1) as usize;
+    Some(visible[next])
+}
+
+pub(crate) fn goto_visible(visible: &[usize], index: usize) -> Option<usize> {
+    if visible.is_empty() {
+        return None;
+    }
+    Some(visible[index.min(visible.len() - 1)])
+}
+
+pub(crate) fn snap_visible(visible: &[usize], selected: Option<usize>) -> Option<usize> {
+    match selected {
+        Some(selected) if visible.contains(&selected) => Some(selected),
+        _ => visible.first().copied(),
+    }
+}
+
+pub(crate) fn render_table(
+    frame: &mut Frame,
+    area: Rect,
+    title: &str,
+    focused: bool,
+    headers: &[&str],
+    widths: impl IntoIterator<Item = Constraint>,
+    indices: &[usize],
+    selected: Option<usize>,
+    mut row_at: impl FnMut(usize) -> Row<'static>,
+) {
+    let pos = selected.and_then(|selected| indices.iter().position(|&index| index == selected));
+    let (start, end) = visible_range(indices.len(), pos, table_view_rows(area.height));
+    let title = window_title(title, start, end, indices.len());
+    let rows: Vec<Row> = indices[start..end]
+        .iter()
+        .map(|&index| row_at(index))
+        .collect();
+    let mut table = Table::new(rows, widths)
+        .block(block(&title, focused))
+        .style(body_style())
+        .row_highlight_style(highlight())
+        .highlight_symbol("");
+    if !headers.is_empty() {
+        table = table.header(header_row(headers));
+    }
+    let mut window = TableState::default().with_selected(pos.map(|index| index - start));
+    frame.render_stateful_widget(table, area, &mut window);
+}
+
+pub(crate) fn search_title(base: &str, search: &TableSearch) -> String {
+    if !search.editing && search.query.trim().is_empty() {
+        return base.to_string();
+    }
+    let caret = if search.editing { "_" } else { "" };
+    format!("{base}  /{}{caret}", search.query)
+}
+
+pub(crate) fn header_row<'a>(cells: &'a [&str]) -> Row<'a> {
+    Row::new(cells.iter().copied().map(Cell::from).collect::<Vec<_>>()).style(
+        Style::default()
+            .fg(Color::DarkGray)
+            .add_modifier(Modifier::BOLD),
+    )
+}
+
+pub(crate) fn block(title: &str, focused: bool) -> Block<'_> {
+    Block::default()
+        .title(Span::styled(title, Style::default().fg(Color::White)))
+        .borders(Borders::ALL)
+        .border_style(if focused {
+            Style::default().fg(Color::Cyan)
+        } else {
+            Style::default().fg(Color::DarkGray)
+        })
+}
+
+pub(crate) fn highlight() -> Style {
+    Style::default()
+        .fg(Color::Black)
+        .bg(Color::Cyan)
+        .add_modifier(Modifier::BOLD)
+}
+
+pub(crate) fn body_style() -> Style {
+    Style::default().fg(Color::Gray)
+}
+
+pub(crate) fn text_col(area: Rect, reserved: u16, gaps: u16) -> usize {
+    (area.width.saturating_sub(2) as usize)
+        .saturating_sub(usize::from(reserved) + usize::from(gaps))
+}
+
+fn table_view_rows(height: u16) -> usize {
+    height.saturating_sub(3).max(1) as usize
+}
+
+pub(crate) fn window_title(title: &str, start: usize, end: usize, len: usize) -> String {
+    if len == 0 {
+        title.to_string()
+    } else {
+        format!("{title}  {}–{} of {len}", start + 1, end)
+    }
+}
+
+pub(crate) fn visible_range(len: usize, selected: Option<usize>, view: usize) -> (usize, usize) {
+    if len == 0 {
+        return (0, 0);
+    }
+    let selected = selected.unwrap_or(0).min(len - 1);
+    let start = selected
+        .saturating_sub(view / 2)
+        .min(len.saturating_sub(view));
+    (start, (start + view).min(len))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{
+        TableSearch, filter_indices, goto_visible, handle_search_key, row_matches, search_title,
+        snap_visible, step_visible, visible_range, window_title,
+    };
+    use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
+
+    #[test]
+    fn row_matches_case_insensitive_field_substrings() {
+        assert!(row_matches("", ["anything"]));
+        assert!(row_matches("traffic", ["mallorca-traffic/add_traffic.py"]));
+        assert!(row_matches("FAILED", ["ok.csv", "failed"]));
+        assert!(row_matches("fail csv", ["ok.csv", "failed"]));
+        assert!(row_matches("mb racing", ["MB Racing"]));
+        assert!(!row_matches("mbr", ["MB Racing"]));
+        assert!(!row_matches("failed", ["traffic.csv", "succeeded"]));
+        assert!(!row_matches("xyz", ["MB Racing"]));
+    }
+
+    #[test]
+    fn filter_indices_keeps_matching_rows() {
+        let rows = [["alpha"], ["beta traffic"], ["gamma"]];
+        assert_eq!(
+            filter_indices(rows.len(), "tra", |index| {
+                rows[index].iter().map(|field| field.to_string()).collect()
+            }),
+            vec![1]
+        );
+        assert_eq!(
+            filter_indices(rows.len(), "", |index| {
+                rows[index].iter().map(|field| field.to_string()).collect()
+            }),
+            vec![0, 1, 2]
+        );
+    }
+
+    #[test]
+    fn search_title_shows_prompt_while_editing() {
+        let mut search = TableSearch::default();
+        assert_eq!(search_title("streams", &search), "streams");
+        search.start();
+        assert_eq!(search_title("streams", &search), "streams  /_");
+        search.push('f');
+        assert_eq!(search_title("streams", &search), "streams  /f_");
+        search.finish();
+        assert_eq!(search_title("streams", &search), "streams  /f");
+    }
+
+    #[test]
+    fn search_esc_cancels_edit_then_clear_drops_filter() {
+        let mut search = TableSearch::default();
+        search.query = "old".into();
+        search.start();
+        search.push('n');
+        assert_eq!(
+            handle_search_key(&mut search, KeyEvent::new(KeyCode::Esc, KeyModifiers::NONE)),
+            super::SearchAction::Closed
+        );
+        assert!(!search.editing);
+        assert_eq!(search.query, "old");
+        search.clear();
+        assert!(!search.active());
+        assert_eq!(search.query, "");
+    }
+
+    #[test]
+    fn search_enter_keeps_query() {
+        let mut search = TableSearch::default();
+        search.start();
+        search.push('f');
+        assert_eq!(
+            handle_search_key(
+                &mut search,
+                KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE)
+            ),
+            super::SearchAction::Applied
+        );
+        assert!(!search.editing);
+        assert_eq!(search.query, "f");
+        assert!(search.active());
+    }
+
+    #[test]
+    fn visible_motion_steps_filtered_rows() {
+        let visible = vec![2, 5, 9];
+        assert_eq!(step_visible(&visible, Some(5), 1), Some(9));
+        assert_eq!(step_visible(&visible, Some(5), -1), Some(2));
+        assert_eq!(step_visible(&visible, Some(2), -1), Some(2));
+        assert_eq!(goto_visible(&visible, 0), Some(2));
+        assert_eq!(goto_visible(&visible, 99), Some(9));
+        assert_eq!(snap_visible(&visible, Some(5)), Some(5));
+        assert_eq!(snap_visible(&visible, Some(1)), Some(2));
+        assert_eq!(step_visible(&[], Some(0), 1), None);
+    }
+
+    #[test]
+    fn window_title_shows_visible_slice() {
+        assert_eq!(window_title("streams", 0, 0, 0), "streams");
+        assert_eq!(window_title("streams", 0, 5, 20), "streams  1–5 of 20");
+        assert_eq!(
+            window_title("signals  /speed", 8, 13, 20),
+            "signals  /speed  9–13 of 20"
+        );
+    }
+
+    #[test]
+    fn visible_range_keeps_selection_in_window() {
+        assert_eq!(visible_range(0, Some(0), 5), (0, 0));
+        assert_eq!(visible_range(3, Some(1), 10), (0, 3));
+        assert_eq!(visible_range(20, Some(0), 5), (0, 5));
+        assert_eq!(visible_range(20, Some(19), 5), (15, 20));
+        assert_eq!(visible_range(20, Some(10), 5), (8, 13));
+    }
+}
