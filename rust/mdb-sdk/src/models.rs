@@ -672,19 +672,3 @@ pub(crate) struct PartUrlsResponse {
     pub(crate) _expires_in: u64,
     pub(crate) next_part: Option<u32>,
 }
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn usage_series_latest_skips_non_finite() {
-        let series = UsageSeries {
-            timestamps: Vec::new(),
-            values: vec![f64::NAN, f64::INFINITY],
-            integrated: false,
-            unit: String::new(),
-        };
-        assert_eq!(series.latest(), None);
-    }
-}

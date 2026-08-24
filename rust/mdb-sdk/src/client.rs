@@ -1,7 +1,7 @@
 use crate::errors::{Error, Result};
 use crate::models::{
-    CurrentWorkspace, Dataset, HealthResponse, ImportStatus, Signal, StreamsResponse, UsageSeries,
-    UsageType, UserInfo, WorkspaceLicense,
+    CurrentWorkspace, Dataset, HealthResponse, ImportStatus, Signal, Stream, StreamsResponse,
+    UsageSeries, UsageType, UserInfo, WorkspaceLicense,
 };
 use reqwest::{
     Client, Method, Response, StatusCode, Url,
@@ -153,14 +153,6 @@ impl MarpleDB {
         self.send_json(endpoint, Method::DELETE, request).await
     }
 
-    pub(crate) async fn post_json<B, R>(&self, endpoint: &str, body: &B) -> Result<R>
-    where
-        B: Serialize + ?Sized,
-        R: DeserializeOwned,
-    {
-        self.post(endpoint, body).await
-    }
-
     #[tracing::instrument(skip_all, fields(endpoint = %endpoint))]
     pub(crate) async fn post_multipart(
         &self,
@@ -169,14 +161,6 @@ impl MarpleDB {
     ) -> Result<Value> {
         let request = self.auth(self.client.post(self.url(endpoint)).multipart(form));
         self.send_json(endpoint, Method::POST, request).await
-    }
-
-    pub(crate) async fn get_json<Q, R>(&self, endpoint: &str, query: &Q) -> Result<R>
-    where
-        Q: Serialize + ?Sized,
-        R: DeserializeOwned,
-    {
-        self.get(endpoint, query).await
     }
 
     /// Checks MarpleDB API health.
@@ -190,9 +174,8 @@ impl MarpleDB {
     /// top-level `workspace` field is the workspace slug, not the license row id.
     pub async fn get_workspace_license(&self) -> Result<Option<WorkspaceLicense>> {
         match self.get("workspace/license", &()).await {
-            Ok(license) => Ok(license),
             Err(Error::Api { status, .. }) if status == StatusCode::NOT_FOUND => Ok(None),
-            Err(error) => Err(error),
+            result => result,
         }
     }
 
@@ -208,16 +191,9 @@ impl MarpleDB {
         start_time: Option<i64>,
         end_time: Option<i64>,
     ) -> Result<UsageSeries> {
-        #[derive(Serialize)]
-        struct Query {
-            #[serde(skip_serializing_if = "Option::is_none")]
-            start_time: Option<i64>,
-            #[serde(skip_serializing_if = "Option::is_none")]
-            end_time: Option<i64>,
-        }
         self.get(
             &format!("usage/series/{usage_type}"),
-            &Query {
+            &UsageQuery {
                 start_time,
                 end_time,
             },
@@ -229,24 +205,23 @@ impl MarpleDB {
     ///
     /// Identity comes from `/user/info`. Usage points are best-effort.
     pub async fn get_current_workspace(&self) -> Result<CurrentWorkspace> {
-        let info = self.get_user_info().await?;
+        let (info, cold_bytes, hot_bytes, archive_bytes) = tokio::join!(
+            self.get_user_info(),
+            self.latest_usage(UsageType::ColdStorage),
+            self.latest_usage(UsageType::HotStorage),
+            self.latest_usage(UsageType::ArchiveStorage),
+        );
+        let info = info?;
         let id = info
             .current_workspace_id()
             .ok_or_else(|| {
                 Error::Protocol("could not resolve current workspace from /user/info".to_string())
             })?
             .to_string();
-        let name = info.workspace_name(&id).to_string();
-        let license = info.license;
-        let (cold_bytes, hot_bytes, archive_bytes) = tokio::join!(
-            self.latest_usage(UsageType::ColdStorage),
-            self.latest_usage(UsageType::HotStorage),
-            self.latest_usage(UsageType::ArchiveStorage),
-        );
         Ok(CurrentWorkspace {
+            name: info.workspace_name(&id).to_string(),
+            license: info.license,
             id,
-            name,
-            license,
             cold_bytes,
             hot_bytes,
             archive_bytes,
@@ -261,13 +236,15 @@ impl MarpleDB {
     }
 
     /// Lists all streams visible to the token.
-    pub async fn get_streams(&self) -> Result<Vec<crate::Stream>> {
-        let streams_response: StreamsResponse = self.get("streams", &()).await?;
-        Ok(streams_response.streams)
+    pub async fn get_streams(&self) -> Result<Vec<Stream>> {
+        Ok(self
+            .get::<_, StreamsResponse>("streams", &())
+            .await?
+            .streams)
     }
 
     /// Finds a stream by name.
-    pub async fn get_stream(&self, stream_name: &str) -> Result<crate::Stream> {
+    pub async fn get_stream(&self, stream_name: &str) -> Result<Stream> {
         let streams = self.get_streams().await?;
         streams
             .into_iter()
@@ -285,7 +262,7 @@ impl MarpleDB {
         &self,
         stream_name: &str,
         options: &S,
-    ) -> Result<crate::Stream> {
+    ) -> Result<Stream> {
         let mut options = match serde_json::to_value(options)? {
             Value::Object(options) => options,
             _ => {
@@ -295,7 +272,7 @@ impl MarpleDB {
             }
         };
         options.insert("name".to_string(), Value::String(stream_name.to_string()));
-        self.post_json::<_, Value>("stream", &options).await?;
+        self.post::<_, Value>("stream", &options).await?;
         self.get_stream(stream_name).await
     }
 
@@ -307,9 +284,9 @@ impl MarpleDB {
         &self,
         stream_id: i32,
         options: &S,
-    ) -> Result<crate::Stream> {
-        let endpoint = format!("stream/update/{}", stream_id);
-        self.post_json::<_, Value>(&endpoint, options).await?;
+    ) -> Result<Stream> {
+        let endpoint = format!("stream/update/{stream_id}");
+        self.post::<_, Value>(&endpoint, options).await?;
         self.get_streams()
             .await?
             .into_iter()
@@ -371,7 +348,7 @@ impl MarpleDB {
         struct DownloadLink {
             path: String,
         }
-        let link: DownloadLink = self.get_json(&endpoint, &()).await?;
+        let link: DownloadLink = self.get(&endpoint, &()).await?;
         Ok(link.path.parse()?)
     }
 
@@ -534,6 +511,14 @@ impl MarpleDBBuilder {
             request_source,
         })
     }
+}
+
+#[derive(Serialize)]
+struct UsageQuery {
+    #[serde(skip_serializing_if = "Option::is_none")]
+    start_time: Option<i64>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    end_time: Option<i64>,
 }
 
 fn build_client(timeout: Option<Duration>, user_agent: Option<&str>) -> Result<Client> {

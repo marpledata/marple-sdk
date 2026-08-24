@@ -161,6 +161,13 @@ fn usage_series_latest_is_last_sample() {
 }
 
 #[test]
+fn usage_series_latest_skips_non_finite() {
+    let mut series: UsageSeries = serde_json::from_value(json!({ "values": [] })).expect("series");
+    series.values = vec![f64::NAN, f64::INFINITY];
+    assert_eq!(series.latest(), None);
+}
+
+#[test]
 fn deserializes_signal_and_ignores_unknown_fields() {
     let signal: Signal = serde_json::from_value(json!({
         "id": 99,

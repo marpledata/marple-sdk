@@ -1,4 +1,6 @@
-use marple_db::{Dataset, ImportStatus, MarpleDB, Metadata, PushFileOptions, UploadModeOverride};
+use marple_db::{
+    Dataset, ImportStatus, MarpleDB, Metadata, PushFileOptions, UploadModeOverride, UsageType,
+};
 use serde_json::{Value, json};
 use std::env;
 use std::fs;
@@ -147,17 +149,16 @@ async fn upload_and_assert_dataset(
         db.post::<_, Value>("/query", &json!({ "query": query }))
             .await?;
 
-        let signals: Value = db
-            .get(
-                &format!("/stream/{}/dataset/{}/signals", stream_id, dataset.id),
-                &(),
-            )
-            .await?;
+        let signals = db.get_signals(stream_id, dataset.id).await?;
         anyhow::ensure!(
-            signals
-                .as_array()
-                .is_some_and(|signals| !signals.is_empty()),
+            !signals.is_empty(),
             "signals response should be a non-empty array"
+        );
+        anyhow::ensure!(
+            signals.iter().all(|signal| {
+                signal.datastream_id == Some(stream_id) && signal.dataset_id == Some(dataset.id)
+            }),
+            "signals should include the parent stream and dataset ids"
         );
     }
 
@@ -216,6 +217,36 @@ async fn test_sdk_health_and_streams() -> anyhow::Result<()> {
 
     let invalid_db = MarpleDB::new(&url, "invalid_token")?;
     assert!(invalid_db.get_streams().await.is_err());
+
+    Ok(())
+}
+
+#[tokio::test]
+async fn test_sdk_user_info_and_usage() -> anyhow::Result<()> {
+    let _guard = integration_test_guard().await;
+    let Some((token, url)) = maybe_skip_integration() else {
+        eprintln!("Skipping Rust SDK integration test: missing env var MDB_TOKEN");
+        return Ok(());
+    };
+
+    let db = db(&token, &url)?;
+    let info = db.get_user_info().await?;
+    anyhow::ensure!(
+        info.current_workspace_id() == Some("staging"),
+        "expected workspace staging, got {:?}",
+        info.current_workspace_id()
+    );
+
+    db.get_workspace_license().await?;
+    db.get_usage_series(UsageType::ColdStorage, None, None)
+        .await?;
+
+    let workspace = db.get_current_workspace().await?;
+    anyhow::ensure!(
+        workspace.id == "staging",
+        "expected workspace staging, got {}",
+        workspace.id
+    );
 
     Ok(())
 }
