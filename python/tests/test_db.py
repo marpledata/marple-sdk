@@ -206,6 +206,50 @@ def test_get_signals(example_dataset: Dataset) -> None:
     assert len(example_dataset.get_signals(signal_names=[r"car\.wheel.*"])) == 0
 
 
+def test_exact_names_do_not_fetch_signal_map(
+    example_dataset: Dataset, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    client = example_dataset._client
+    monkeypatch.setattr(client, "_signal_map", None)
+    monkeypatch.setattr(
+        client,
+        "get_signal_map",
+        lambda: (_ for _ in ()).throw(AssertionError("signal_map should not be fetched")),
+    )
+
+    seen: list[str] = []
+    original_get = client.get
+
+    def get(url: str, *args, **kwargs):
+        seen.append(url)
+        assert "/signal_map" not in url, url
+        return original_get(url, *args, **kwargs)
+
+    monkeypatch.setattr(client, "get", get)
+
+    assert "car.speed" in example_dataset.get_data(signals=["car.speed"]).columns
+    assert example_dataset.get_signal("car.speed") is not None
+    assert example_dataset.get_signals(signal_names=["car.speed"])[0].name == "car.speed"
+    assert any("/signal/car.speed/id" in url for url in seen)
+
+
+def test_regex_names_fetch_signal_map(
+    example_dataset: Dataset, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    client = example_dataset._client
+    monkeypatch.setattr(client, "_signal_map", None)
+    called = {"map": False}
+    original = client.get_signal_map
+
+    def get_signal_map():
+        called["map"] = True
+        return original()
+
+    monkeypatch.setattr(client, "get_signal_map", get_signal_map)
+    assert example_dataset.get_signals(signal_names=[re.compile(r"car\.speed")])
+    assert called["map"]
+
+
 def test_test_dataset(db: DB, example_dataset: Dataset) -> None:
 
     assert example_dataset.n_signals == 15
