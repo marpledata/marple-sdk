@@ -206,9 +206,7 @@ def test_get_signals(example_dataset: Dataset) -> None:
     assert len(example_dataset.get_signals(signal_names=[r"car\.wheel.*"])) == 0
 
 
-def test_exact_names_do_not_fetch_signal_map(
-    example_dataset: Dataset, monkeypatch: pytest.MonkeyPatch
-) -> None:
+def test_exact_names_do_not_fetch_signal_map(example_dataset: Dataset, monkeypatch: pytest.MonkeyPatch) -> None:
     client = example_dataset._client
     monkeypatch.setattr(client, "_signal_map", None)
     monkeypatch.setattr(
@@ -233,9 +231,7 @@ def test_exact_names_do_not_fetch_signal_map(
     assert any("/signal/car.speed/id" in url for url in seen)
 
 
-def test_regex_names_fetch_signal_map(
-    example_dataset: Dataset, monkeypatch: pytest.MonkeyPatch
-) -> None:
+def test_regex_names_fetch_signal_map(example_dataset: Dataset, monkeypatch: pytest.MonkeyPatch) -> None:
     client = example_dataset._client
     monkeypatch.setattr(client, "_signal_map", None)
     called = {"map": False}
