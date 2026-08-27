@@ -35,109 +35,12 @@ pub struct Settings {
     /// Marple Insight base URL.
     pub insight_url: Option<String>,
     #[serde(
-        rename = "INSIGHT_DISTANCE_MODE_ENABLED",
-        default,
-        deserialize_with = "deserialize_opt_bool"
-    )]
-    /// Whether Insight distance mode is enabled.
-    pub insight_distance_mode_enabled: Option<bool>,
-    #[serde(
-        rename = "INSIGHT_DEFAULT_DISTANCE_SIGNAL",
-        default,
-        deserialize_with = "deserialize_opt_string"
-    )]
-    /// Default signal used for Insight distance mode.
-    pub insight_default_distance_signal: Option<String>,
-    #[serde(
-        rename = "INSIGHT_SEGMENTS_ENABLED",
-        default,
-        deserialize_with = "deserialize_opt_bool"
-    )]
-    /// Whether Insight segments are enabled.
-    pub insight_segments_enabled: Option<bool>,
-    #[serde(
-        rename = "INSIGHT_SEGMENTS_SIGNAL",
-        default,
-        deserialize_with = "deserialize_opt_string"
-    )]
-    /// Signal used for Insight segments.
-    pub insight_segments_signal: Option<String>,
-    #[serde(
-        rename = "PATH_COLD",
-        default,
-        deserialize_with = "deserialize_opt_string"
-    )]
-    /// Cold-storage path.
-    pub path_cold: Option<String>,
-    #[serde(
-        rename = "PATH_BACKUP",
-        default,
-        deserialize_with = "deserialize_opt_string"
-    )]
-    /// Backup-storage path.
-    pub path_backup: Option<String>,
-    #[serde(
-        rename = "PATH_SWAP",
-        default,
-        deserialize_with = "deserialize_opt_string"
-    )]
-    /// Swap-storage path.
-    pub path_swap: Option<String>,
-    #[serde(
-        rename = "PATH_LOGS",
-        default,
-        deserialize_with = "deserialize_opt_string"
-    )]
-    /// Log-storage path.
-    pub path_logs: Option<String>,
-    #[serde(
-        rename = "SUPERUSER_MANAGES_USERS",
-        default,
-        deserialize_with = "deserialize_opt_bool"
-    )]
-    /// Whether a superuser manages workspace users.
-    pub superuser_manages_users: Option<bool>,
-    #[serde(
-        rename = "SANDBOX_JOBS_ENABLED",
-        default,
-        deserialize_with = "deserialize_opt_bool"
-    )]
-    /// Whether sandbox jobs are enabled.
-    pub sandbox_jobs_enabled: Option<bool>,
-    #[serde(rename = "INGEST_PLUGINS_ADDITIONAL", default)]
-    /// Extra ingest plugins advertised by the workspace.
-    pub ingest_plugins_additional: Option<Value>,
-    #[serde(
-        rename = "DB_HOST",
-        default,
-        deserialize_with = "deserialize_opt_string"
-    )]
-    /// Metadata database host.
-    pub db_host: Option<String>,
-    #[serde(rename = "DB_PORT", default, deserialize_with = "deserialize_opt_i64")]
-    /// Metadata database port.
-    pub db_port: Option<i64>,
-    #[serde(
         rename = "DB_NAME",
         default,
         deserialize_with = "deserialize_opt_string"
     )]
-    /// Metadata database name.
+    /// mdb_{workspace_id}
     pub db_name: Option<String>,
-    #[serde(
-        rename = "DB_USER",
-        default,
-        deserialize_with = "deserialize_opt_string"
-    )]
-    /// Metadata database user.
-    pub db_user: Option<String>,
-    #[serde(
-        rename = "INSIGHT_WEBHOOK_CONFIGURED",
-        default,
-        deserialize_with = "deserialize_opt_bool"
-    )]
-    /// Whether an Insight webhook is configured.
-    pub insight_webhook_configured: Option<bool>,
     #[serde(
         rename = "VERSION",
         default,

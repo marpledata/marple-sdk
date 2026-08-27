@@ -349,23 +349,23 @@ impl MarpleDB {
 
         while std::time::Instant::now() < deadline {
             let dataset = self.get_dataset(stream_id, dataset_id).await?;
-            last_status = format!("{:?}", dataset.import_status);
+            last_status = dataset.import_status.to_string();
 
-            match dataset.import_status {
-                ImportStatus::Finished | ImportStatus::Live => return Ok(dataset),
-                ImportStatus::Failed
-                | ImportStatus::PostprocessingFailed
-                | ImportStatus::CoolingFailed => {
-                    return Err(Error::ImportFailed {
-                        id: dataset.id,
-                        message: dataset
-                            .import_message
-                            .clone()
-                            .unwrap_or_else(|| format!("{:?}", dataset.import_status)),
-                    });
-                }
-                _ => tokio::time::sleep(Duration::from_millis(500)).await,
+            if dataset.import_status.is_failure() {
+                return Err(Error::ImportFailed {
+                    id: dataset.id,
+                    message: dataset
+                        .import_message
+                        .clone()
+                        .unwrap_or_else(|| format!("{:?}", dataset.import_status)),
+                });
             }
+
+            if dataset.import_status.is_success() {
+                return Ok(dataset);
+            }
+
+            tokio::time::sleep(Duration::from_millis(500)).await;
         }
 
         Err(Error::ImportTimeout {
@@ -384,8 +384,8 @@ impl MarpleDB {
         Q: Serialize + ?Sized,
         R: DeserializeOwned,
     {
-        let request = self.auth(self.client.get(self.url(endpoint)).query(query));
-        self.send_json(endpoint, Method::GET, request).await
+        let request = self.client.get(self.url(endpoint)).query(query);
+        self.send_request(endpoint, Method::GET, request).await
     }
 
     /// Sends a POST request with a JSON body and deserializes the JSON response.
@@ -398,8 +398,8 @@ impl MarpleDB {
         B: Serialize + ?Sized,
         R: DeserializeOwned,
     {
-        let request = self.auth(self.client.post(self.url(endpoint)).json(body));
-        self.send_json(endpoint, Method::POST, request).await
+        let request = self.client.post(self.url(endpoint)).json(body);
+        self.send_request(endpoint, Method::POST, request).await
     }
 
     /// Sends a PATCH request with a JSON body and deserializes the JSON response.
@@ -412,8 +412,8 @@ impl MarpleDB {
         B: Serialize + ?Sized,
         R: DeserializeOwned,
     {
-        let request = self.auth(self.client.patch(self.url(endpoint)).json(body));
-        self.send_json(endpoint, Method::PATCH, request).await
+        let request = self.client.patch(self.url(endpoint)).json(body);
+        self.send_request(endpoint, Method::PATCH, request).await
     }
 
     /// Sends a DELETE request with a JSON body and deserializes the JSON response.
@@ -426,21 +426,15 @@ impl MarpleDB {
         B: Serialize + ?Sized,
         R: DeserializeOwned,
     {
-        let request = self.auth(self.client.delete(self.url(endpoint)).json(body));
-        self.send_json(endpoint, Method::DELETE, request).await
+        let request = self.client.delete(self.url(endpoint)).json(body);
+        self.send_request(endpoint, Method::DELETE, request).await
     }
 
     fn url(&self, endpoint: &str) -> String {
         self.base_url.clone() + endpoint.trim_start_matches('/')
     }
 
-    fn auth(&self, request: reqwest::RequestBuilder) -> reqwest::RequestBuilder {
-        request
-            .header(AUTHORIZATION, self.auth_header.clone())
-            .header(REQUEST_SOURCE_HEADER, self.request_source.clone())
-    }
-
-    async fn send_json<R>(
+    async fn send_request<R>(
         &self,
         endpoint: &str,
         method: Method,
@@ -449,30 +443,23 @@ impl MarpleDB {
     where
         R: DeserializeOwned,
     {
+        let request = request
+            .header(AUTHORIZATION, self.auth_header.clone())
+            .header(REQUEST_SOURCE_HEADER, self.request_source.clone());
         let response = retry::send_with_retry(request, &method, &API_RETRY)
             .await
             .map_err(|source| Error::transport(&method, endpoint, source))?;
-        self.handle_response(endpoint, method, response).await
-    }
 
-    async fn handle_response<R>(
-        &self,
-        endpoint: &str,
-        method: Method,
-        response: Response,
-    ) -> Result<R>
-    where
-        R: DeserializeOwned,
-    {
         let status = response.status();
         let body = response
             .text()
             .await
             .map_err(|source| Error::transport(&method, endpoint, source))?;
         if !status.is_success() {
-            return Err(Error::api(method, endpoint, status, body));
+            Err(Error::api(method, endpoint, status, body))
+        } else {
+            Ok(serde_json::from_str(&body)?)
         }
-        Ok(serde_json::from_str(&body)?)
     }
 
     #[tracing::instrument(skip_all, fields(endpoint = %endpoint))]
@@ -481,8 +468,8 @@ impl MarpleDB {
         endpoint: &str,
         form: reqwest::multipart::Form,
     ) -> Result<Value> {
-        let request = self.auth(self.client.post(self.url(endpoint)).multipart(form));
-        self.send_json(endpoint, Method::POST, request).await
+        let request = self.client.post(self.url(endpoint)).multipart(form);
+        self.send_request(endpoint, Method::POST, request).await
     }
 
     async fn latest_usage(&self, usage_type: UsageType) -> Option<u64> {
