@@ -1,11 +1,4 @@
-//! Rust SDK for the MarpleDB API.
-//!
-//! The SDK provides async helpers for checking API health, resolving the
-//! current workspace and usage, managing streams, listing datasets and
-//! signals, uploading files, waiting for imports, and downloading original
-//! uploaded files.
-//!
-//! # Quickstart
+//! Async Rust client for the MarpleDB API.
 //!
 //! ```no_run
 //! use marple_db::{ImportStatus, MarpleDB, PushFileOptions, SAAS_URL};
@@ -19,8 +12,7 @@
 //!     .push_file(
 //!         stream.id,
 //!         "run.csv",
-//!         PushFileOptions::default()
-//!             .metadata([("source", json!("example"))]),
+//!         PushFileOptions::default().metadata([("source", json!("example"))]),
 //!     )
 //!     .await?;
 //! let dataset = db
@@ -31,48 +23,12 @@
 //! # }
 //! ```
 //!
-//! # Core Types
-//!
-//! - [`MarpleDB`] is the API client.
-//! - [`SAAS_URL`] is the default Marple DB SaaS API root.
-//! - [`VERSION`] is this crate's version string.
-//! - [`CurrentWorkspace`] is the resolved workspace from [`MarpleDB::get_current_workspace`].
-//! - [`UserInfo`] and [`WorkspaceLicense`] come from `/user/info` and `/workspace/license`.
-//! - [`UsageSeries`] is a workspace usage series from [`MarpleDB::get_usage_series`].
-//! - [`Settings`] is the workspace settings bag from [`MarpleDB::get_settings`].
-//! - [`PushFileOptions`] configures uploads.
-//! - [`ImportStatus`] describes dataset import state.
-//! - [`Signal`] is dataset signal metadata from [`MarpleDB::get_signals`].
-//! - [`Error`] is the structured SDK error type.
-//! - [`SourceError`] is the opaque HTTP-client cause of transport/storage failures.
-//! - [`ProgressReporter`] receives transfer progress updates.
-//!
-//! # Errors
-//!
-//! ```no_run
-//! # async fn run(db: marple_db::MarpleDB) -> marple_db::Result<()> {
-//! match db.get_stream("runs").await {
-//!     Ok(stream) => println!("stream id: {}", stream.id),
-//!     Err(marple_db::Error::StreamNotFound { name }) => {
-//!         eprintln!("missing stream: {name}");
-//!     }
-//!     Err(error) => return Err(error),
-//! }
-//! # Ok(())
-//! # }
-//! ```
-//!
-//! SDK-built HTTP clients use the same defaults as the Python SDK:
-//!
-//! The default `rustls-tls-native-roots` feature uses rustls with the OS
-//! certificate store, so corporate proxies work.
-//!
-//! For a custom CA or other TLS settings, pass `reqwest::Client` instances
-//! through [`MarpleDBBuilder::client`] and [`MarpleDBBuilder::storage_client`].
-//! Those methods follow reqwest's semver; the rest of the SDK does not.
-//!
-//! This crate is async on Tokio and does not install a runtime. Callers must
-//! run it on a Tokio executor (`#[tokio::main]` or equivalent).
+//! # Notes
+//! - Requires a Tokio runtime (`#[tokio::main]` or equivalent).
+//! - Match [`Error`] for API failures.
+//! - Default TLS uses the OS certificate store (`rustls-tls-native-roots`).
+//! - For a custom CA, pass `reqwest::Client`s to
+//!   [`MarpleDBBuilder::client`] and [`MarpleDBBuilder::storage_client`].
 
 #![cfg_attr(docsrs, feature(doc_cfg))]
 #![deny(missing_docs)]
