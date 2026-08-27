@@ -14,6 +14,7 @@ This directory contains the Rust SDK, CLI, and parquet transcoder.
 ## Commands
 
 - Test workspace crates: `cargo test --workspace --locked`
+- Lint/format/docs: `cargo fmt --all -- --check && cargo clippy --workspace --locked --all-targets -- -D warnings && RUSTDOCFLAGS="-D warnings" cargo doc --workspace --no-deps`
 - Build workspace examples: `cargo build --workspace --examples --locked`
 - Test SDK only: `cargo test -p marple-db --locked`
 - Test CLI only: `cargo test -p mdb-cli --locked`
@@ -32,5 +33,5 @@ Run workspace commands from `rust/`. Run parquet transcoder commands from
   skip gracefully when credentials are absent.
 - Keep Cargo dependency versions centralized in `[workspace.dependencies]` when
   the dependency is shared by workspace crates.
-- Preserve the Rust 2024 edition and the existing async/Tokio patterns.
+- Preserve the Rust 2024 edition, the workspace MSRV (`rust-version` 1.85), and the existing async/Tokio patterns.
 - Release steps: `RELEASING.md`.

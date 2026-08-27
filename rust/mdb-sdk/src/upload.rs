@@ -1,8 +1,9 @@
 use crate::models::{Dataset, PushFileOptions, UploadModeOverride};
+use crate::retry::{self, STORAGE_RETRY};
 use crate::{Error, MarpleDB, ProgressReporter, Result};
 use base64::Engine;
 use futures_util::StreamExt;
-use reqwest::{Body, Response, header::CONTENT_LENGTH};
+use reqwest::{Body, Method, Response, header::CONTENT_LENGTH};
 use serde::Deserialize;
 use serde_json::Value;
 use std::io::SeekFrom;
@@ -19,6 +20,10 @@ const PROGRESS_STREAM_CHUNK: usize = 256 * 1024;
 
 impl MarpleDB {
     /// Uploads a file to a stream and returns the created dataset.
+    ///
+    /// Pass [`PushFileOptions::default`] for local-file defaults, or chain
+    /// setters for metadata, dataset name, overwrite, concurrency, upload
+    /// mode, and progress reporting.
     #[tracing::instrument(skip_all, fields(stream_id, path = %file_path.as_ref().display()))]
     pub async fn push_file(
         &self,
@@ -27,7 +32,7 @@ impl MarpleDB {
         options: PushFileOptions,
     ) -> Result<Dataset> {
         let file_path = file_path.as_ref();
-        let file_name = file_path.file_name().unwrap().to_string_lossy().to_string();
+        let file_name = file_name_from_path(file_path)?;
         let total_size = tokio::fs::metadata(file_path).await?.len();
 
         let init = self
@@ -42,8 +47,8 @@ impl MarpleDB {
         let progress = Arc::clone(&options.progress);
 
         let upload_result = async {
-            match (options.upload_mode, &init.mode) {
-                (UploadModeOverride::Server, _) | (_, UploadMode::Server) => {
+            match effective_upload_mode(options.upload_mode, init.mode) {
+                UploadMode::Server => {
                     tracing::debug!(ingestion_id = init.ingestion_id, "uploading via server");
                     self.upload_via_server(
                         &init,
@@ -54,7 +59,7 @@ impl MarpleDB {
                     )
                     .await?;
                 }
-                (_, UploadMode::Azure) => {
+                UploadMode::Azure => {
                     tracing::debug!(
                         ingestion_id = init.ingestion_id,
                         "uploading via Azure blocks"
@@ -68,12 +73,12 @@ impl MarpleDB {
                     )
                     .await?;
                 }
-                (_, UploadMode::Single) => {
+                UploadMode::Single => {
                     tracing::debug!(ingestion_id = init.ingestion_id, "uploading via single PUT");
                     self.upload_via_single(&init, file_path, total_size, Arc::clone(&progress))
                         .await?;
                 }
-                (_, UploadMode::Multipart) => {
+                UploadMode::Multipart => {
                     tracing::debug!(ingestion_id = init.ingestion_id, "uploading via multipart");
                     self.upload_via_multipart(
                         &init,
@@ -128,11 +133,13 @@ impl MarpleDB {
         let part = reqwest::multipart::Part::stream_with_length(body, total_size)
             .file_name(file_name.to_string())
             .mime_str("application/octet-stream")
-            .map_err(|source| Error::Storage {
-                context: "building multipart upload body".to_string(),
-                status: None,
-                body: None,
-                source: Some(source),
+            .map_err(|source| {
+                Error::storage(
+                    "building multipart upload body",
+                    None,
+                    None,
+                    Some(source),
+                )
             })?;
         let form = reqwest::multipart::Form::new().part("file", part);
         let endpoint = format!("ingestion/{}/upload/server", init.ingestion_id);
@@ -395,14 +402,8 @@ impl MarpleDB {
         context: &MultipartUploadContext,
         part: PartUrl,
     ) -> Result<()> {
-        let offset = u64::from(part.part_number - 1) * context.part_size;
-        if offset >= context.total_size {
-            return Err(Error::Protocol(format!(
-                "part {} offset is outside the file",
-                part.part_number
-            )));
-        }
-        let part_len = context.part_size.min(context.total_size - offset);
+        let (offset, part_len) =
+            part_byte_range(part.part_number, context.part_size, context.total_size)?;
 
         file.seek(SeekFrom::Start(offset)).await?;
         let mut data = vec![0; usize::try_from(part_len)?];
@@ -468,7 +469,7 @@ impl MarpleDB {
     }
 }
 
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Clone, Copy, Deserialize, PartialEq, Eq)]
 #[serde(rename_all = "lowercase")]
 enum UploadMode {
     Server,
@@ -526,6 +527,40 @@ struct BlockDescriptor {
     block_id: String,
 }
 
+fn file_name_from_path(file_path: &Path) -> Result<String> {
+    file_path
+        .file_name()
+        .map(|name| name.to_string_lossy().into_owned())
+        .ok_or_else(|| {
+            Error::Config(format!(
+                "upload path {} has no file name",
+                file_path.display()
+            ))
+        })
+}
+
+fn effective_upload_mode(override_mode: UploadModeOverride, mode: UploadMode) -> UploadMode {
+    match override_mode {
+        UploadModeOverride::Server => UploadMode::Server,
+        UploadModeOverride::Auto => mode,
+    }
+}
+
+fn part_byte_range(part_number: u32, part_size: u64, total_size: u64) -> Result<(u64, u64)> {
+    if part_number == 0 {
+        return Err(Error::Protocol(
+            "multipart part numbers are 1-based".to_string(),
+        ));
+    }
+    let offset = u64::from(part_number - 1) * part_size;
+    if offset >= total_size {
+        return Err(Error::Protocol(format!(
+            "part {part_number} offset is outside the file"
+        )));
+    }
+    Ok((offset, part_size.min(total_size - offset)))
+}
+
 fn azure_block_descriptors(total_size: u64, block_size: u64) -> Vec<BlockDescriptor> {
     if total_size == 0 {
         return Vec::new();
@@ -569,12 +604,9 @@ async fn send_storage(
     context: impl Into<String>,
 ) -> Result<Response> {
     let context = context.into();
-    request.send().await.map_err(|source| Error::Storage {
-        context,
-        status: None,
-        body: None,
-        source: Some(source),
-    })
+    retry::send_with_retry(request, &Method::PUT, &STORAGE_RETRY)
+        .await
+        .map_err(|source| Error::storage(context, None, None, Some(source)))
 }
 
 async fn ensure_success(response: Response, failure_message: impl Into<String>) -> Result<()> {
@@ -583,17 +615,70 @@ async fn ensure_success(response: Response, failure_message: impl Into<String>) 
     } else {
         let context = failure_message.into();
         let status = response.status();
-        let body = response.text().await.map_err(|source| Error::Storage {
-            context: context.clone(),
-            status: Some(status),
-            body: None,
-            source: Some(source),
+        let body = response.text().await.map_err(|source| {
+            Error::storage(context.clone(), Some(status), None, Some(source))
         })?;
-        Err(Error::Storage {
-            context,
-            status: Some(status),
-            body: Some(body),
-            source: None,
-        })
+        Err(Error::storage(context, Some(status), Some(body), None))
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::path::Path;
+
+    #[test]
+    fn file_name_from_path_rejects_roots_and_empty() {
+        assert!(file_name_from_path(Path::new("/")).is_err());
+        assert!(file_name_from_path(Path::new("")).is_err());
+        assert_eq!(
+            file_name_from_path(Path::new("run.csv")).unwrap(),
+            "run.csv"
+        );
+        assert_eq!(
+            file_name_from_path(Path::new("/tmp/heat1.mf4")).unwrap(),
+            "heat1.mf4"
+        );
+    }
+
+    #[test]
+    fn server_override_wins_over_storage_modes() {
+        for mode in [
+            UploadMode::Server,
+            UploadMode::Azure,
+            UploadMode::Single,
+            UploadMode::Multipart,
+        ] {
+            assert_eq!(
+                effective_upload_mode(UploadModeOverride::Server, mode),
+                UploadMode::Server
+            );
+            assert_eq!(effective_upload_mode(UploadModeOverride::Auto, mode), mode);
+        }
+    }
+
+    #[test]
+    fn azure_blocks_cover_the_file_without_overlap() {
+        assert!(azure_block_descriptors(0, 64).is_empty());
+
+        let descriptors = azure_block_descriptors(150, 64);
+        assert_eq!(descriptors.len(), 3);
+        assert_eq!(descriptors[0].offset, 0);
+        assert_eq!(descriptors[0].length, 64);
+        assert_eq!(descriptors[0].block_id, "00000000");
+        assert_eq!(descriptors[1].offset, 64);
+        assert_eq!(descriptors[1].length, 64);
+        assert_eq!(descriptors[2].offset, 128);
+        assert_eq!(descriptors[2].length, 22);
+        assert_eq!(descriptors.iter().map(|d| d.length).sum::<u64>(), 150);
+    }
+
+    #[test]
+    fn multipart_part_ranges_are_1_based() {
+        assert_eq!(part_byte_range(1, 10, 25).unwrap(), (0, 10));
+        assert_eq!(part_byte_range(2, 10, 25).unwrap(), (10, 10));
+        assert_eq!(part_byte_range(3, 10, 25).unwrap(), (20, 5));
+        assert!(part_byte_range(0, 10, 25).is_err());
+        assert!(part_byte_range(4, 10, 25).is_err());
     }
 }

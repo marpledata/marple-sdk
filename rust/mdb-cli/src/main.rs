@@ -1,7 +1,6 @@
 use anyhow::{Context, Result, anyhow};
 use clap::{CommandFactory, Parser, Subcommand, ValueEnum};
 use colored::*;
-use futures_util::StreamExt;
 use marple_db::{
     Dataset, MarpleDB, Metadata, ProgressReporter, PushFileOptions, UploadModeOverride,
 };
@@ -16,7 +15,6 @@ use std::ffi::OsString;
 use std::io::{self, IsTerminal};
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
-use tokio::io::AsyncWriteExt;
 use walkdir::WalkDir;
 
 #[derive(Parser)]
@@ -457,32 +455,10 @@ async fn download_dataset(
     output_dir: Option<&str>,
 ) -> Result<String> {
     let progress = download_progress(dataset);
-    let url = marpledb.get_download_link(dataset).await?;
-    let local_path = output_dir
-        .map_or_else(|| PathBuf::from("."), PathBuf::from)
-        .join(&dataset.path);
-    let mut file = tokio::fs::File::create(&local_path).await?;
-    let response = marpledb.storage_client().get(url).send().await?;
-    anyhow::ensure!(
-        response.status().is_success(),
-        "download failed with status {}",
-        response.status()
-    );
-    let total = dataset.backup_size.unwrap_or_default();
-    let mut downloaded = 0;
-    let mut chunks = response.bytes_stream();
-
-    while let Some(chunk) = chunks.next().await {
-        let chunk = chunk?;
-        file.write_all(&chunk).await?;
-        downloaded += chunk.len() as u64;
-        progress.set_position(if total == 0 {
-            downloaded
-        } else {
-            downloaded.min(total)
-        });
-    }
-    progress.finish();
+    let output_dir = output_dir.map_or_else(|| PathBuf::from("."), PathBuf::from);
+    let local_path = marpledb
+        .download_original_with_progress(dataset, &output_dir, &progress)
+        .await?;
     Ok(local_path.to_string_lossy().to_string())
 }
 
@@ -595,13 +571,12 @@ async fn ingest_path(
         .push_file(
             stream_id,
             path,
-            PushFileOptions::builder()
+            PushFileOptions::default()
                 .metadata(metadata.clone())
                 .concurrency(options.concurrency)
                 .upload_mode(options.upload_mode)
                 .progress(progress)
-                .overwrite(options.overwrite)
-                .build(),
+                .overwrite(options.overwrite),
         )
         .await
     {

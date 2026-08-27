@@ -1,9 +1,9 @@
 use anyhow::{Context, Result, bail};
+use marple_db::SAAS_URL;
 use serde::{Deserialize, Serialize};
 use std::fs;
 use std::path::{Path, PathBuf};
 
-const SAAS_URL: &str = "https://db.marpledata.com/api/v1";
 const RECENT_LIMIT: usize = 8;
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
@@ -122,9 +122,9 @@ pub(crate) fn env_label(path: &Path) -> String {
 #[cfg(test)]
 mod tests {
     use super::{
-        BrowseSettings, RecentEnv, SAAS_URL, apply_env_file, load_settings, remember_recent,
-        save_settings,
+        BrowseSettings, RecentEnv, apply_env_file, load_settings, remember_recent, save_settings,
     };
+    use marple_db::SAAS_URL;
     use std::ffi::OsString;
     use std::fs;
     use std::path::{Path, PathBuf};

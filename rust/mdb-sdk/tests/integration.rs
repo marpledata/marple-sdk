@@ -1,5 +1,6 @@
 use marple_db::{
-    Dataset, ImportStatus, MarpleDB, Metadata, PushFileOptions, UploadModeOverride, UsageType,
+    Dataset, ImportStatus, MarpleDB, Metadata, PushFileOptions, SAAS_URL, UploadModeOverride,
+    UsageType,
 };
 use serde_json::{Value, json};
 use std::env;
@@ -9,7 +10,6 @@ use std::path::{Path, PathBuf};
 use std::sync::OnceLock;
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
-const DEFAULT_MDB_URL: &str = "https://db.marpledata.com/api/v1";
 const TEST_STREAM_PREFIX: &str = "Salty Compulsory RustSdkTest";
 const MIB: u64 = 1024 * 1024;
 const MULTIPART_THRESHOLD: u64 = 128 * MIB;
@@ -28,7 +28,7 @@ fn env_opt(name: &str) -> Option<String> {
 fn maybe_skip_integration() -> Option<(String, String)> {
     load_env_files();
     let token = env_opt("MDB_TOKEN")?;
-    let url = env_opt("MDB_URL").unwrap_or_else(|| DEFAULT_MDB_URL.to_string());
+    let url = env_opt("MDB_URL").unwrap_or_else(|| SAAS_URL.to_string());
     Some((token, url))
 }
 
@@ -162,14 +162,9 @@ async fn upload_and_assert_dataset(
         );
     }
 
-    let download_url = db.get_download_link(&dataset).await?;
-    let response = db.storage_client().get(download_url).send().await?;
-    anyhow::ensure!(
-        response.status().is_success(),
-        "download URL returned status {}",
-        response.status()
-    );
-    let downloaded = response.bytes().await?;
+    let dir = tempfile::tempdir()?;
+    let downloaded_path = db.download_original(&dataset, dir.path()).await?;
+    let downloaded = fs::read(&downloaded_path)?;
     let downloaded_size = downloaded.len() as u64;
     anyhow::ensure!(
         downloaded_size == expected_size,
@@ -329,12 +324,10 @@ async fn run_auto_upload_flow(db: &MarpleDB) -> anyhow::Result<()> {
         db,
         stream.id,
         &csv_path,
-        PushFileOptions::builder()
-            .metadata([
-                ("Deployment".to_string(), json!(metadata_deployment)),
-                ("Foo".to_string(), json!(metadata_foo)),
-            ])
-            .build(),
+        PushFileOptions::default().metadata([
+            ("Deployment".to_string(), json!(metadata_deployment)),
+            ("Foo".to_string(), json!(metadata_foo)),
+        ]),
         &[("Deployment", metadata_deployment), ("Foo", metadata_foo)],
         true,
     )
@@ -352,10 +345,9 @@ async fn run_server_upload_flow(db: &MarpleDB) -> anyhow::Result<()> {
         db,
         stream.id,
         &csv_path,
-        PushFileOptions::builder()
+        PushFileOptions::default()
             .metadata([("upload_mode".to_string(), json!(upload_mode))])
-            .upload_mode(UploadModeOverride::Server)
-            .build(),
+            .upload_mode(UploadModeOverride::Server),
         &[("upload_mode", upload_mode)],
         false,
     )
@@ -378,9 +370,7 @@ async fn run_overwrite_flow(db: &MarpleDB) -> anyhow::Result<()> {
         db,
         stream.id,
         &csv_path,
-        PushFileOptions::builder()
-            .metadata([("version".to_string(), serde_json::json!("1"))])
-            .build(),
+        PushFileOptions::default().metadata([("version".to_string(), serde_json::json!("1"))]),
         &[("version", "1")],
         false,
     )
@@ -390,10 +380,9 @@ async fn run_overwrite_flow(db: &MarpleDB) -> anyhow::Result<()> {
         db,
         stream.id,
         &csv_path,
-        PushFileOptions::builder()
+        PushFileOptions::default()
             .metadata([("version".to_string(), serde_json::json!("2"))])
-            .overwrite(true)
-            .build(),
+            .overwrite(true),
         &[("version", "2")],
         false,
     )
@@ -423,9 +412,7 @@ async fn run_multipart_upload_flow(db: &MarpleDB) -> anyhow::Result<()> {
         db,
         stream.id,
         &csv_path,
-        PushFileOptions::builder()
-            .metadata([("upload_mode".to_string(), json!(upload_mode))])
-            .build(),
+        PushFileOptions::default().metadata([("upload_mode".to_string(), json!(upload_mode))]),
         &[("upload_mode", upload_mode)],
         false,
     )

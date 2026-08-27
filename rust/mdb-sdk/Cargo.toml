@@ -2,7 +2,6 @@
 name = "marple-db"
 version = "0.3.0"
 description = "Rust SDK for the MarpleDB API"
-documentation = "https://docs.marpledata.com/docs"
 keywords = ["marple", "database", "iceberg", "parquet", "sdk"]
 categories = ["api-bindings", "database", "filesystem"]
 license = "Apache-2.0"
@@ -11,6 +10,21 @@ authors.workspace = true
 edition.workspace = true
 homepage.workspace = true
 repository.workspace = true
+rust-version.workspace = true
+
+[package.metadata.docs.rs]
+all-features = true
+rustdoc-args = ["--cfg", "docsrs"]
+
+[features]
+default = ["rustls-tls"]
+# rustls with Mozilla's CA bundle. Corporate SSL-inspecting proxies that
+# install a private root in the OS store will not be trusted; use
+# `native-tls` or [`MarpleDBBuilder::add_root_certificate`].
+rustls-tls = ["reqwest/rustls-tls"]
+# OS-native TLS (SChannel / Secure Transport / OpenSSL). Uses the system
+# certificate store, which is usually what corporate firewalls need.
+native-tls = ["reqwest/native-tls"]
 
 [dependencies]
 async-stream.workspace = true
@@ -31,3 +45,4 @@ anyhow.workspace = true
 dotenvy = "0.15.7"
 tempfile = "3.23.0"
 tokio = { workspace = true, features = ["rt-multi-thread", "macros"] }
+wiremock = "0.6.5"

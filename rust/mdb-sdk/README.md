@@ -4,7 +4,7 @@ Rust client SDK for the MarpleDB API. The crate is published as `marple-db` and 
 
 ## Installation
 
-The SDK is async and works with any runtime supported by `reqwest`. The examples below use Tokio:
+The SDK is async and **requires Tokio**. It does not install a runtime; use `#[tokio::main]` or another Tokio executor. Minimum supported Rust is **1.85**.
 
 ```toml
 [dependencies]
@@ -14,30 +14,33 @@ anyhow = "1"
 serde_json = "1"
 ```
 
+Default TLS is `rustls-tls` (Mozilla CA bundle). For corporate SSL-inspecting proxies that install a private root in the OS store, enable `native-tls` instead:
+
+```toml
+marple-db = { version = "0.3", default-features = false, features = ["native-tls"] }
+```
+
 ## Authentication
 
-Create an API token in the MarpleDB web application and pass it to the SDK:
+Create an API token in the MarpleDB web application and pass it to the SDK. `SAAS_URL` is `https://db.marpledata.com/api/v1`; pass a different URL for VPC or self-hosted deployments.
 
 ```sh
 export MDB_TOKEN="mdb_your_token_here"
-export MDB_URL="https://db.marpledata.com/api/v1"
+# export MDB_URL="https://db.marpledata.com/api/v1"  # optional; defaults to SaaS
 ```
-
-`MDB_URL` is optional for your own code, but the URL passed to `MarpleDB::new` should point at the API root and usually ends in `/api/v1`.
 
 ## Quickstart
 
 This example uploads `run.csv` to an existing stream named `runs`, waits for import to finish, and prints the final status.
 
 ```rust
-use marple_db::{ImportStatus, MarpleDB, PushFileOptions};
+use marple_db::{ImportStatus, MarpleDB, PushFileOptions, SAAS_URL};
 use serde_json::json;
 use std::time::Duration;
 
 #[tokio::main]
 async fn main() -> anyhow::Result<()> {
-    let url = std::env::var("MDB_URL")
-        .unwrap_or_else(|_| "https://db.marpledata.com/api/v1".to_string());
+    let url = std::env::var("MDB_URL").unwrap_or_else(|_| SAAS_URL.to_string());
     let token = std::env::var("MDB_TOKEN")?;
     let db = MarpleDB::new(&url, &token)?;
     let stream = db.get_stream("runs").await?;
@@ -46,9 +49,8 @@ async fn main() -> anyhow::Result<()> {
         .push_file(
             stream.id,
             "run.csv",
-            PushFileOptions::builder()
-                .metadata([("source", json!("example"))])
-                .build(),
+            PushFileOptions::default()
+                .metadata([("source", json!("example"))]),
         )
         .await?;
 
@@ -84,8 +86,9 @@ async fn main() -> anyhow::Result<()> {
 - `db.get_signals(stream_id, dataset_id)` lists signals in a dataset.
 - `db.push_file(stream_id, path, PushFileOptions::default())` uploads a file.
 - `db.wait_for_import(stream_id, dataset_id, timeout)` polls until import reaches a terminal status.
+- `db.download_original(&dataset, ".")` downloads the original uploaded file into a directory.
 - `db.get_download_link(&dataset)` returns a pre-signed URL for the original uploaded file.
-- `db.get`, `db.post`, and `db.delete` call API endpoints that do not have typed helpers yet.
+- `db.get`, `db.post`, `db.patch`, and `db.delete` call API endpoints that do not have typed helpers yet.
 
 Generic endpoint helpers deserialize into the type you ask for:
 
@@ -111,43 +114,44 @@ let value: serde_json::Value = db.get("/health", &()).await?;
 use marple_db::{PushFileOptions, UploadModeOverride};
 use serde_json::json;
 
-let options = PushFileOptions::builder()
+let options = PushFileOptions::default()
     .metadata([
         ("driver", json!("Mbaerto")),
         ("run", json!(42)),
     ])
+    .dataset_name("heat1.csv")
     .concurrency(8)
-    .upload_mode(UploadModeOverride::Server)
-    .build();
+    .upload_mode(UploadModeOverride::Server);
 ```
 
-`UploadModeOverride::Server` forces uploads through the MarpleDB API server. Leave the default `Auto` unless you need that behavior. `concurrency` is used by multipart/direct-storage upload modes; higher values can improve throughput but use more memory and network connections.
+`dataset_name` becomes the dataset path in Marple DB and defaults to the local file name. `overwrite(true)` replaces an existing dataset with that same path. `UploadModeOverride::Server` forces uploads through the MarpleDB API server; leave the default `Auto` unless you need that behavior. `concurrency` is used by multipart/direct-storage upload modes; higher values can improve throughput but use more memory and network connections.
 
-For progress reporting, implement `ProgressReporter` and pass it through `PushFileOptions::builder().progress(...)`.
+For progress reporting, implement `ProgressReporter` and pass it through `PushFileOptions::default().progress(...)`.
 
 ## Downloading Original Files
 
-`get_download_link` returns a pre-signed storage URL. The URL is already authenticated, so use `db.storage_client()` or another client that does not add MarpleDB authorization headers.
+`download_original` fetches the original uploaded file into a directory. The filename comes from the dataset path.
 
 ```rust
-let url = db.get_download_link(&dataset).await?;
-let bytes = db.storage_client().get(url).send().await?.bytes().await?;
-std::fs::write(&dataset.path, bytes)?;
+let path = db.download_original(&dataset, ".").await?;
 ```
+
+`get_download_link` still returns the pre-signed URL if you want to fetch it yourself. The URL is already authenticated; do not send MarpleDB authorization headers to it.
 
 ## Custom Clients
 
-Use `MarpleDB::builder()` when you need custom timeouts, user agents, or preconfigured `reqwest::Client` instances:
+Use `MarpleDB::builder()` when you need custom timeouts, a user agent, extra TLS roots, or to disable certificate verification:
 
 ```rust
 use marple_db::MarpleDB;
 use std::time::Duration;
 
 let db = MarpleDB::builder()
-    .url("https://db.marpledata.com/api/v1")
+    .url(marple_db::SAAS_URL)
     .token("mdb_your_token_here")
     .timeout(Duration::from_secs(120))
     .user_agent("my-ingester/1.0")
+    .add_root_certificate(std::fs::read("corp-root.pem")?)
     .build()?;
 ```
 
@@ -168,7 +172,13 @@ match db.get_stream("runs").await {
 }
 ```
 
-For HTTP-like failures, `error.status()` returns the API or storage status code when one is available.
+For HTTP-like failures, `error.status()` returns the API or storage status code (`u16`) when one is available.
+
+## Timeouts and retries
+
+SDK-built clients match the Python SDK: 5s connect / 300s total for API calls, 1800s for storage, with retries on the same methods and status codes. `MarpleDBBuilder::timeout` overrides the total timeout on both SDK-built clients. Streamed upload bodies are not retried.
+
+The crate version is `marple_db::VERSION`.
 
 ## Tracing
 
@@ -176,7 +186,7 @@ The SDK emits `tracing` spans/events for API calls and upload mode dispatch. It 
 
 ## Links
 
-- Documentation: [docs.marpledata.com](https://docs.marpledata.com/docs)
+- Documentation: [docs.rs/marple-db](https://docs.rs/marple-db) · [docs.marpledata.com](https://docs.marpledata.com/docs)
 - Repository: [github.com/marpledata/marple-sdk](https://github.com/marpledata/marple-sdk)
 - Issues: [github.com/marpledata/marple-sdk/issues](https://github.com/marpledata/marple-sdk/issues)
 - License: Apache-2.0

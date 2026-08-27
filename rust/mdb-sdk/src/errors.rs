@@ -1,12 +1,54 @@
-use reqwest::{Method, StatusCode};
+use std::error::Error as StdError;
+use std::fmt;
 use std::num::TryFromIntError;
 use thiserror::Error;
+
+/// Opaque cause of an HTTP transport or storage failure.
+///
+/// The SDK keeps the underlying client error out of the public type so
+/// `reqwest` version bumps are not breaking changes. Use [`Display`] or
+/// [`StdError::source`] for diagnostics.
+pub struct SourceError {
+    inner: Box<dyn StdError + Send + Sync>,
+}
+
+impl SourceError {
+    pub(crate) fn new<E>(error: E) -> Self
+    where
+        E: StdError + Send + Sync + 'static,
+    {
+        Self {
+            inner: Box::new(error),
+        }
+    }
+}
+
+impl fmt::Debug for SourceError {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        fmt::Debug::fmt(&self.inner.to_string(), f)
+    }
+}
+
+impl fmt::Display for SourceError {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        self.inner.fmt(f)
+    }
+}
+
+impl StdError for SourceError {
+    fn source(&self) -> Option<&(dyn StdError + 'static)> {
+        Some(&*self.inner)
+    }
+}
 
 /// Error type returned by the MarpleDB SDK.
 ///
 /// `Transport` means no usable HTTP response was received, `Api` means the
 /// MarpleDB API returned a non-success status, and `Storage` covers direct
 /// pre-signed storage uploads/downloads.
+///
+/// HTTP methods are strings such as `GET`. Status codes are raw `u16` values
+/// (`404`, `503`, …).
 ///
 /// ```
 /// # fn handle(error: marple_db::Error) {
@@ -28,31 +70,27 @@ pub enum Error {
     #[error("invalid configuration: {0}")]
     Config(String),
 
-    /// Building an HTTP header failed.
-    #[error("invalid HTTP header value")]
-    Header(#[from] reqwest::header::InvalidHeaderValue),
-
     /// A request failed before receiving an API response.
     #[error("HTTP transport error on {method} {endpoint}")]
     Transport {
-        /// HTTP method used for the request.
-        method: Method,
+        /// HTTP method used for the request, such as `GET`.
+        method: String,
         /// API endpoint or URL being requested.
         endpoint: String,
-        /// Underlying reqwest error.
+        /// Underlying HTTP client error.
         #[source]
-        source: reqwest::Error,
+        source: SourceError,
     },
 
     /// The MarpleDB API returned a non-success HTTP status.
     #[error("MarpleDB API returned {status} on {method} {endpoint}: {body}")]
     Api {
-        /// HTTP method used for the request.
-        method: Method,
+        /// HTTP method used for the request, such as `GET`.
+        method: String,
         /// API endpoint being requested.
         endpoint: String,
         /// Response status code.
-        status: StatusCode,
+        status: u16,
         /// Response body text.
         body: String,
     },
@@ -63,12 +101,12 @@ pub enum Error {
         /// Human-readable storage operation context.
         context: String,
         /// HTTP status code when the storage service responded with one.
-        status: Option<StatusCode>,
+        status: Option<u16>,
         /// Response body text when available.
         body: Option<String>,
-        /// Underlying reqwest error when the request failed before a response.
+        /// Underlying HTTP client error when the request failed before a response.
         #[source]
-        source: Option<reqwest::Error>,
+        source: Option<SourceError>,
     },
 
     /// A stream with the requested name was not found.
@@ -133,11 +171,51 @@ pub enum Error {
 
 impl Error {
     /// Returns the HTTP status for API or storage responses that provided one.
-    pub fn status(&self) -> Option<StatusCode> {
+    pub fn status(&self) -> Option<u16> {
         match self {
             Self::Api { status, .. } => Some(*status),
             Self::Storage { status, .. } => *status,
             _ => None,
+        }
+    }
+
+    pub(crate) fn transport(
+        method: &reqwest::Method,
+        endpoint: impl Into<String>,
+        source: reqwest::Error,
+    ) -> Self {
+        Self::Transport {
+            method: method.as_str().to_string(),
+            endpoint: endpoint.into(),
+            source: SourceError::new(source),
+        }
+    }
+
+    pub(crate) fn api(
+        method: reqwest::Method,
+        endpoint: impl Into<String>,
+        status: reqwest::StatusCode,
+        body: String,
+    ) -> Self {
+        Self::Api {
+            method: method.as_str().to_string(),
+            endpoint: endpoint.into(),
+            status: status.as_u16(),
+            body,
+        }
+    }
+
+    pub(crate) fn storage(
+        context: impl Into<String>,
+        status: Option<reqwest::StatusCode>,
+        body: Option<String>,
+        source: Option<reqwest::Error>,
+    ) -> Self {
+        Self::Storage {
+            context: context.into(),
+            status: status.map(|status| status.as_u16()),
+            body,
+            source: source.map(SourceError::new),
         }
     }
 }

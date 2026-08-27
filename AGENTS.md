@@ -22,6 +22,7 @@ specific `AGENTS.md` files in subdirectories override or extend this guidance.
 - Python lint/format/types: `cd python && uv run isort src tests --check --diff && uv run flake8 --config .flake8 src tests && uv run black --check src tests && uv run mypy --install-types --non-interactive`
 - Python docs: `cd python && uv run --group docs sphinx-build -b html docs docs/_build/html`
 - Rust workspace tests: `cd rust && cargo test --workspace --locked`
+- Rust workspace lint/format/docs: `cd rust && cargo fmt --all -- --check && cargo clippy --workspace --locked --all-targets -- -D warnings && RUSTDOCFLAGS="-D warnings" cargo doc --workspace --no-deps`
 - Rust workspace examples: `cd rust && cargo build --workspace --examples --locked`
 - Parquet transcoder tests: `cd rust/parquet-transcode && cargo test`
 

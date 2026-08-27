@@ -39,6 +39,7 @@ description = "Command line client for the MarpleDB API"
 documentation = "https://docs.marpledata.com/docs"
 edition.workspace = true
 homepage.workspace = true
+rust-version.workspace = true
 keywords = ["marple", "cli", "database", "iceberg", "parquet"]
 categories = [
     "command-line-utilities",

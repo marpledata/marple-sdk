@@ -32,112 +32,132 @@ pub struct Settings {
         default,
         deserialize_with = "deserialize_opt_string"
     )]
+    /// Marple Insight base URL.
     pub insight_url: Option<String>,
     #[serde(
         rename = "INSIGHT_DISTANCE_MODE_ENABLED",
         default,
         deserialize_with = "deserialize_opt_bool"
     )]
+    /// Whether Insight distance mode is enabled.
     pub insight_distance_mode_enabled: Option<bool>,
     #[serde(
         rename = "INSIGHT_DEFAULT_DISTANCE_SIGNAL",
         default,
         deserialize_with = "deserialize_opt_string"
     )]
+    /// Default signal used for Insight distance mode.
     pub insight_default_distance_signal: Option<String>,
     #[serde(
         rename = "INSIGHT_SEGMENTS_ENABLED",
         default,
         deserialize_with = "deserialize_opt_bool"
     )]
+    /// Whether Insight segments are enabled.
     pub insight_segments_enabled: Option<bool>,
     #[serde(
         rename = "INSIGHT_SEGMENTS_SIGNAL",
         default,
         deserialize_with = "deserialize_opt_string"
     )]
+    /// Signal used for Insight segments.
     pub insight_segments_signal: Option<String>,
     #[serde(
         rename = "PATH_COLD",
         default,
         deserialize_with = "deserialize_opt_string"
     )]
+    /// Cold-storage path.
     pub path_cold: Option<String>,
     #[serde(
         rename = "PATH_BACKUP",
         default,
         deserialize_with = "deserialize_opt_string"
     )]
+    /// Backup-storage path.
     pub path_backup: Option<String>,
     #[serde(
         rename = "PATH_SWAP",
         default,
         deserialize_with = "deserialize_opt_string"
     )]
+    /// Swap-storage path.
     pub path_swap: Option<String>,
     #[serde(
         rename = "PATH_LOGS",
         default,
         deserialize_with = "deserialize_opt_string"
     )]
+    /// Log-storage path.
     pub path_logs: Option<String>,
     #[serde(
         rename = "SUPERUSER_MANAGES_USERS",
         default,
         deserialize_with = "deserialize_opt_bool"
     )]
+    /// Whether a superuser manages workspace users.
     pub superuser_manages_users: Option<bool>,
     #[serde(
         rename = "SANDBOX_JOBS_ENABLED",
         default,
         deserialize_with = "deserialize_opt_bool"
     )]
+    /// Whether sandbox jobs are enabled.
     pub sandbox_jobs_enabled: Option<bool>,
     #[serde(rename = "INGEST_PLUGINS_ADDITIONAL", default)]
+    /// Extra ingest plugins advertised by the workspace.
     pub ingest_plugins_additional: Option<Value>,
     #[serde(
         rename = "DB_HOST",
         default,
         deserialize_with = "deserialize_opt_string"
     )]
+    /// Metadata database host.
     pub db_host: Option<String>,
     #[serde(rename = "DB_PORT", default, deserialize_with = "deserialize_opt_i64")]
+    /// Metadata database port.
     pub db_port: Option<i64>,
     #[serde(
         rename = "DB_NAME",
         default,
         deserialize_with = "deserialize_opt_string"
     )]
+    /// Metadata database name.
     pub db_name: Option<String>,
     #[serde(
         rename = "DB_USER",
         default,
         deserialize_with = "deserialize_opt_string"
     )]
+    /// Metadata database user.
     pub db_user: Option<String>,
     #[serde(
         rename = "INSIGHT_WEBHOOK_CONFIGURED",
         default,
         deserialize_with = "deserialize_opt_bool"
     )]
+    /// Whether an Insight webhook is configured.
     pub insight_webhook_configured: Option<bool>,
     #[serde(
         rename = "VERSION",
         default,
         deserialize_with = "deserialize_opt_string"
     )]
+    /// Marple DB server version.
     pub version: Option<String>,
     #[serde(
         rename = "GIT_HASH",
         default,
         deserialize_with = "deserialize_opt_string"
     )]
+    /// Server git hash.
     pub git_hash: Option<String>,
     #[serde(
         rename = "BUILD_TIMESTAMP",
         default,
         deserialize_with = "deserialize_opt_string"
     )]
+    /// Server build timestamp.
     pub build_timestamp: Option<String>,
     /// Additional settings keys returned by the API.
     #[serde(flatten)]
@@ -149,10 +169,15 @@ pub struct Settings {
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum UsageType {
+    /// Cold Parquet / Iceberg storage.
     ColdStorage,
+    /// Hot / queryable storage.
     HotStorage,
+    /// Archive storage.
     ArchiveStorage,
+    /// File-ingest usage.
     Import,
+    /// Realtime ingest usage.
     ImportLive,
 }
 
@@ -240,12 +265,19 @@ impl From<StorageQuota> for i64 {
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "SCREAMING_SNAKE_CASE")]
 pub enum LicenseType {
+    /// Development license.
     Dev,
+    /// Free license.
     Free,
+    /// Time-limited trial.
     Trial,
+    /// Paid license.
     Paid,
+    /// Proof-of-concept license.
     Poc,
+    /// Sponsorship license.
     Sponsorship,
+    /// License type the SDK does not know about yet.
     #[default]
     #[serde(other)]
     Unknown,
@@ -256,10 +288,15 @@ pub enum LicenseType {
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "SCREAMING_SNAKE_CASE")]
 pub enum RealtimeTier {
+    /// Realtime ingest is disabled.
     Disabled,
+    /// Low-rate realtime ingest.
     Slow,
+    /// High-rate realtime ingest.
     Fast,
+    /// Uncapped realtime ingest.
     Unlimited,
+    /// Tier the SDK does not know about yet.
     #[default]
     #[serde(other)]
     Unknown,
@@ -269,14 +306,19 @@ pub enum RealtimeTier {
 #[non_exhaustive]
 #[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
 pub struct LicenseLimits {
+    /// Hot-storage byte cap.
     #[serde(default)]
     pub hot_bytes: Option<StorageQuota>,
+    /// Cold-storage byte cap.
     #[serde(default)]
     pub cold_bytes: Option<StorageQuota>,
+    /// Archive-storage byte cap.
     #[serde(default)]
     pub archive_bytes: Option<StorageQuota>,
+    /// Maximum concurrent ingest workers.
     #[serde(default, deserialize_with = "deserialize_opt_i64")]
     pub ingestion_workers: Option<i64>,
+    /// Realtime ingest tier.
     #[serde(default)]
     pub realtime: Option<RealtimeTier>,
 }
@@ -285,16 +327,22 @@ pub struct LicenseLimits {
 #[non_exhaustive]
 #[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
 pub struct LicensePayload {
+    /// Issued license type.
     #[serde(rename = "type", default)]
     pub license_type: LicenseType,
+    /// Product name, usually `MarpleDB`.
     #[serde(default)]
     pub product: String,
+    /// Deployment kind, such as `saas` or `vpc`.
     #[serde(default)]
     pub deployment: String,
+    /// Workspace slug copied into the signed payload.
     #[serde(default)]
     pub workspace: Option<String>,
+    /// Expiry as epoch seconds, if the license expires.
     #[serde(default)]
     pub expiry_date: Option<i64>,
+    /// Storage and ingest limits.
     #[serde(default)]
     pub features: LicenseLimits,
 }
@@ -305,16 +353,22 @@ pub struct LicensePayload {
 #[non_exhaustive]
 #[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
 pub struct WorkspaceLicense {
+    /// License row id.
     #[serde(default, deserialize_with = "deserialize_opt_i64")]
     pub id: Option<i64>,
+    /// License document version.
     #[serde(default)]
     pub version: String,
+    /// Issue time as epoch seconds.
     #[serde(default)]
     pub issued_at: Option<i64>,
+    /// Cache time as epoch seconds.
     #[serde(default)]
     pub cached_at: Option<i64>,
+    /// Workspace slug for this license row.
     #[serde(default)]
     pub workspace: String,
+    /// Signed license contents.
     #[serde(default)]
     pub payload: LicensePayload,
 }
@@ -337,12 +391,16 @@ impl WorkspaceLicense {
 #[non_exhaustive]
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct WorkspaceMembership {
+    /// Workspace slug.
     #[serde(default)]
     pub workspace_id: String,
+    /// Workspace display name.
     #[serde(default)]
     pub name: String,
+    /// Membership role, such as `admin` or `editor`.
     #[serde(default)]
     pub role: String,
+    /// Last activity as epoch seconds.
     #[serde(default, deserialize_with = "deserialize_optional_epoch")]
     pub last_active: Option<i64>,
 }
@@ -351,14 +409,19 @@ pub struct WorkspaceMembership {
 #[non_exhaustive]
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct UserInfo {
+    /// User id.
     #[serde(default, deserialize_with = "deserialize_i64")]
     pub id: i64,
+    /// User email.
     #[serde(default)]
     pub email: String,
+    /// Workspaces the user belongs to.
     #[serde(default)]
     pub workspaces: Vec<WorkspaceMembership>,
+    /// License for the workspace bound to this token, if present.
     #[serde(default)]
     pub license: Option<WorkspaceLicense>,
+    /// Additional `/user/info` fields returned by the API.
     #[serde(flatten)]
     pub extra: Value,
 }
@@ -372,7 +435,7 @@ impl UserInfo {
         self.license
             .as_ref()
             .and_then(WorkspaceLicense::workspace_id)
-            .or_else(|| match self.workspaces.as_slice() {
+            .or(match self.workspaces.as_slice() {
                 [membership] if !membership.workspace_id.is_empty() => {
                     Some(membership.workspace_id.as_str())
                 }
@@ -401,8 +464,11 @@ pub struct CurrentWorkspace {
     pub name: String,
     /// License from `/user/info`, including storage quotas.
     pub license: Option<WorkspaceLicense>,
+    /// Latest cold-storage usage in bytes, if available.
     pub cold_bytes: Option<u64>,
+    /// Latest hot-storage usage in bytes, if available.
     pub hot_bytes: Option<u64>,
+    /// Latest archive-storage usage in bytes, if available.
     pub archive_bytes: Option<u64>,
 }
 
@@ -453,8 +519,11 @@ pub struct Stream {
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "lowercase")]
 pub enum StreamType {
+    /// File-ingest stream.
     Files,
+    /// Live / realtime stream.
     Realtime,
+    /// Stream type the SDK does not know about yet.
     #[default]
     #[serde(other)]
     Unknown,
@@ -624,10 +693,15 @@ pub struct Dataset {
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "SCREAMING_SNAKE_CASE")]
 pub enum StorageStatus {
+    /// Signal is being frozen to cold storage.
     FrozenToCold,
+    /// Signal is in cold storage.
     Cold,
+    /// Signal is being loaded into hot storage.
     ColdToHot,
+    /// Signal is in hot storage.
     Hot,
+    /// Storage status the SDK does not know about yet.
     #[default]
     #[serde(other)]
     Unknown,
@@ -700,8 +774,29 @@ pub enum UploadModeOverride {
     Server,
 }
 
-/// Options for uploading a file.
+/// Options for [`MarpleDB::push_file`](crate::MarpleDB::push_file).
+///
+/// Start from [`PushFileOptions::default`] and chain setters for the fields
+/// you need. Fields stay crate-private so new options can be added without
+/// breaking struct literals.
+///
+/// ```
+/// use marple_db::{PushFileOptions, UploadModeOverride};
+/// use serde_json::json;
+///
+/// let options = PushFileOptions::default()
+///     .metadata([
+///         ("driver", json!("Mbaerto")),
+///         ("run", json!(42)),
+///     ])
+///     .dataset_name("heat1.csv")
+///     .overwrite(true)
+///     .concurrency(8)
+///     .upload_mode(UploadModeOverride::Server);
+/// ```
+#[must_use = "options are not applied unless passed to `push_file`"]
 #[non_exhaustive]
+#[derive(Clone)]
 pub struct PushFileOptions {
     pub(crate) metadata: Metadata,
     pub(crate) dataset_name: Option<String>,
@@ -723,13 +818,6 @@ impl fmt::Debug for PushFileOptions {
     }
 }
 
-impl PushFileOptions {
-    /// Creates a builder for upload options.
-    pub fn builder() -> PushFileOptionsBuilder {
-        PushFileOptionsBuilder::default()
-    }
-}
-
 impl Default for PushFileOptions {
     fn default() -> Self {
         Self {
@@ -743,58 +831,8 @@ impl Default for PushFileOptions {
     }
 }
 
-/// Builder for `PushFileOptions`.
-#[non_exhaustive]
-#[derive(Clone)]
-pub struct PushFileOptionsBuilder {
-    metadata: Metadata,
-    dataset_name: Option<String>,
-    concurrency: usize,
-    upload_mode: UploadModeOverride,
-    progress: Arc<dyn ProgressReporter>,
-    overwrite: bool,
-}
-
-impl fmt::Debug for PushFileOptionsBuilder {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        f.debug_struct("PushFileOptionsBuilder")
-            .field("metadata", &self.metadata)
-            .field("dataset_name", &self.dataset_name)
-            .field("concurrency", &self.concurrency)
-            .field("upload_mode", &self.upload_mode)
-            .field("overwrite", &self.overwrite)
-            .finish_non_exhaustive()
-    }
-}
-
-impl Default for PushFileOptionsBuilder {
-    fn default() -> Self {
-        let options = PushFileOptions::default();
-        Self {
-            metadata: options.metadata,
-            dataset_name: options.dataset_name,
-            concurrency: options.concurrency,
-            upload_mode: options.upload_mode,
-            progress: options.progress,
-            overwrite: options.overwrite,
-        }
-    }
-}
-
-impl PushFileOptionsBuilder {
+impl PushFileOptions {
     /// Sets dataset metadata for the upload.
-    ///
-    /// ```
-    /// use marple_db::PushFileOptions;
-    /// use serde_json::json;
-    ///
-    /// let options = PushFileOptions::builder()
-    ///     .metadata([
-    ///         ("driver", json!("Mbaerto")),
-    ///         ("run", json!(42)),
-    ///     ])
-    ///     .build();
-    /// ```
     pub fn metadata<I, K, V>(mut self, entries: I) -> Self
     where
         I: IntoIterator<Item = (K, V)>,
@@ -808,9 +846,10 @@ impl PushFileOptionsBuilder {
         self
     }
 
-    /// Sets the dataset name for the upload.
+    /// Sets the dataset path stored in Marple DB.
     ///
-    /// Must be unique per datapool, or set `overwrite` to true.
+    /// Defaults to the local file name. Must be unique per datapool unless
+    /// [`overwrite`](Self::overwrite) is set.
     pub fn dataset_name(mut self, dataset_name: impl Into<String>) -> Self {
         self.dataset_name = Some(dataset_name.into());
         self
@@ -841,18 +880,6 @@ impl PushFileOptionsBuilder {
     pub fn overwrite(mut self, overwrite: bool) -> Self {
         self.overwrite = overwrite;
         self
-    }
-
-    /// Builds upload options.
-    pub fn build(self) -> PushFileOptions {
-        PushFileOptions {
-            metadata: self.metadata,
-            dataset_name: self.dataset_name,
-            concurrency: self.concurrency,
-            upload_mode: self.upload_mode,
-            progress: self.progress,
-            overwrite: self.overwrite,
-        }
     }
 }
 

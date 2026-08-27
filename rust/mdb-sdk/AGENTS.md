@@ -9,15 +9,19 @@ This crate is the async Rust SDK for the MarpleDB API. The package name is
 - `src/client.rs`: `MarpleDB` client and API helpers.
 - `src/models.rs`: public response and option types.
 - `src/errors.rs`: SDK error type and result alias.
+- `src/retry.rs`: HTTP timeout/retry policy matching the Python SDK.
 - `src/upload.rs`: upload mode negotiation and upload implementations.
 - `src/progress.rs`: progress reporting traits and no-op reporter.
-- `tests/test_db_sdk.rs`: SDK integration tests.
+- `tests/unit.rs`: serde and public-model unit tests.
+- `tests/upload.rs`: upload state-machine tests against a mock HTTP API.
+- `tests/integration.rs`: live API integration tests.
 - `examples/push_file.rs`: minimal upload example.
 
 ## Commands
 
 - Test this crate from `rust/`: `cargo test -p marple-db --locked`
 - Run all workspace tests from `rust/`: `cargo test --workspace --locked`
+- Lint/format/docs from `rust/`: `cargo fmt --all -- --check && cargo clippy --workspace --locked --all-targets -- -D warnings && RUSTDOCFLAGS="-D warnings" cargo doc --workspace --no-deps`
 - Build examples from `rust/`: `cargo build -p marple-db --examples --locked`
 
 ## Conventions
@@ -25,7 +29,7 @@ This crate is the async Rust SDK for the MarpleDB API. The package name is
 - Keep public API changes deliberate. Types exported from `lib.rs` are consumer
   facing.
 - Prefer typed helpers on `MarpleDB` for stable API behavior and generic
-  `get`, `post`, and `delete` helpers for endpoints that do not have typed
+  `get`, `post`, `patch`, and `delete` helpers for endpoints that do not have typed
   wrappers yet. Public response types should keep deserializing when the API
   adds fields or enum values (`#[serde(default)]`, `#[serde(other)]`, `extra`).
 - Use `marple_db::Error` for SDK errors and preserve useful status/body context

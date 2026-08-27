@@ -140,6 +140,7 @@ pub(crate) fn snap_visible(visible: &[usize], selected: Option<usize>) -> Option
     }
 }
 
+#[allow(clippy::too_many_arguments)]
 pub(crate) fn render_table(
     frame: &mut Frame,
     area: Rect,
@@ -287,8 +288,10 @@ mod tests {
 
     #[test]
     fn search_esc_cancels_edit_then_clear_drops_filter() {
-        let mut search = TableSearch::default();
-        search.query = "old".into();
+        let mut search = TableSearch {
+            query: "old".into(),
+            ..TableSearch::default()
+        };
         search.start();
         search.push('n');
         assert_eq!(

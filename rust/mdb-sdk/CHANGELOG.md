@@ -9,22 +9,30 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- `download_original()` / `download_original_with_progress()` to fetch a dataset's original uploaded file into a directory.
+- TLS builder knobs: `MarpleDBBuilder::add_root_certificate` and `danger_accept_invalid_certs`. Cargo features `rustls-tls` (default) and `native-tls` (OS certificate store).
 - Typed helpers for `/workspace/license`, `/user/info`, `/usage/series/{usage_type}`, `/settings`, and `/stream/{id}/metadata/fields`, plus `get_current_workspace()` to resolve the connected workspace from `/user/info` (name, id, license quotas, and latest storage usage).
 - `get_stream_by_id()` for `GET /stream/{id}`. `create_stream` and `update_stream` now reload through that endpoint instead of re-listing every stream.
 - `StorageQuota` for license byte caps (`limit < 0` is unlimited). Missing license/signal/dataset/stream fields default; unknown enum values become `Unknown`.
 - `get_signals()` and a typed `Signal` model for dataset signal metadata.
 - `Settings` for `/settings`, with `INSIGHT_URL` and other known keys typed and remaining keys in `extra`.
 - `ImportStatus::as_str`, `is_success`, `is_failure`, and `Display` using API names such as `FINISHED`.
+- `PushFileOptions::dataset_name` to set the ingested dataset path independently of the local file name.
 
 ### Changed
 
 - Stream, dataset, signal, user, license, and ingestion ids are `i64` so they match JSON integers and cannot overflow an `i32`.
 - `wait_for_import` treats `CoolingFailed` as a terminal import failure, polls with `tokio::time::timeout`, and reports API status names on timeout.
+- `PushFileOptions` is configured with chained setters on the options value itself (`PushFileOptions::default().metadata(...).overwrite(true)`).
+- SDK-built HTTP clients use the Python SDK timeout and retry defaults (5s connect / 300s API, 1800s storage; retries on the same methods and status codes).
+- Documented MSRV is Rust 1.85 (edition 2024). crates.io now links to docs.rs for API docs.
+- The crate requires a Tokio runtime. HTTP errors no longer expose `reqwest` types (`status` is `u16`, methods are strings, causes are [`SourceError`](src/errors.rs)). `storage_client()` and builder `client()` / `storage_client()` injection were removed; use `download_original` and the TLS builder knobs instead.
 
 ### Fixed
 
 - Parse JSON numbers that do not fit in `i64` (for example signal `stats` min/max stored as `±f64::MAX` integers) instead of failing with `JSON error`.
 - Parse `/user/info` workspace `last_active` values that are Postgres floats or JSON `null`, so `get_current_workspace()` no longer fails on a connected token.
+- `push_file` returns a configuration error when the local path has no file name, instead of panicking.
 
 ## [0.3.0] - 2026-08-20
 

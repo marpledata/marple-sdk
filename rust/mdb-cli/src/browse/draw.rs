@@ -159,6 +159,7 @@ fn draw_hint(frame: &mut Frame, area: Rect, title: &str, focused: bool, message:
     );
 }
 
+#[allow(clippy::too_many_arguments)]
 fn loaded_or_hint(
     frame: &mut Frame,
     area: Rect,

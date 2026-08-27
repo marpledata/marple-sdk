@@ -1,8 +1,15 @@
 use marple_db::{
-    Dataset, ImportStatus, LicenseType, RealtimeTier, Settings, Signal, StorageQuota,
-    StorageStatus, Stream, StreamType, UsageSeries, UserInfo, WorkspaceLicense,
+    Dataset, ImportStatus, LicenseType, RealtimeTier, SAAS_URL, Settings, Signal, StorageQuota,
+    StorageStatus, Stream, StreamType, UsageSeries, UserInfo, VERSION, WorkspaceLicense,
 };
 use serde_json::json;
+
+#[test]
+fn publishes_saas_url_and_crate_version() {
+    assert_eq!(SAAS_URL, "https://db.marpledata.com/api/v1");
+    assert!(!VERSION.is_empty());
+    assert!(VERSION.chars().next().unwrap().is_ascii_digit());
+}
 
 #[test]
 fn deserializes_typed_file_stream_fields() {
