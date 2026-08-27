@@ -1,6 +1,5 @@
-import re
 from pathlib import Path
-from typing import Any, Iterable, Literal
+from typing import Any, Literal
 from urllib import parse, request
 
 import pandas as pd
@@ -130,17 +129,13 @@ class DBClient:
             self._signal_map = validate_response(r, "Get signals failed")
         return self._signal_map
 
-    def find_matching_signals(self, signals: Iterable[str | re.Pattern]) -> dict[str, int]:
-        all_signals = self.get_signal_map()
-        matching = dict()
-        for pattern in signals:
-            if isinstance(pattern, str) and pattern in all_signals:
-                matching[pattern] = all_signals[pattern]
-            elif isinstance(pattern, re.Pattern):
-                for name, id in all_signals.items():
-                    if pattern.search(name):
-                        matching[name] = id
-        return matching
+    def get_signal_id(self, name: str) -> int | None:
+        if self._signal_map is not None:
+            return self._signal_map.get(name)
+        r = self.get(f"/datapool/{self.datapool}/signal/{parse.quote(name, safe='')}/id")
+        if r.status_code == 404:
+            return None
+        return validate_response(r, "Get signal id failed")["id"]
 
     def cache_parquet(self, dataset_id: int, signal_id: int, refresh_cache: bool = False) -> Path:
         """
