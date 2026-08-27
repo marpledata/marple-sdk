@@ -22,11 +22,10 @@ uv run mypy --install-types --non-interactive
 
 ### Testing
 
-The testing suite runs against a real linked DB & Insight deployment on our SaaS (e.g. Castro Comrades).
-Among other things it will create a stream, ingest a dataset, and export that dataset from Insight
-Upload tests also exercise server and multipart upload flows, and create/delete temporary streams with a test prefix.
+The testing suite includes local unit tests and integration tests against a live Marple DB / Insight deployment. Integration tests share one imported example dataset per session, use a small CSV for extra ingestions, and mark themselves with `pytest.mark.integration`.
 
 ```bash
+uv run pytest -m "not integration"   # local unit tests only
 export MDB_TOKEN=...
 export INSIGHT_TOKEN=...
 # Optional, defaults to SaaS URLs:

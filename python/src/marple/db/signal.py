@@ -137,3 +137,16 @@ class Signal(BaseModel):
                 warnings.warn(f"Signal {self.name} did not reach a queryable state after {timeout} seconds")
                 return fresh
             time.sleep(0.5)
+
+    def delete(self) -> None:
+        """
+        Delete this signal from its dataset.
+
+        Warning:
+            This is a destructive action that cannot be undone.
+        """
+        r = self._client.post(
+            f"/stream/{self.datastream_id}/dataset/{self.dataset_id}/signals/delete",
+            json={"signal_ids": [self.id]},
+        )
+        validate_response(r, "Delete signal failed")

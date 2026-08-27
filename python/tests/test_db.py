@@ -1,11 +1,8 @@
 import random
 import re
-import time
-from contextlib import contextmanager
-from datetime import datetime
 from pathlib import Path
 from tempfile import TemporaryDirectory
-from typing import Generator, Literal
+from typing import Literal
 
 import pandas as pd
 import pyarrow.parquet as pq
@@ -14,8 +11,10 @@ from requests import HTTPError
 
 import marple
 from marple import DB
-from marple.db import Dataset, DataStream
-from support import EXAMPLE_CSV, ingest_dataset
+from marple.db import Dataset, DatasetList, DataStream
+from support import EXAMPLE_CSV, isolated_stream, unique_name
+
+pytestmark = pytest.mark.integration
 
 PYTHON_UPLOAD_TEST_PREFIX = "Salty Compulsory PytestUpload"
 REALTIME_TEST_PREFIX = "Salty Compulsory PytestRealtime"
@@ -23,30 +22,11 @@ MIB = 1024 * 1024
 MULTIPART_THRESHOLD = 128 * MIB
 
 
-def _cleanup_upload_test_streams(db: DB) -> None:
-    for stream in db.get_streams():
-        if stream.name.startswith(PYTHON_UPLOAD_TEST_PREFIX):
-            db.delete_stream(stream.id)
-
-
-@contextmanager
-def _upload_test_stream(db: DB, suffix: str):
-    _cleanup_upload_test_streams(db)
-    stream = db.create_stream(
-        f"{PYTHON_UPLOAD_TEST_PREFIX} {suffix} {datetime.now().isoformat()}",
-        plugin_args="--use-index",
-    )
-    try:
-        yield stream
-    finally:
-        _cleanup_upload_test_streams(db)
-
-
 def _generate_multipart_csv(destination_folder: str) -> Path:
     source = EXAMPLE_CSV.read_bytes()
     assert source
 
-    destination = Path(destination_folder) / "multipart-examples-race.csv"
+    destination = Path(destination_folder) / unique_name("py-sdk-multipart", ".csv")
     repeat_count = MULTIPART_THRESHOLD // len(source) + 1
     with destination.open("wb") as f:
         for _ in range(repeat_count):
@@ -65,7 +45,11 @@ def _push_and_assert_upload(
     file_name: str | None = None,
 ) -> Dataset:
     dataset = stream.push_file(
-        str(file_path), metadata=metadata, upload_mode=upload_mode, overwrite=overwrite, file_name=file_name
+        str(file_path),
+        metadata=metadata,
+        upload_mode=upload_mode,
+        overwrite=overwrite,
+        file_name=file_name or unique_name("py-sdk", file_path.suffix),
     ).wait_for_import(timeout=180)
 
     assert dataset.import_status == "FINISHED"
@@ -95,12 +79,11 @@ def test_db_get_streams_and_datasets(db: DB, example_stream: DataStream) -> None
     assert isinstance(datasets, marple.db.DatasetList)
 
 
-def test_db_filter_datasets(example_stream: DataStream) -> None:
-    n_datasets = 3
-    dataset_1 = ingest_dataset(example_stream, metadata={"A": 1, "B": 1})
-    ingest_dataset(example_stream, metadata={"A": 1, "B": 2})
-    ingest_dataset(example_stream, metadata={"A": 4, "B": 3})
+def test_db_filter_datasets(example_stream: DataStream, example_dataset: Dataset) -> None:
+    example_stream.add_dataset(unique_name("py-meta"), metadata={"A": 1, "B": 2})
+    example_stream.add_dataset(unique_name("py-meta"), metadata={"A": 4, "B": 3})
     all_datasets = example_stream.get_datasets()
+    ingested = DatasetList([example_dataset])
 
     datasets_a1 = all_datasets.where_metadata({"A": 1})
     assert len(datasets_a1) == 2
@@ -108,26 +91,28 @@ def test_db_filter_datasets(example_stream: DataStream) -> None:
     datasets_b23 = all_datasets.where_metadata({"B": [2, 3]})
     assert len(datasets_b23) == 2
 
-    assert dataset_1.id == all_datasets.where_metadata({"A": 1, "B": 1})[0].id
+    assert example_dataset.id == all_datasets.where_metadata({"A": 1, "B": 1})[0].id
 
-    assert len(all_datasets.where_dataset("hot_bytes", equals=0)) == n_datasets
-    assert len(all_datasets.where_dataset("cold_bytes", less_than=1000)) == 0
-    assert len(all_datasets.where_dataset("cold_bytes", greater_than=1000)) == n_datasets
-    assert len(all_datasets.where_dataset("created_at", greater_than=time.time() - 1000)) == n_datasets
-    assert len(all_datasets.where_dataset("n_datapoints", equals=15 * 12500)) == n_datasets
-    assert len(all_datasets.where_dataset("timestamp_start", equals=int(0.1 * 1e9))) == n_datasets
+    assert len(ingested.where_dataset("hot_bytes", equals=0)) == 1
+    assert len(ingested.where_dataset("cold_bytes", less_than=1000)) == 0
+    assert len(ingested.where_dataset("cold_bytes", greater_than=1000)) == 1
+    assert example_dataset.created_at is not None
+    assert len(all_datasets.where_dataset("created_at", greater_than=example_dataset.created_at - 1)) == len(
+        all_datasets
+    )
+    assert len(ingested.where_dataset("n_datapoints", equals=15 * 12500)) == 1
+    assert len(ingested.where_dataset("timestamp_start", equals=int(0.1 * 1e9))) == 1
 
     def test_signal_filter(signal_name: str, stat, value: float) -> None:
-        assert len(all_datasets.where_signal(signal_name, stat, equals=value)) == n_datasets, (
+        assert len(ingested.where_signal(signal_name, stat, equals=value)) == 1, (
             f"Failed on {signal_name} {stat} == {value}, stat in datasets: "
-            f"{[(s.stats.get(stat) if (s := d.get_signal(signal_name)) and s.stats else None) for d in all_datasets]}"
+            f"{[(s.stats.get(stat) if (s := d.get_signal(signal_name)) and s.stats else None) for d in ingested]}"
         )
-        assert len(all_datasets.where_signal(signal_name, stat, greater_than=value)) == 0
-        assert len(all_datasets.where_signal(signal_name, stat, greater_than=value - 1)) == n_datasets
-        assert len(all_datasets.where_signal(signal_name, stat, less_than=value)) == 0
-        assert len(all_datasets.where_signal(signal_name, stat, less_than=value + 1)) == n_datasets
+        assert len(ingested.where_signal(signal_name, stat, greater_than=value)) == 0
+        assert len(ingested.where_signal(signal_name, stat, greater_than=value - 1)) == 1
+        assert len(ingested.where_signal(signal_name, stat, less_than=value)) == 0
+        assert len(ingested.where_signal(signal_name, stat, less_than=value + 1)) == 1
 
-    random_dataset = random.choice(all_datasets)
     possible_names = [
         "car.speed",
         "car.dist",
@@ -140,7 +125,7 @@ def test_db_filter_datasets(example_stream: DataStream) -> None:
         "car.wheel.right.speed",
     ]  # Some signals fail due to rounding with the avg stat
 
-    random_signal = random_dataset.get_signal(random.choice(possible_names))
+    random_signal = example_dataset.get_signal(random.choice(possible_names))
     assert random_signal is not None
 
     df = pd.read_csv(EXAMPLE_CSV)
@@ -158,26 +143,22 @@ def test_db_filter_datasets(example_stream: DataStream) -> None:
     test_signal_filter(random_signal.name, "count_text", 0)
 
     def custom_filter(dataset: marple.db.Dataset) -> bool:
+        meta_ok = dataset.metadata.get("A") == 1 and dataset.metadata.get("B") in [2, 3]
+        if not dataset.n_signals:
+            return bool(meta_ok)
         ng_signal = dataset.get_signal("car.engine.NGear")
         assert ng_signal is not None and ng_signal.stats is not None
-        return (
-            dataset.metadata.get("A") == 1
-            and dataset.metadata.get("B") in [2, 3]
-            or ng_signal.stats.get("max", 0) ** 2 > 16
-        )
+        return bool(meta_ok or ng_signal.stats.get("max", 0) ** 2 > 16)
 
-    assert len(all_datasets.where(custom_filter)) == n_datasets
+    # Ingested dataset matches via NGear stats; A=1,B=2 matches via metadata.
+    assert len(all_datasets.where(custom_filter)) == 2
 
 
-def test_get_data(example_stream: DataStream) -> None:
-    datasets = example_stream.get_datasets()
-    assert len(datasets) > 0
-    dataset = random.choice(datasets)
-
+def test_get_data(example_dataset: Dataset) -> None:
     n_signals = 5
-    random_signals = random.sample(dataset.get_signals(), k=n_signals)
+    random_signals = random.sample(example_dataset.get_signals(), k=n_signals)
     random_signal_names = [signal.name for signal in random_signals]
-    all_data = dataset.get_data(signals=random_signal_names)
+    all_data = example_dataset.get_data(signals=random_signal_names)
     assert isinstance(all_data, pd.DataFrame)
     assert set(all_data.columns) == set(random_signal_names)
     assert all_data.shape == (12500, n_signals)
@@ -185,11 +166,11 @@ def test_get_data(example_stream: DataStream) -> None:
     assert isinstance(all_data.index, pd.TimedeltaIndex)
     assert all_data.index[1] - all_data.index[0] == pd.Timedelta(0.1, unit="s")
 
-    datasets = datasets[:5]
     fewer_random_signal_names = random_signal_names[:2]
-    for dataset, df in datasets.get_data(
+    for dataset, df in DatasetList([example_dataset]).get_data(
         signals=fewer_random_signal_names, resample_rule="3.579s", resample_aggregate="max"
     ):
+        assert dataset.id == example_dataset.id
         assert isinstance(df, pd.DataFrame)
         assert set(df.columns) == set(fewer_random_signal_names)
         assert df.shape[1] == 2
@@ -289,7 +270,7 @@ def test_db_get_original(example_dataset: Dataset) -> None:
 
 def test_push_file_server_upload(db: DB) -> None:
     metadata = {"upload_mode": "server"}
-    with _upload_test_stream(db, "server") as stream:
+    with isolated_stream(db, PYTHON_UPLOAD_TEST_PREFIX, "server", plugin_args="--use-index") as stream:
         dataset = _push_and_assert_upload(stream, EXAMPLE_CSV, metadata, upload_mode="server")
 
     assert dataset.metadata.get("upload_mode") == "server"
@@ -298,8 +279,8 @@ def test_push_file_server_upload(db: DB) -> None:
 def test_push_file_overwrite(db: DB) -> None:
     metadata_v1 = {"version": "1"}
     metadata_v2 = {"version": "2"}
-    overwrite_file_name = f"overwrite_test_{datetime.now().isoformat()}.csv"
-    with _upload_test_stream(db, "overwrite") as stream:
+    overwrite_file_name = unique_name("py-sdk-overwrite", ".csv")
+    with isolated_stream(db, PYTHON_UPLOAD_TEST_PREFIX, "overwrite", plugin_args="--use-index") as stream:
         _push_and_assert_upload(stream, EXAMPLE_CSV, metadata_v1, file_name=overwrite_file_name)
         dataset_overwritten = _push_and_assert_upload(
             stream, EXAMPLE_CSV, metadata_v2, overwrite=True, file_name=overwrite_file_name
@@ -315,7 +296,7 @@ def test_push_file_multipart_upload(db: DB) -> None:
     metadata = {"upload_mode": "multipart"}
     with TemporaryDirectory() as tmp_path:
         multipart_csv = _generate_multipart_csv(tmp_path)
-        with _upload_test_stream(db, "multipart") as stream:
+        with isolated_stream(db, PYTHON_UPLOAD_TEST_PREFIX, "multipart", plugin_args="--use-index") as stream:
             dataset = _push_and_assert_upload(stream, multipart_csv, metadata)
 
     assert dataset.metadata.get("upload_mode") == "multipart"
@@ -329,24 +310,9 @@ def test_db_get_parquet(example_dataset: Dataset) -> None:
     assert table.num_rows == 12500
 
 
-@contextmanager
-def _realtime_test_stream(db: DB) -> Generator[DataStream, None, None]:
-    for stream in db.get_streams():
-        if stream.name.startswith(REALTIME_TEST_PREFIX):
-            db.delete_stream(stream.id)
-    stream = db.create_stream(f"{REALTIME_TEST_PREFIX} {datetime.now().isoformat()}", type="realtime")
-    try:
-        yield stream
-    finally:
-        try:
-            db.delete_stream(stream.id)
-        except Exception:
-            pass
-
-
 def test_realtime_dataset_cool(db: DB) -> None:
-    with _realtime_test_stream(db) as stream:
-        dataset = stream.add_dataset("pytest-run", metadata={"source": "pytest"})
+    with isolated_stream(db, REALTIME_TEST_PREFIX, "cool", type="realtime") as stream:
+        dataset = stream.add_dataset(unique_name("py-realtime"), metadata={"source": "pytest"})
         assert dataset.import_status == "LIVE"
 
         dataset.upsert_signals([{"signal": "speed", "unit": "km/h"}])

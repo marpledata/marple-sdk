@@ -1,10 +1,13 @@
-use marple_db::{Dataset, ImportStatus, MarpleDB, Metadata, PushFileOptions, UploadModeOverride};
+use marple_db::{
+    Dataset, ImportStatus, MarpleDB, Metadata, PushFileOptions, Stream, UploadModeOverride,
+};
 use serde_json::{Value, json};
 use std::env;
 use std::fs;
 use std::io::Write;
 use std::path::{Path, PathBuf};
 use std::sync::OnceLock;
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
 const DEFAULT_MDB_URL: &str = "https://db.marpledata.com/api/v1";
@@ -13,6 +16,7 @@ const MIB: u64 = 1024 * 1024;
 const MULTIPART_THRESHOLD: u64 = 128 * MIB;
 
 static INTEGRATION_TEST_LOCK: OnceLock<tokio::sync::Mutex<()>> = OnceLock::new();
+static SWEPT_LEFTOVER_STREAMS: AtomicBool = AtomicBool::new(false);
 
 fn load_env_files() {
     dotenvy::dotenv().ok();
@@ -41,12 +45,15 @@ async fn integration_test_guard() -> tokio::sync::MutexGuard<'static, ()> {
         .await
 }
 
-fn unique_stream_name(suffix: &str) -> String {
-    let ts = SystemTime::now()
+fn unique_nanos() -> u128 {
+    SystemTime::now()
         .duration_since(UNIX_EPOCH)
         .expect("clock")
-        .as_secs();
-    format!("{TEST_STREAM_PREFIX} {suffix} {ts}")
+        .as_nanos()
+}
+
+fn unique_stream_name(suffix: &str) -> String {
+    format!("{TEST_STREAM_PREFIX} {suffix} {}", unique_nanos())
 }
 
 fn example_csv_path() -> PathBuf {
@@ -54,6 +61,15 @@ fn example_csv_path() -> PathBuf {
         .join("../../test_data/examples_race.csv")
         .canonicalize()
         .expect("example CSV path")
+}
+
+fn staged_csv(label: &str) -> anyhow::Result<(tempfile::TempDir, PathBuf)> {
+    let tmp = tempfile::tempdir()?;
+    let path = tmp
+        .path()
+        .join(format!("rust-sdk-{label}-{}.csv", unique_nanos()));
+    fs::copy(example_csv_path(), &path)?;
+    Ok((tmp, path))
 }
 
 async fn cleanup_streams(db: &MarpleDB) -> anyhow::Result<()> {
@@ -68,7 +84,14 @@ async fn cleanup_streams(db: &MarpleDB) -> anyhow::Result<()> {
     Ok(())
 }
 
-async fn create_test_stream(db: &MarpleDB, suffix: &str) -> anyhow::Result<marple_db::Stream> {
+async fn sweep_leftover_streams(db: &MarpleDB) -> anyhow::Result<()> {
+    if SWEPT_LEFTOVER_STREAMS.swap(true, Ordering::SeqCst) {
+        return Ok(());
+    }
+    cleanup_streams(db).await
+}
+
+async fn create_test_stream(db: &MarpleDB, suffix: &str) -> anyhow::Result<Stream> {
     let options: Metadata = [("plugin_args".to_string(), json!("--use-index"))]
         .into_iter()
         .collect();
@@ -77,24 +100,24 @@ async fn create_test_stream(db: &MarpleDB, suffix: &str) -> anyhow::Result<marpl
         .await?)
 }
 
-async fn run_with_cleanup<F, Fut>(db: &MarpleDB, flow: F) -> anyhow::Result<()>
+async fn delete_stream(db: &MarpleDB, stream_id: i32) {
+    let _ = db
+        .post::<_, Value>(&format!("/stream/{}/delete", stream_id), &json!({}))
+        .await;
+}
+
+async fn run_with_cleanup<F, Fut>(db: &MarpleDB, suffix: &str, flow: F) -> anyhow::Result<()>
 where
-    F: FnOnce() -> Fut,
+    F: FnOnce(Stream) -> Fut,
     Fut: std::future::Future<Output = anyhow::Result<()>>,
 {
     let _guard = integration_test_guard().await;
-    cleanup_streams(db).await?;
+    sweep_leftover_streams(db).await?;
 
-    let result = flow().await;
-    let cleanup_result = cleanup_streams(db).await;
-
-    if let Err(cleanup_error) = cleanup_result {
-        if result.is_ok() {
-            return Err(cleanup_error);
-        }
-        eprintln!("Rust SDK integration cleanup failed: {cleanup_error:#}");
-    }
-
+    let stream = create_test_stream(db, suffix).await?;
+    let stream_id = stream.id;
+    let result = flow(stream).await;
+    delete_stream(db, stream_id).await;
     result
 }
 
@@ -106,9 +129,9 @@ async fn upload_and_assert_dataset(
     expected_metadata: &[(&str, &str)],
     exercise_generic_endpoints: bool,
 ) -> anyhow::Result<Dataset> {
-    anyhow::ensure!(file_path.exists(), "test CSV missing at {:?}", file_path);
+    anyhow::ensure!(file_path.exists(), "test file missing at {:?}", file_path);
     let expected_size = fs::metadata(file_path)?.len();
-    anyhow::ensure!(expected_size > 0, "test CSV is empty");
+    anyhow::ensure!(expected_size > 0, "test file is empty");
 
     let dataset = db.push_file(stream_id, file_path, options).await?;
     let dataset = db
@@ -131,7 +154,7 @@ async fn upload_and_assert_dataset(
         .ok_or_else(|| anyhow::anyhow!("finished dataset has no backup_size"))?;
     anyhow::ensure!(
         backup_size == expected_size,
-        "backup_size mismatch: source csv is {expected_size} bytes, backup_size is {backup_size} bytes"
+        "backup_size mismatch: source file is {expected_size} bytes, backup_size is {backup_size} bytes"
     );
 
     anyhow::ensure!(
@@ -172,7 +195,7 @@ async fn upload_and_assert_dataset(
     let downloaded_size = downloaded.len() as u64;
     anyhow::ensure!(
         downloaded_size == expected_size,
-        "downloaded file size mismatch: source csv is {expected_size} bytes, downloaded file is {downloaded_size} bytes"
+        "downloaded file size mismatch: source file is {expected_size} bytes, downloaded file is {downloaded_size} bytes"
     );
     anyhow::ensure!(
         downloaded_size == backup_size,
@@ -186,7 +209,7 @@ fn generate_multipart_csv(output_dir: &Path) -> anyhow::Result<PathBuf> {
     let source = fs::read(example_csv_path())?;
     anyhow::ensure!(!source.is_empty(), "source CSV is empty");
 
-    let output_path = output_dir.join("multipart-examples-race.csv");
+    let output_path = output_dir.join(format!("rust-sdk-multipart-{}.csv", unique_nanos()));
     let repeat_count = (MULTIPART_THRESHOLD / source.len() as u64) + 1;
     let mut output = fs::File::create(&output_path)?;
 
@@ -228,7 +251,11 @@ async fn test_sdk_auto_upload_flow() -> anyhow::Result<()> {
     };
 
     let db = db(&token, &url)?;
-    run_with_cleanup(&db, || async { run_auto_upload_flow(&db).await }).await
+    run_with_cleanup(&db, "auto", |stream| {
+        let db = db.clone();
+        async move { run_auto_upload_flow(&db, stream).await }
+    })
+    .await
 }
 
 #[tokio::test]
@@ -239,7 +266,11 @@ async fn test_sdk_server_upload_flow() -> anyhow::Result<()> {
     };
 
     let db = db(&token, &url)?;
-    run_with_cleanup(&db, || async { run_server_upload_flow(&db).await }).await
+    run_with_cleanup(&db, "server", |stream| {
+        let db = db.clone();
+        async move { run_server_upload_flow(&db, stream).await }
+    })
+    .await
 }
 
 #[tokio::test]
@@ -250,7 +281,11 @@ async fn test_sdk_overwrite_flow() -> anyhow::Result<()> {
     };
 
     let db = db(&token, &url)?;
-    run_with_cleanup(&db, || async { run_overwrite_flow(&db).await }).await
+    run_with_cleanup(&db, "overwrite", |stream| {
+        let db = db.clone();
+        async move { run_overwrite_flow(&db, stream).await }
+    })
+    .await
 }
 
 #[tokio::test]
@@ -261,12 +296,15 @@ async fn test_sdk_multipart_upload_flow() -> anyhow::Result<()> {
     };
 
     let db = db(&token, &url)?;
-    run_with_cleanup(&db, || async { run_multipart_upload_flow(&db).await }).await
+    run_with_cleanup(&db, "multipart", |stream| {
+        let db = db.clone();
+        async move { run_multipart_upload_flow(&db, stream).await }
+    })
+    .await
 }
 
-async fn run_auto_upload_flow(db: &MarpleDB) -> anyhow::Result<()> {
-    let csv_path = example_csv_path();
-    let stream = create_test_stream(db, "auto").await?;
+async fn run_auto_upload_flow(db: &MarpleDB, stream: Stream) -> anyhow::Result<()> {
+    let (_tmp, csv_path) = staged_csv("auto")?;
 
     let fetched = db.get_stream(&stream.name).await?;
     anyhow::ensure!(fetched.id == stream.id, "fetched stream id mismatch");
@@ -305,9 +343,8 @@ async fn run_auto_upload_flow(db: &MarpleDB) -> anyhow::Result<()> {
     Ok(())
 }
 
-async fn run_server_upload_flow(db: &MarpleDB) -> anyhow::Result<()> {
-    let csv_path = example_csv_path();
-    let stream = create_test_stream(db, "server").await?;
+async fn run_server_upload_flow(db: &MarpleDB, stream: Stream) -> anyhow::Result<()> {
+    let (_tmp, csv_path) = staged_csv("server")?;
     let upload_mode = "server";
 
     upload_and_assert_dataset(
@@ -326,11 +363,8 @@ async fn run_server_upload_flow(db: &MarpleDB) -> anyhow::Result<()> {
     Ok(())
 }
 
-async fn run_overwrite_flow(db: &MarpleDB) -> anyhow::Result<()> {
-    let tmp = tempfile::tempdir()?;
-    let csv_path = tmp.path().join("overwrite_test.csv");
-    fs::copy(example_csv_path(), &csv_path)?;
-    let stream = create_test_stream(db, "overwrite").await?;
+async fn run_overwrite_flow(db: &MarpleDB, stream: Stream) -> anyhow::Result<()> {
+    let (_tmp, csv_path) = staged_csv("overwrite")?;
 
     let dataset = upload_and_assert_dataset(
         db,
@@ -357,7 +391,10 @@ async fn run_overwrite_flow(db: &MarpleDB) -> anyhow::Result<()> {
     )
     .await?;
 
-    anyhow::ensure!(dataset_overwritten.id == dataset.id, "overwrite created a new dataset instead of updating");
+    anyhow::ensure!(
+        dataset_overwritten.id == dataset.id,
+        "overwrite created a new dataset instead of updating"
+    );
     let datasets = db.get_datasets(stream.id).await?;
     anyhow::ensure!(
         datasets.len() == 1,
@@ -368,10 +405,9 @@ async fn run_overwrite_flow(db: &MarpleDB) -> anyhow::Result<()> {
     Ok(())
 }
 
-async fn run_multipart_upload_flow(db: &MarpleDB) -> anyhow::Result<()> {
+async fn run_multipart_upload_flow(db: &MarpleDB, stream: Stream) -> anyhow::Result<()> {
     let tmp = tempfile::tempdir()?;
     let csv_path = generate_multipart_csv(tmp.path())?;
-    let stream = create_test_stream(db, "multipart").await?;
     let upload_mode = "multipart";
 
     upload_and_assert_dataset(

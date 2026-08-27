@@ -432,6 +432,20 @@ class DB:
         r = self.post(f"/stream/{dataset.datastream_id}/dataset/{dataset.id}/delete")
         validate_response(r, "Delete dataset failed")
 
+    def delete_signals(
+        self,
+        dataset_id: int | None,
+        dataset_path: str | None,
+        signal_ids: Sequence[int],
+    ) -> None:
+        """
+        Delete signals from a dataset by ID or path.
+
+        Warning:
+            This is a destructive operation that cannot be undone.
+        """
+        self.get_dataset(dataset_id, dataset_path).delete_signals(signal_ids)
+
     @deprecated
     def update_metadata(
         self,
