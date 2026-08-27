@@ -185,6 +185,7 @@ if len(datasets) > 0:
 - **Get a resampled df of multiple signals**: `dataset.get_data(signals=[...], resample_rule="1s")`
 - **Delete a stream**: `stream.delete()` or `db.delete_stream(stream_key)`
 - **Delete a dataset**: `dataset.delete()` or `db.delete_dataset(dataset_id, dataset_path)`
+- **Delete signals**: `signal.delete()`, `dataset.delete_signal(signal_id)` / `dataset.delete_signals(signal_ids)`, or `db.delete_signals(dataset_id, dataset_path, signal_ids)`
 
 For live streams:
 
