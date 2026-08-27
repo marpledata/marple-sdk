@@ -134,12 +134,7 @@ impl MarpleDB {
             .file_name(file_name.to_string())
             .mime_str("application/octet-stream")
             .map_err(|source| {
-                Error::storage(
-                    "building multipart upload body",
-                    None,
-                    None,
-                    Some(source),
-                )
+                Error::storage("building multipart upload body", None, None, Some(source))
             })?;
         let form = reqwest::multipart::Form::new().part("file", part);
         let endpoint = format!("ingestion/{}/upload/server", init.ingestion_id);
@@ -615,9 +610,10 @@ async fn ensure_success(response: Response, failure_message: impl Into<String>) 
     } else {
         let context = failure_message.into();
         let status = response.status();
-        let body = response.text().await.map_err(|source| {
-            Error::storage(context.clone(), Some(status), None, Some(source))
-        })?;
+        let body = response
+            .text()
+            .await
+            .map_err(|source| Error::storage(context.clone(), Some(status), None, Some(source)))?;
         Err(Error::storage(context, Some(status), Some(body), None))
     }
 }

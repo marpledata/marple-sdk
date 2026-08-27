@@ -64,9 +64,8 @@ impl MarpleDB {
 
     /// Creates a builder for configuring a client.
     ///
-    /// Use the builder when you need custom timeouts, a user agent, extra
-    /// TLS roots, or to accept invalid certificates on a private network.
-    #[must_use]
+    /// Use the builder for custom timeouts, a user agent, or caller-provided
+    /// `reqwest::Client` instances.
     pub fn builder() -> MarpleDBBuilder {
         MarpleDBBuilder::default()
     }
@@ -302,13 +301,10 @@ impl MarpleDB {
         tokio::fs::create_dir_all(dest_dir).await?;
         let path = dest_dir.join(file_name);
 
-        let response = retry::send_with_retry(
-            self.storage_client.get(url.clone()),
-            &Method::GET,
-            &STORAGE_RETRY,
-        )
-        .await
-        .map_err(|source| Error::storage("storage GET failed", None, None, Some(source)))?;
+        let response =
+            retry::send_with_retry(self.storage_client.get(url), &Method::GET, &STORAGE_RETRY)
+                .await
+                .map_err(|source| Error::storage("storage GET failed", None, None, Some(source)))?;
         if !response.status().is_success() {
             let status = response.status();
             let body = response.text().await.map_err(|source| {
@@ -326,9 +322,8 @@ impl MarpleDB {
         let mut downloaded = 0u64;
         let mut chunks = response.bytes_stream();
         while let Some(chunk) = chunks.next().await {
-            let chunk = chunk.map_err(|source| {
-                Error::storage("storage GET failed", None, None, Some(source))
-            })?;
+            let chunk = chunk
+                .map_err(|source| Error::storage("storage GET failed", None, None, Some(source)))?;
             file.write_all(&chunk).await?;
             downloaded += chunk.len() as u64;
             progress.set_position(downloaded);
@@ -504,11 +499,11 @@ impl MarpleDB {
 pub struct MarpleDBBuilder {
     url: Option<String>,
     token: Option<String>,
+    client: Option<Client>,
+    storage_client: Option<Client>,
     timeout: Option<Duration>,
     user_agent: Option<String>,
     request_source: Option<String>,
-    danger_accept_invalid_certs: bool,
-    root_certificates: Vec<Vec<u8>>,
 }
 
 impl Default for MarpleDBBuilder {
@@ -516,11 +511,11 @@ impl Default for MarpleDBBuilder {
         Self {
             url: None,
             token: None,
+            client: None,
+            storage_client: None,
             timeout: None,
             user_agent: Some(format!("marple-db/{}", env!("CARGO_PKG_VERSION"))),
             request_source: None,
-            danger_accept_invalid_certs: false,
-            root_certificates: Vec::new(),
         }
     }
 }
@@ -530,7 +525,6 @@ impl MarpleDBBuilder {
     ///
     /// The URL should usually end in `/api/v1`. [`crate::SAAS_URL`] is the
     /// hosted default.
-    #[must_use]
     pub fn url(mut self, url: impl Into<String>) -> Self {
         self.url = Some(url.into());
         self
@@ -539,7 +533,6 @@ impl MarpleDBBuilder {
     /// Sets the bearer API token.
     ///
     /// The token is sent as `Authorization: Bearer <token>` on API requests.
-    #[must_use]
     pub fn token(mut self, token: impl Into<String>) -> Self {
         self.token = Some(token.into());
         self
@@ -548,15 +541,14 @@ impl MarpleDBBuilder {
     /// Sets the total timeout for the API and storage HTTP clients built by the SDK.
     ///
     /// Defaults match the Python SDK: 300s for API requests and 1800s for
-    /// storage. This override applies the same total timeout to both clients.
-    #[must_use]
+    /// storage. This override applies the same total timeout to both SDK-built
+    /// clients. Caller-provided clients keep their own timeout configuration.
     pub fn timeout(mut self, timeout: Duration) -> Self {
         self.timeout = Some(timeout);
         self
     }
 
     /// Sets the user agent for HTTP clients built by the SDK.
-    #[must_use]
     pub fn user_agent(mut self, user_agent: impl Into<String>) -> Self {
         self.user_agent = Some(user_agent.into());
         self
@@ -568,31 +560,28 @@ impl MarpleDBBuilder {
     /// top of the SDK should identify themselves so their traffic shows up
     /// distinctly in backend logs and metrics, for example `cli/rust:1.2.3`
     /// or `my-ingester/2.0.0`.
-    #[must_use]
     pub fn request_source(mut self, request_source: impl Into<String>) -> Self {
         self.request_source = Some(request_source.into());
         self
     }
 
-    /// Disables TLS certificate and hostname verification.
+    /// Uses a caller-provided API HTTP client.
     ///
-    /// Last resort for a private CA you cannot install. Prefer
-    /// [`Self::add_root_certificate`] or the `native-tls` Cargo feature so
-    /// the OS trust store is used. Applies to both API and storage clients.
-    #[must_use]
-    pub fn danger_accept_invalid_certs(mut self, accept_invalid: bool) -> Self {
-        self.danger_accept_invalid_certs = accept_invalid;
+    /// The SDK still attaches the MarpleDB authorization header per request.
+    /// This takes `reqwest::Client` and follows reqwest's semver; prefer
+    /// [`MarpleDB::new`] unless you need custom TLS or other client settings.
+    pub fn client(mut self, client: Client) -> Self {
+        self.client = Some(client);
         self
     }
 
-    /// Trusts an additional PEM-encoded CA certificate.
+    /// Uses a caller-provided storage HTTP client.
     ///
-    /// Use this for a known internal or self-signed server CA. Call multiple
-    /// times to add more than one certificate. Applies to both API and
-    /// storage clients.
-    #[must_use]
-    pub fn add_root_certificate(mut self, pem: impl Into<Vec<u8>>) -> Self {
-        self.root_certificates.push(pem.into());
+    /// This client is used for pre-signed direct storage URLs and should not
+    /// include MarpleDB authorization headers by default. Follows reqwest's
+    /// semver; see [`Self::client`].
+    pub fn storage_client(mut self, client: Client) -> Self {
+        self.storage_client = Some(client);
         self
     }
 
@@ -612,31 +601,33 @@ impl MarpleDBBuilder {
             None => DEFAULT_REQUEST_SOURCE,
         };
 
-        let tls = TlsOptions {
-            danger_accept_invalid_certs: self.danger_accept_invalid_certs,
-            root_certificates: &self.root_certificates,
+        let client = match self.client {
+            Some(client) => client,
+            None => {
+                let timeout = self.timeout.unwrap_or(MarpleDB::API_TIMEOUT);
+                build_client(
+                    timeout,
+                    MarpleDB::API_CONNECT_TIMEOUT.min(timeout),
+                    self.user_agent.as_deref(),
+                )?
+            }
         };
-        let api_timeout = self.timeout.unwrap_or(MarpleDB::API_TIMEOUT);
-        let storage_timeout = self.timeout.unwrap_or(MarpleDB::STORAGE_TIMEOUT);
-        let storage_connect = if self.timeout.is_some() {
-            MarpleDB::API_CONNECT_TIMEOUT.min(storage_timeout)
-        } else {
-            MarpleDB::STORAGE_TIMEOUT
+        let storage_client = match self.storage_client {
+            Some(client) => client,
+            None => {
+                let timeout = self.timeout.unwrap_or(MarpleDB::STORAGE_TIMEOUT);
+                let connect = if self.timeout.is_some() {
+                    MarpleDB::API_CONNECT_TIMEOUT.min(timeout)
+                } else {
+                    MarpleDB::STORAGE_TIMEOUT
+                };
+                build_client(timeout, connect, self.user_agent.as_deref())?
+            }
         };
 
         Ok(MarpleDB {
-            client: build_client(
-                api_timeout,
-                MarpleDB::API_CONNECT_TIMEOUT.min(api_timeout),
-                self.user_agent.as_deref(),
-                tls,
-            )?,
-            storage_client: build_client(
-                storage_timeout,
-                storage_connect,
-                self.user_agent.as_deref(),
-                tls,
-            )?,
+            client,
+            storage_client,
             base_url: url.trim_end_matches('/').to_string() + "/",
             auth_header,
             request_source,
@@ -668,27 +659,14 @@ fn header_value(value: &str) -> Result<HeaderValue> {
         .map_err(|error| Error::Config(format!("invalid HTTP header value: {error}")))
 }
 
-#[derive(Clone, Copy)]
-struct TlsOptions<'a> {
-    danger_accept_invalid_certs: bool,
-    root_certificates: &'a [Vec<u8>],
-}
-
 fn build_client(
     timeout: Duration,
     connect_timeout: Duration,
     user_agent: Option<&str>,
-    tls: TlsOptions<'_>,
 ) -> Result<Client> {
     let mut builder = Client::builder()
         .timeout(timeout)
-        .connect_timeout(connect_timeout)
-        .danger_accept_invalid_certs(tls.danger_accept_invalid_certs);
-    for pem in tls.root_certificates {
-        let cert = reqwest::Certificate::from_pem(pem)
-            .map_err(|error| Error::Config(format!("invalid root certificate: {error}")))?;
-        builder = builder.add_root_certificate(cert);
-    }
+        .connect_timeout(connect_timeout);
     if let Some(user_agent) = user_agent {
         let mut headers = HeaderMap::new();
         headers.insert(USER_AGENT, header_value(user_agent)?);

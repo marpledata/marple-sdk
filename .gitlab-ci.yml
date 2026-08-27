@@ -72,8 +72,10 @@ rust:workspace:
   script:
     - cd rust
     - cargo fmt --all -- --check
-    - cargo clippy --workspace --locked --all-targets -- -D warnings
+    - cargo clippy --workspace --locked --all-targets --all-features -- -D warnings
     - cargo test --workspace --locked
+    - cargo test -p marple-db --locked --no-default-features --features native-tls
+    - cargo check -p marple-db --locked --no-default-features --features rustls-tls
     - cargo build --workspace --examples --locked
     - RUSTDOCFLAGS="-D warnings" cargo doc --workspace --no-deps
   rules:

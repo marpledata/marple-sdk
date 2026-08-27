@@ -6,8 +6,8 @@ use thiserror::Error;
 /// Opaque cause of an HTTP transport or storage failure.
 ///
 /// The SDK keeps the underlying client error out of the public type so
-/// `reqwest` version bumps are not breaking changes. Use [`Display`] or
-/// [`StdError::source`] for diagnostics.
+/// `reqwest` version bumps are not breaking changes. Use [`std::fmt::Display`]
+/// or [`StdError::source`] for diagnostics.
 pub struct SourceError {
     inner: Box<dyn StdError + Send + Sync>,
 }

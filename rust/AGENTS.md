@@ -14,7 +14,7 @@ This directory contains the Rust SDK, CLI, and parquet transcoder.
 ## Commands
 
 - Test workspace crates: `cargo test --workspace --locked`
-- Lint/format/docs: `cargo fmt --all -- --check && cargo clippy --workspace --locked --all-targets -- -D warnings && RUSTDOCFLAGS="-D warnings" cargo doc --workspace --no-deps`
+- Lint/format/docs: `cargo fmt --all -- --check && cargo clippy --workspace --locked --all-targets --all-features -- -D warnings && RUSTDOCFLAGS="-D warnings" cargo doc --workspace --no-deps`
 - Build workspace examples: `cargo build --workspace --examples --locked`
 - Test SDK only: `cargo test -p marple-db --locked`
 - Test CLI only: `cargo test -p mdb-cli --locked`

@@ -72,7 +72,8 @@ async fn download_original_writes_backup_bytes() {
     Mock::given(method("GET"))
         .and(path("/api/v1/stream/7/dataset/42/backup"))
         .respond_with(
-            ResponseTemplate::new(200).set_body_json(json!({"path": format!("{}/file.bin", server.uri())})),
+            ResponseTemplate::new(200)
+                .set_body_json(json!({"path": format!("{}/file.bin", server.uri())})),
         )
         .mount(&server)
         .await;
@@ -94,17 +95,33 @@ async fn download_original_writes_backup_bytes() {
         .download_original(&dataset, dir.path())
         .await
         .expect("download");
-    assert_eq!(path.file_name().and_then(|name| name.to_str()), Some("run.csv"));
+    assert_eq!(
+        path.file_name().and_then(|name| name.to_str()),
+        Some("run.csv")
+    );
     assert_eq!(std::fs::read(&path).expect("bytes"), body);
 }
 
-#[test]
-fn invalid_root_certificate_is_config_error() {
-    let error = MarpleDB::builder()
-        .url("https://db.marpledata.com/api/v1")
-        .token("mdb_test")
-        .add_root_certificate("not-a-pem")
+#[tokio::test]
+async fn injected_http_clients_are_used() {
+    let server = MockServer::start().await;
+    Mock::given(method("GET"))
+        .and(path("/api/v1/health"))
+        .respond_with(ResponseTemplate::new(200).set_body_json(json!({"status": "healthy"})))
+        .expect(1)
+        .mount(&server)
+        .await;
+
+    let http = reqwest::Client::new();
+    let health = MarpleDB::builder()
+        .url(format!("{}/api/v1", server.uri()))
+        .token("mdb_test_token")
+        .client(http.clone())
+        .storage_client(http)
         .build()
-        .expect_err("invalid cert");
-    assert!(matches!(error, marple_db::Error::Config(_)));
+        .expect("client")
+        .health()
+        .await
+        .expect("health");
+    assert_eq!(health.status, "healthy");
 }

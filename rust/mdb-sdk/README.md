@@ -14,10 +14,10 @@ anyhow = "1"
 serde_json = "1"
 ```
 
-Default TLS is `rustls-tls` (Mozilla CA bundle). For corporate SSL-inspecting proxies that install a private root in the OS store, enable `native-tls` instead:
+Default TLS is `rustls-tls-native-roots` (rustls plus the OS certificate store). `rustls-tls` trusts Mozilla's CA bundle only; `native-tls` uses SChannel / Secure Transport / OpenSSL:
 
 ```toml
-marple-db = { version = "0.3", default-features = false, features = ["native-tls"] }
+marple-db = { version = "0.3", default-features = false, features = ["rustls-tls"] }
 ```
 
 ## Authentication
@@ -140,20 +140,25 @@ let path = db.download_original(&dataset, ".").await?;
 
 ## Custom Clients
 
-Use `MarpleDB::builder()` when you need custom timeouts, a user agent, extra TLS roots, or to disable certificate verification:
+Use `MarpleDB::builder()` for custom timeouts or a user agent. For custom TLS (extra CA, `danger_accept_invalid_certs`, …), pass `reqwest::Client` instances. Those builder methods follow reqwest's semver; the rest of the SDK does not.
 
 ```rust
 use marple_db::MarpleDB;
 use std::time::Duration;
 
+let http = reqwest::Client::builder()
+    .timeout(Duration::from_secs(120))
+    .build()?;
 let db = MarpleDB::builder()
     .url(marple_db::SAAS_URL)
     .token("mdb_your_token_here")
-    .timeout(Duration::from_secs(120))
     .user_agent("my-ingester/1.0")
-    .add_root_certificate(std::fs::read("corp-root.pem")?)
+    .client(http.clone())
+    .storage_client(http)
     .build()?;
 ```
+
+The storage client is used for pre-signed URLs and should not send MarpleDB authorization headers.
 
 ## Error Handling
 

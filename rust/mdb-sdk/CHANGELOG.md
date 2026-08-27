@@ -9,8 +9,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- `SAAS_URL` for the hosted Marple DB API root, `VERSION` for the crate version, and a generic `patch` helper alongside `get` / `post` / `delete`.
 - `download_original()` / `download_original_with_progress()` to fetch a dataset's original uploaded file into a directory.
-- TLS builder knobs: `MarpleDBBuilder::add_root_certificate` and `danger_accept_invalid_certs`. Cargo features `rustls-tls` (default) and `native-tls` (OS certificate store).
+- TLS Cargo features: `rustls-tls-native-roots` (default; OS certificate store), `rustls-tls` (Mozilla CAs only), and `native-tls`.
 - Typed helpers for `/workspace/license`, `/user/info`, `/usage/series/{usage_type}`, `/settings`, and `/stream/{id}/metadata/fields`, plus `get_current_workspace()` to resolve the connected workspace from `/user/info` (name, id, license quotas, and latest storage usage).
 - `get_stream_by_id()` for `GET /stream/{id}`. `create_stream` and `update_stream` now reload through that endpoint instead of re-listing every stream.
 - `StorageQuota` for license byte caps (`limit < 0` is unlimited). Missing license/signal/dataset/stream fields default; unknown enum values become `Unknown`.
@@ -26,7 +27,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - `PushFileOptions` is configured with chained setters on the options value itself (`PushFileOptions::default().metadata(...).overwrite(true)`).
 - SDK-built HTTP clients use the Python SDK timeout and retry defaults (5s connect / 300s API, 1800s storage; retries on the same methods and status codes).
 - Documented MSRV is Rust 1.85 (edition 2024). crates.io now links to docs.rs for API docs.
-- The crate requires a Tokio runtime. HTTP errors no longer expose `reqwest` types (`status` is `u16`, methods are strings, causes are [`SourceError`](src/errors.rs)). `storage_client()` and builder `client()` / `storage_client()` injection were removed; use `download_original` and the TLS builder knobs instead.
+- The crate requires a Tokio runtime. HTTP errors no longer expose `reqwest` types (`status` is `u16`, methods are strings, causes are `SourceError`). `storage_client()` on `MarpleDB` was removed in favor of `download_original`. Custom TLS goes through `MarpleDBBuilder::client` / `storage_client` (`reqwest::Client`; those methods follow reqwest's semver).
 
 ### Fixed
 

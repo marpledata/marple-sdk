@@ -62,26 +62,14 @@
 //! # }
 //! ```
 //!
-//! # Timeouts and retries
-//!
 //! SDK-built HTTP clients use the same defaults as the Python SDK:
 //!
-//! - API requests: 5s connect, 300s total; retry `GET` / `HEAD` / `OPTIONS` /
-//!   `DELETE` on 429, 502, 503, and 504, plus connect failures on any method.
-//! - Storage requests: 1800s timeout; retry `PUT` / `GET` / `HEAD` on 429, 500,
-//!   502, 503, and 504.
+//! The default `rustls-tls-native-roots` feature uses rustls with the OS
+//! certificate store, so corporate proxies work.
 //!
-//! [`MarpleDBBuilder::timeout`] overrides the total timeout on both SDK-built
-//! clients. Streamed upload bodies cannot be replayed, so those requests are
-//! not retried at the HTTP layer.
-//!
-//! # TLS
-//!
-//! The default `rustls-tls` feature trusts Mozilla's CA bundle. Enable
-//! `native-tls` instead when a corporate SSL-inspecting proxy installs a
-//! private root in the OS certificate store. For a known internal CA, call
-//! [`MarpleDBBuilder::add_root_certificate`]. [`MarpleDBBuilder::danger_accept_invalid_certs`]
-//! disables verification and should be a last resort.
+//! For a custom CA or other TLS settings, pass `reqwest::Client` instances
+//! through [`MarpleDBBuilder::client`] and [`MarpleDBBuilder::storage_client`].
+//! Those methods follow reqwest's semver; the rest of the SDK does not.
 //!
 //! This crate is async on Tokio and does not install a runtime. Callers must
 //! run it on a Tokio executor (`#[tokio::main]` or equivalent).
@@ -91,8 +79,14 @@
 #![deny(missing_debug_implementations)]
 #![forbid(unsafe_code)]
 
-#[cfg(not(any(feature = "rustls-tls", feature = "native-tls")))]
-compile_error!("marple-db requires the `rustls-tls` (default) or `native-tls` Cargo feature");
+#[cfg(not(any(
+    feature = "rustls-tls-native-roots",
+    feature = "rustls-tls",
+    feature = "native-tls"
+)))]
+compile_error!(
+    "marple-db requires the `rustls-tls-native-roots` (default), `rustls-tls`, or `native-tls` Cargo feature"
+);
 
 mod client;
 mod errors;

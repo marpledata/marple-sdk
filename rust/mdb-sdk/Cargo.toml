@@ -17,13 +17,12 @@ all-features = true
 rustdoc-args = ["--cfg", "docsrs"]
 
 [features]
-default = ["rustls-tls"]
-# rustls with Mozilla's CA bundle. Corporate SSL-inspecting proxies that
-# install a private root in the OS store will not be trusted; use
-# `native-tls` or [`MarpleDBBuilder::add_root_certificate`].
+default = ["rustls-tls-native-roots"]
+# rustls using the OS certificate store (corporate SSL-inspecting proxies).
+rustls-tls-native-roots = ["reqwest/rustls-tls-native-roots"]
+# rustls using Mozilla's CA bundle only (no OS extra roots).
 rustls-tls = ["reqwest/rustls-tls"]
-# OS-native TLS (SChannel / Secure Transport / OpenSSL). Uses the system
-# certificate store, which is usually what corporate firewalls need.
+# OS-native TLS (SChannel / Secure Transport / OpenSSL).
 native-tls = ["reqwest/native-tls"]
 
 [dependencies]
@@ -35,7 +34,7 @@ reqwest.workspace = true
 serde.workspace = true
 serde_json.workspace = true
 thiserror.workspace = true
-tokio = { workspace = true, default-features = false, features = ["fs", "io-util", "rt", "sync", "time"] }
+tokio = { workspace = true, default-features = false, features = ["fs", "io-util", "macros", "rt", "sync", "time"] }
 tokio-util.workspace = true
 tracing.workspace = true
 url.workspace = true
@@ -43,6 +42,7 @@ url.workspace = true
 [dev-dependencies]
 anyhow.workspace = true
 dotenvy = "0.15.7"
+reqwest.workspace = true
 tempfile = "3.23.0"
 tokio = { workspace = true, features = ["rt-multi-thread", "macros"] }
 wiremock = "0.6.5"
