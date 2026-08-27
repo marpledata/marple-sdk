@@ -387,7 +387,7 @@ fn push_metadata(
     if entries.is_empty() {
         return;
     }
-    entries.sort_by(|(left, _), (right, _)| left.cmp(right));
+    entries.sort_by_key(|(left, _)| *left);
     for (key, value) in entries {
         lines.push(kv(key, format_meta_value(value)));
     }
@@ -462,7 +462,7 @@ mod tests {
         assert_eq!(bar_color(0.7), Color::Yellow);
         assert_eq!(bar_color(0.9), Color::Red);
         assert_eq!(
-            usage_bar(Some(50), Some(StorageQuota::Bytes(100)), 20).width() as usize,
+            usage_bar(Some(50), Some(StorageQuota::Bytes(100)), 20).width(),
             20
         );
     }

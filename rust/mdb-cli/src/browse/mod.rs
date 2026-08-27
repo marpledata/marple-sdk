@@ -703,7 +703,7 @@ impl App {
     }
 
     fn apply_datasets(&mut self, stream_id: i64, mut datasets: Vec<Dataset>) {
-        datasets.sort_by(|left, right| right.id.cmp(&left.id));
+        datasets.sort_by_key(|dataset| std::cmp::Reverse(dataset.id));
         self.datasets = datasets;
         self.signals.clear();
         self.signals_dataset_id = None;

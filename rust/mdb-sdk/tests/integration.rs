@@ -1,7 +1,7 @@
 use marple_db::{
-    Dataset, ImportStatus, MarpleDB, Metadata, PushFileOptions, Stream,
-    UploadModeOverride, UsageType,
-};;
+    Dataset, ImportStatus, MarpleDB, Metadata, PushFileOptions, Stream, UploadModeOverride,
+    UsageType,
+};
 use serde_json::{Value, json};
 use std::env;
 use std::fs;
