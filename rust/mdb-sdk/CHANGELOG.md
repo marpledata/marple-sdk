@@ -14,11 +14,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - `StorageQuota` for license byte caps (`limit < 0` is unlimited). Missing license/signal/dataset/stream fields default; unknown enum values become `Unknown`.
 - `get_signals()` and a typed `Signal` model for dataset signal metadata.
 - `Settings` for `/settings`, with `INSIGHT_URL` and other known keys typed and remaining keys in `extra`.
+- `ImportStatus::as_str`, `is_success`, `is_failure`, and `Display` using API names such as `FINISHED`.
 
 ### Changed
 
 - Stream, dataset, signal, user, license, and ingestion ids are `i64` so they match JSON integers and cannot overflow an `i32`.
-- `wait_for_import` treats `CoolingFailed` as a terminal import failure.
+- `wait_for_import` treats `CoolingFailed` as a terminal import failure, polls with `tokio::time::timeout`, and reports API status names on timeout.
 
 ### Fixed
 

@@ -32,6 +32,9 @@ specific `AGENTS.md` files in subdirectories override or extend this guidance.
   absent.
 - Prefer small, scoped changes that match the package boundary you are working
   in.
+- **Newspaper rule**: Modules read like a newspaper — public API and high-level
+  flow at the top, private helpers and details below. Keep callers above callees;
+  do not interleave `_helpers` between public functions.
 
 ## Releases
 

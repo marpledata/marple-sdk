@@ -123,19 +123,7 @@ pub fn connect(url: &str, token: &str) -> Result<MarpleDB> {
 }
 
 pub(crate) fn format_import_status(status: ImportStatus) -> &'static str {
-    match status {
-        ImportStatus::Uploading => "UPLOADING",
-        ImportStatus::Waiting => "WAITING",
-        ImportStatus::Importing => "IMPORTING",
-        ImportStatus::Postprocessing => "POSTPROCESSING",
-        ImportStatus::PostprocessingFailed => "POSTPROCESSING_FAILED",
-        ImportStatus::Finished => "FINISHED",
-        ImportStatus::Live => "LIVE",
-        ImportStatus::Failed => "FAILED",
-        ImportStatus::Cooling => "COOLING",
-        ImportStatus::CoolingFailed => "COOLING_FAILED",
-        _ => "?",
-    }
+    status.as_str()
 }
 
 fn format_count(value: Option<u64>) -> String {

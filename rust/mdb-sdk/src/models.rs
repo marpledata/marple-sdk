@@ -460,92 +460,6 @@ pub enum StreamType {
     Unknown,
 }
 
-fn deserialize_default_string<'de, D>(deserializer: D) -> std::result::Result<String, D::Error>
-where
-    D: serde::Deserializer<'de>,
-{
-    Ok(Option::<String>::deserialize(deserializer)?.unwrap_or_default())
-}
-
-/// `/user/info` sends `EXTRACT(EPOCH FROM last_active)`, a Postgres float or JSON null.
-fn deserialize_optional_epoch<'de, D>(deserializer: D) -> std::result::Result<Option<i64>, D::Error>
-where
-    D: serde::Deserializer<'de>,
-{
-    deserialize_opt_i64(deserializer)
-}
-
-fn deserialize_i64<'de, D>(deserializer: D) -> std::result::Result<i64, D::Error>
-where
-    D: serde::Deserializer<'de>,
-{
-    i64_from_value(Value::deserialize(deserializer)?)
-        .ok_or_else(|| serde::de::Error::custom("expected a number"))
-}
-
-fn deserialize_opt_i64<'de, D>(deserializer: D) -> std::result::Result<Option<i64>, D::Error>
-where
-    D: serde::Deserializer<'de>,
-{
-    Ok(match Option::<Value>::deserialize(deserializer)? {
-        None | Some(Value::Null) => None,
-        Some(value) => i64_from_value(value),
-    })
-}
-
-fn deserialize_opt_string<'de, D>(deserializer: D) -> std::result::Result<Option<String>, D::Error>
-where
-    D: serde::Deserializer<'de>,
-{
-    Ok(match Option::<Value>::deserialize(deserializer)? {
-        None | Some(Value::Null) => None,
-        Some(Value::String(text)) => Some(text).filter(|text| !text.is_empty()),
-        Some(Value::Number(number)) => Some(number.to_string()),
-        Some(Value::Bool(value)) => Some(value.to_string()),
-        Some(_) => None,
-    })
-}
-
-fn deserialize_opt_bool<'de, D>(deserializer: D) -> std::result::Result<Option<bool>, D::Error>
-where
-    D: serde::Deserializer<'de>,
-{
-    Ok(match Option::<Value>::deserialize(deserializer)? {
-        None | Some(Value::Null) => None,
-        Some(Value::Bool(value)) => Some(value),
-        Some(Value::Number(number)) => number.as_i64().map(|value| value != 0).or_else(|| {
-            number
-                .as_f64()
-                .filter(|value| value.is_finite())
-                .map(|value| value != 0.0)
-        }),
-        Some(Value::String(text)) => match text.trim().to_ascii_lowercase().as_str() {
-            "true" | "1" | "yes" => Some(true),
-            "false" | "0" | "no" => Some(false),
-            _ => None,
-        },
-        Some(_) => None,
-    })
-}
-
-fn i64_from_value(value: Value) -> Option<i64> {
-    match value {
-        Value::Number(number) => number
-            .as_i64()
-            .or_else(|| number.as_u64().and_then(|value| i64::try_from(value).ok()))
-            .or_else(|| number.as_f64().and_then(epoch_from_f64)),
-        Value::String(text) => text
-            .parse::<i64>()
-            .ok()
-            .or_else(|| text.parse::<f64>().ok().and_then(epoch_from_f64)),
-        _ => None,
-    }
-}
-
-fn epoch_from_f64(value: f64) -> Option<i64> {
-    value.is_finite().then(|| value.round() as i64)
-}
-
 /// Dataset import lifecycle status.
 ///
 /// Serialized values match the MarpleDB API and Python SDK enum names.
@@ -578,6 +492,44 @@ pub enum ImportStatus {
     #[default]
     #[serde(other)]
     Unknown,
+}
+
+impl ImportStatus {
+    /// API name for this status, such as `FINISHED` or `COOLING_FAILED`.
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::Uploading => "UPLOADING",
+            Self::Waiting => "WAITING",
+            Self::Importing => "IMPORTING",
+            Self::Postprocessing => "POSTPROCESSING",
+            Self::PostprocessingFailed => "POSTPROCESSING_FAILED",
+            Self::Finished => "FINISHED",
+            Self::Live => "LIVE",
+            Self::Failed => "FAILED",
+            Self::Cooling => "COOLING",
+            Self::CoolingFailed => "COOLING_FAILED",
+            Self::Unknown => "UNKNOWN",
+        }
+    }
+
+    /// `true` when import completed successfully (`Finished` or `Live`).
+    pub fn is_success(self) -> bool {
+        matches!(self, Self::Finished | Self::Live)
+    }
+
+    /// `true` when import reached a failed terminal status.
+    pub fn is_failure(self) -> bool {
+        matches!(
+            self,
+            Self::Failed | Self::PostprocessingFailed | Self::CoolingFailed
+        )
+    }
+}
+
+impl fmt::Display for ImportStatus {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.write_str(self.as_str())
+    }
 }
 
 /// Dataset metadata returned by the MarpleDB API.
@@ -752,6 +704,7 @@ pub enum UploadModeOverride {
 #[non_exhaustive]
 pub struct PushFileOptions {
     pub(crate) metadata: Metadata,
+    pub(crate) dataset_name: Option<String>,
     pub(crate) concurrency: usize,
     pub(crate) upload_mode: UploadModeOverride,
     pub(crate) progress: Arc<dyn ProgressReporter>,
@@ -762,6 +715,7 @@ impl fmt::Debug for PushFileOptions {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         f.debug_struct("PushFileOptions")
             .field("metadata", &self.metadata)
+            .field("dataset_name", &self.dataset_name)
             .field("concurrency", &self.concurrency)
             .field("upload_mode", &self.upload_mode)
             .field("overwrite", &self.overwrite)
@@ -780,6 +734,7 @@ impl Default for PushFileOptions {
     fn default() -> Self {
         Self {
             metadata: Default::default(),
+            dataset_name: None,
             concurrency: 4,
             upload_mode: UploadModeOverride::Auto,
             progress: Arc::new(NoopProgress),
@@ -793,6 +748,7 @@ impl Default for PushFileOptions {
 #[derive(Clone)]
 pub struct PushFileOptionsBuilder {
     metadata: Metadata,
+    dataset_name: Option<String>,
     concurrency: usize,
     upload_mode: UploadModeOverride,
     progress: Arc<dyn ProgressReporter>,
@@ -803,6 +759,7 @@ impl fmt::Debug for PushFileOptionsBuilder {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         f.debug_struct("PushFileOptionsBuilder")
             .field("metadata", &self.metadata)
+            .field("dataset_name", &self.dataset_name)
             .field("concurrency", &self.concurrency)
             .field("upload_mode", &self.upload_mode)
             .field("overwrite", &self.overwrite)
@@ -815,6 +772,7 @@ impl Default for PushFileOptionsBuilder {
         let options = PushFileOptions::default();
         Self {
             metadata: options.metadata,
+            dataset_name: options.dataset_name,
             concurrency: options.concurrency,
             upload_mode: options.upload_mode,
             progress: options.progress,
@@ -850,6 +808,14 @@ impl PushFileOptionsBuilder {
         self
     }
 
+    /// Sets the dataset name for the upload.
+    ///
+    /// Must be unique per datapool, or set `overwrite` to true.
+    pub fn dataset_name(mut self, dataset_name: impl Into<String>) -> Self {
+        self.dataset_name = Some(dataset_name.into());
+        self
+    }
+
     /// Sets max concurrent part uploads for multipart modes.
     ///
     /// Higher values can improve throughput for large direct-storage uploads,
@@ -881,6 +847,7 @@ impl PushFileOptionsBuilder {
     pub fn build(self) -> PushFileOptions {
         PushFileOptions {
             metadata: self.metadata,
+            dataset_name: self.dataset_name,
             concurrency: self.concurrency,
             upload_mode: self.upload_mode,
             progress: self.progress,
@@ -889,47 +856,132 @@ impl PushFileOptionsBuilder {
     }
 }
 
-#[derive(Debug, Serialize, Deserialize)]
-pub(crate) struct StreamsResponse {
-    pub(crate) streams: Vec<Stream>,
+fn deserialize_default_string<'de, D>(deserializer: D) -> std::result::Result<String, D::Error>
+where
+    D: serde::Deserializer<'de>,
+{
+    Ok(Option::<String>::deserialize(deserializer)?.unwrap_or_default())
 }
 
-#[derive(Deserialize)]
-pub(crate) struct CreatedStream {
-    #[serde(deserialize_with = "deserialize_i64")]
-    pub(crate) id: i64,
+/// `/user/info` sends `EXTRACT(EPOCH FROM last_active)`, a Postgres float or JSON null.
+fn deserialize_optional_epoch<'de, D>(deserializer: D) -> std::result::Result<Option<i64>, D::Error>
+where
+    D: serde::Deserializer<'de>,
+{
+    deserialize_opt_i64(deserializer)
 }
 
-#[derive(Debug, Deserialize)]
-#[serde(rename_all = "lowercase")]
-pub(crate) enum UploadMode {
-    Server,
-    Azure,
-    Single,
-    Multipart,
+pub(crate) fn deserialize_i64<'de, D>(deserializer: D) -> std::result::Result<i64, D::Error>
+where
+    D: serde::Deserializer<'de>,
+{
+    i64_from_value(Value::deserialize(deserializer)?)
+        .ok_or_else(|| serde::de::Error::custom("expected a number"))
 }
 
-#[derive(Debug, Deserialize)]
-pub(crate) struct IngestionInit {
-    pub(crate) dataset_id: i64,
-    pub(crate) ingestion_id: i64,
-    pub(crate) mode: UploadMode,
-    pub(crate) presigned_url: Option<String>,
-    pub(crate) part_size: Option<u64>,
-    #[serde(rename = "expires_in")]
-    pub(crate) _expires_in: u64,
+fn deserialize_opt_i64<'de, D>(deserializer: D) -> std::result::Result<Option<i64>, D::Error>
+where
+    D: serde::Deserializer<'de>,
+{
+    Ok(match Option::<Value>::deserialize(deserializer)? {
+        None | Some(Value::Null) => None,
+        Some(value) => i64_from_value(value),
+    })
 }
 
-#[derive(Debug, Deserialize)]
-pub(crate) struct PartUrl {
-    pub(crate) part_number: u32,
-    pub(crate) url: String,
+fn deserialize_opt_string<'de, D>(deserializer: D) -> std::result::Result<Option<String>, D::Error>
+where
+    D: serde::Deserializer<'de>,
+{
+    Ok(match Option::<Value>::deserialize(deserializer)? {
+        None | Some(Value::Null) => None,
+        Some(Value::String(text)) => Some(text).filter(|text| !text.is_empty()),
+        Some(Value::Number(number)) => Some(number.to_string()),
+        Some(Value::Bool(value)) => Some(value.to_string()),
+        Some(_) => None,
+    })
 }
 
-#[derive(Debug, Deserialize)]
-pub(crate) struct PartUrlsResponse {
-    pub(crate) parts: Vec<PartUrl>,
-    #[serde(rename = "expires_in")]
-    pub(crate) _expires_in: u64,
-    pub(crate) next_part: Option<u32>,
+fn deserialize_opt_bool<'de, D>(deserializer: D) -> std::result::Result<Option<bool>, D::Error>
+where
+    D: serde::Deserializer<'de>,
+{
+    Ok(match Option::<Value>::deserialize(deserializer)? {
+        None | Some(Value::Null) => None,
+        Some(Value::Bool(value)) => Some(value),
+        Some(Value::Number(number)) => number.as_i64().map(|value| value != 0).or_else(|| {
+            number
+                .as_f64()
+                .filter(|value| value.is_finite())
+                .map(|value| value != 0.0)
+        }),
+        Some(Value::String(text)) => match text.trim().to_ascii_lowercase().as_str() {
+            "true" | "1" | "yes" => Some(true),
+            "false" | "0" | "no" => Some(false),
+            _ => None,
+        },
+        Some(_) => None,
+    })
+}
+
+fn i64_from_value(value: Value) -> Option<i64> {
+    match value {
+        Value::Number(number) => number
+            .as_i64()
+            .or_else(|| number.as_u64().and_then(|value| i64::try_from(value).ok()))
+            .or_else(|| number.as_f64().and_then(epoch_from_f64)),
+        Value::String(text) => text
+            .parse::<i64>()
+            .ok()
+            .or_else(|| text.parse::<f64>().ok().and_then(epoch_from_f64)),
+        _ => None,
+    }
+}
+
+fn epoch_from_f64(value: f64) -> Option<i64> {
+    value.is_finite().then(|| value.round() as i64)
+}
+
+#[cfg(test)]
+mod import_status_tests {
+    use super::ImportStatus;
+
+    #[test]
+    fn every_variant_has_a_name_and_one_classification() {
+        let statuses = [
+            ImportStatus::Uploading,
+            ImportStatus::Waiting,
+            ImportStatus::Importing,
+            ImportStatus::Postprocessing,
+            ImportStatus::PostprocessingFailed,
+            ImportStatus::Finished,
+            ImportStatus::Live,
+            ImportStatus::Failed,
+            ImportStatus::Cooling,
+            ImportStatus::CoolingFailed,
+            ImportStatus::Unknown,
+        ];
+
+        for status in statuses {
+            let (name, success, failure) = match status {
+                ImportStatus::Uploading => ("UPLOADING", false, false),
+                ImportStatus::Waiting => ("WAITING", false, false),
+                ImportStatus::Importing => ("IMPORTING", false, false),
+                ImportStatus::Postprocessing => ("POSTPROCESSING", false, false),
+                ImportStatus::PostprocessingFailed => ("POSTPROCESSING_FAILED", false, true),
+                ImportStatus::Finished => ("FINISHED", true, false),
+                ImportStatus::Live => ("LIVE", true, false),
+                ImportStatus::Failed => ("FAILED", false, true),
+                ImportStatus::Cooling => ("COOLING", false, false),
+                ImportStatus::CoolingFailed => ("COOLING_FAILED", false, true),
+                ImportStatus::Unknown => ("UNKNOWN", false, false),
+            };
+
+            assert_eq!(status.as_str(), name);
+            assert_eq!(status.to_string(), name);
+            assert_eq!(status.is_success(), success);
+            assert_eq!(status.is_failure(), failure);
+            assert!(!(success && failure));
+        }
+    }
 }

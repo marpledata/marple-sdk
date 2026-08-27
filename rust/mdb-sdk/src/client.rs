@@ -1,7 +1,7 @@
 use crate::errors::{Error, Result};
 use crate::models::{
-    CreatedStream, CurrentWorkspace, Dataset, HealthResponse, ImportStatus, Settings, Signal,
-    Stream, StreamsResponse, UsageSeries, UsageType, UserInfo, WorkspaceLicense,
+    CurrentWorkspace, Dataset, HealthResponse, ImportStatus, Settings, Signal, Stream, UsageSeries,
+    UsageType, UserInfo, WorkspaceLicense,
 };
 use reqwest::{
     Client, Method, Response, StatusCode, Url,
@@ -56,111 +56,6 @@ impl MarpleDB {
     /// client intentionally does not include MarpleDB authorization headers.
     pub fn storage_client(&self) -> &Client {
         &self.storage_client
-    }
-
-    fn url(&self, endpoint: &str) -> String {
-        self.base_url.clone() + endpoint.trim_start_matches('/')
-    }
-
-    fn auth(&self, request: reqwest::RequestBuilder) -> reqwest::RequestBuilder {
-        request
-            .header(AUTHORIZATION, self.auth_header.clone())
-            .header(REQUEST_SOURCE_HEADER, self.request_source.clone())
-    }
-
-    async fn send_json<R>(
-        &self,
-        endpoint: &str,
-        method: Method,
-        request: reqwest::RequestBuilder,
-    ) -> Result<R>
-    where
-        R: DeserializeOwned,
-    {
-        let response = request.send().await.map_err(|source| Error::Transport {
-            method: method.clone(),
-            endpoint: endpoint.to_string(),
-            source,
-        })?;
-        self.handle_response(endpoint, method, response).await
-    }
-
-    async fn handle_response<R>(
-        &self,
-        endpoint: &str,
-        method: Method,
-        response: Response,
-    ) -> Result<R>
-    where
-        R: DeserializeOwned,
-    {
-        let status = response.status();
-        let body = response.text().await.map_err(|source| Error::Transport {
-            method: method.clone(),
-            endpoint: endpoint.to_string(),
-            source,
-        })?;
-        if !status.is_success() {
-            return Err(Error::Api {
-                method,
-                endpoint: endpoint.to_string(),
-                status,
-                body,
-            });
-        }
-        Ok(serde_json::from_str(&body)?)
-    }
-
-    /// Sends a GET request and deserializes the JSON response.
-    ///
-    /// Use `&()` for endpoints without query parameters. The response type is
-    /// inferred from assignment or turbofish annotations.
-    #[tracing::instrument(skip_all, fields(endpoint = %endpoint))]
-    pub async fn get<Q, R>(&self, endpoint: &str, query: &Q) -> Result<R>
-    where
-        Q: Serialize + ?Sized,
-        R: DeserializeOwned,
-    {
-        let request = self.auth(self.client.get(self.url(endpoint)).query(query));
-        self.send_json(endpoint, Method::GET, request).await
-    }
-
-    /// Sends a POST request with a JSON body and deserializes the JSON response.
-    ///
-    /// The body may be any serializable value. Use `serde_json::Value` as the
-    /// response type when calling untyped endpoints.
-    #[tracing::instrument(skip_all, fields(endpoint = %endpoint))]
-    pub async fn post<B, R>(&self, endpoint: &str, body: &B) -> Result<R>
-    where
-        B: Serialize + ?Sized,
-        R: DeserializeOwned,
-    {
-        let request = self.auth(self.client.post(self.url(endpoint)).json(body));
-        self.send_json(endpoint, Method::POST, request).await
-    }
-
-    /// Sends a DELETE request with a JSON body and deserializes the JSON response.
-    ///
-    /// The body may be any serializable value. Pass `&serde_json::json!({})`
-    /// when the endpoint expects an empty JSON object.
-    #[tracing::instrument(skip_all, fields(endpoint = %endpoint))]
-    pub async fn delete<B, R>(&self, endpoint: &str, body: &B) -> Result<R>
-    where
-        B: Serialize + ?Sized,
-        R: DeserializeOwned,
-    {
-        let request = self.auth(self.client.delete(self.url(endpoint)).json(body));
-        self.send_json(endpoint, Method::DELETE, request).await
-    }
-
-    #[tracing::instrument(skip_all, fields(endpoint = %endpoint))]
-    pub(crate) async fn post_multipart(
-        &self,
-        endpoint: &str,
-        form: reqwest::multipart::Form,
-    ) -> Result<Value> {
-        let request = self.auth(self.client.post(self.url(endpoint)).multipart(form));
-        self.send_json(endpoint, Method::POST, request).await
     }
 
     /// Checks MarpleDB API health.
@@ -240,13 +135,6 @@ impl MarpleDB {
             hot_bytes,
             archive_bytes,
         })
-    }
-
-    async fn latest_usage(&self, usage_type: UsageType) -> Option<u64> {
-        self.get_usage_series(usage_type, None, None)
-            .await
-            .ok()
-            .and_then(|series| series.latest())
     }
 
     /// Lists all streams visible to the token.
@@ -412,6 +300,118 @@ impl MarpleDB {
             last_status,
         })
     }
+
+    /// Sends a GET request and deserializes the JSON response.
+    ///
+    /// Use `&()` for endpoints without query parameters. The response type is
+    /// inferred from assignment or turbofish annotations.
+    #[tracing::instrument(skip_all, fields(endpoint = %endpoint))]
+    pub async fn get<Q, R>(&self, endpoint: &str, query: &Q) -> Result<R>
+    where
+        Q: Serialize + ?Sized,
+        R: DeserializeOwned,
+    {
+        let request = self.auth(self.client.get(self.url(endpoint)).query(query));
+        self.send_json(endpoint, Method::GET, request).await
+    }
+
+    /// Sends a POST request with a JSON body and deserializes the JSON response.
+    ///
+    /// The body may be any serializable value. Use `serde_json::Value` as the
+    /// response type when calling untyped endpoints.
+    #[tracing::instrument(skip_all, fields(endpoint = %endpoint))]
+    pub async fn post<B, R>(&self, endpoint: &str, body: &B) -> Result<R>
+    where
+        B: Serialize + ?Sized,
+        R: DeserializeOwned,
+    {
+        let request = self.auth(self.client.post(self.url(endpoint)).json(body));
+        self.send_json(endpoint, Method::POST, request).await
+    }
+
+    /// Sends a DELETE request with a JSON body and deserializes the JSON response.
+    ///
+    /// The body may be any serializable value. Pass `&serde_json::json!({})`
+    /// when the endpoint expects an empty JSON object.
+    #[tracing::instrument(skip_all, fields(endpoint = %endpoint))]
+    pub async fn delete<B, R>(&self, endpoint: &str, body: &B) -> Result<R>
+    where
+        B: Serialize + ?Sized,
+        R: DeserializeOwned,
+    {
+        let request = self.auth(self.client.delete(self.url(endpoint)).json(body));
+        self.send_json(endpoint, Method::DELETE, request).await
+    }
+
+    fn url(&self, endpoint: &str) -> String {
+        self.base_url.clone() + endpoint.trim_start_matches('/')
+    }
+
+    fn auth(&self, request: reqwest::RequestBuilder) -> reqwest::RequestBuilder {
+        request
+            .header(AUTHORIZATION, self.auth_header.clone())
+            .header(REQUEST_SOURCE_HEADER, self.request_source.clone())
+    }
+
+    async fn send_json<R>(
+        &self,
+        endpoint: &str,
+        method: Method,
+        request: reqwest::RequestBuilder,
+    ) -> Result<R>
+    where
+        R: DeserializeOwned,
+    {
+        let response = request.send().await.map_err(|source| Error::Transport {
+            method: method.clone(),
+            endpoint: endpoint.to_string(),
+            source,
+        })?;
+        self.handle_response(endpoint, method, response).await
+    }
+
+    async fn handle_response<R>(
+        &self,
+        endpoint: &str,
+        method: Method,
+        response: Response,
+    ) -> Result<R>
+    where
+        R: DeserializeOwned,
+    {
+        let status = response.status();
+        let body = response.text().await.map_err(|source| Error::Transport {
+            method: method.clone(),
+            endpoint: endpoint.to_string(),
+            source,
+        })?;
+        if !status.is_success() {
+            return Err(Error::Api {
+                method,
+                endpoint: endpoint.to_string(),
+                status,
+                body,
+            });
+        }
+        Ok(serde_json::from_str(&body)?)
+    }
+
+    #[tracing::instrument(skip_all, fields(endpoint = %endpoint))]
+    pub(crate) async fn post_multipart(
+        &self,
+        endpoint: &str,
+        form: reqwest::multipart::Form,
+    ) -> Result<Value> {
+        let request = self.auth(self.client.post(self.url(endpoint)).multipart(form));
+        self.send_json(endpoint, Method::POST, request).await
+    }
+
+    async fn latest_usage(&self, usage_type: UsageType) -> Option<u64> {
+        self.get_usage_series(usage_type, None, None)
+            .await
+            .ok()
+            .and_then(|series| series.latest())
+    }
 }
 
 /// Builder for `MarpleDB`.
@@ -542,6 +542,17 @@ struct UsageQuery {
     start_time: Option<i64>,
     #[serde(skip_serializing_if = "Option::is_none")]
     end_time: Option<i64>,
+}
+
+#[derive(Debug, serde::Deserialize)]
+struct StreamsResponse {
+    streams: Vec<Stream>,
+}
+
+#[derive(serde::Deserialize)]
+struct CreatedStream {
+    #[serde(deserialize_with = "crate::models::deserialize_i64")]
+    id: i64,
 }
 
 fn build_client(timeout: Option<Duration>, user_agent: Option<&str>) -> Result<Client> {

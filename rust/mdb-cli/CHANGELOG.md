@@ -12,6 +12,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Browse env-file loads that omit `MDB_URL` now default to SaaS instead of keeping a leftover staging URL from the process environment.
 - Dataset, stream, and signal ids from the SDK are `i64`.
 
+### Changed
+
+- Dataset status output uses SDK `ImportStatus` names, including `UNKNOWN`.
+
 ### Added
 
 - `mdb` and `mdb browse` open a stream / dataset / signal browser (bare `mdb` only when stdin and stdout are a terminal; otherwise help is printed). Press `v` for an env-file picker (folders, typed path, recent files labeled by workspace). Session is saved in `$XDG_CONFIG_HOME/mdb/browse.toml`. The workspace card shows license and usage.
