@@ -131,7 +131,7 @@ class Dataset(BaseModel):
         """Get a specific signal in this dataset by its name or ID.
 
         Args:
-            name: Signal name (resolved via the datapool signal map).
+            name: Signal name.
             id: Signal ID.
             refresh: If True, refetch from the API even when cached.
         """
@@ -141,7 +141,7 @@ class Dataset(BaseModel):
             raise ValueError("Only one of name or id can be provided.")
 
         if name is not None:
-            id = self._client.get_signal_map().get(name)
+            id = self._client.get_signal_id(name)
 
         if id is None:
             raise ValueError(f"Signal with name {name} not found in dataset with id {self.id}.")
@@ -192,19 +192,39 @@ class Dataset(BaseModel):
         """
         if signal_names is not None and signal_ids is not None:
             raise ValueError("Provide only one of signal_names or signal_ids")
-
-        if signal_ids is not None:
-            return self._get_signals_by_ids(list(signal_ids), refresh=refresh)
-
-        if signal_names is None:
+        if signal_ids is None and signal_names is None:
             return self._get_all_signals()
+        if signal_ids is None:
+            assert signal_names is not None
+            signal_ids = self._find_signal_ids(signal_names).values()
+        return self._get_signals_by_ids(list(signal_ids), refresh=refresh)
 
-        matched = self._client.find_matching_signals(signal_names)
-        if not matched:
-            return []
-        return self._get_signals_by_ids(list(matched.values()), refresh=refresh)
+    def _find_signal_ids(self, signals: Iterable[str | re.Pattern]) -> dict[str, int]:
+        found: dict[str, int] = {}
+        exact: list[str] = []
+        patterns: list[re.Pattern] = []
+        for signal in signals:
+            (exact if isinstance(signal, str) else patterns).append(signal)  # type: ignore [arg-type]
 
-    def _get_signals_by_ids(self, signal_ids: Sequence[int], *, refresh: bool = False) -> list["Signal"]:
+        if patterns:
+            # Only look up the signal map in the regex case.
+            for name, sig_id in self._client.get_signal_map().items():
+                if any(pattern.search(name) for pattern in patterns):
+                    found[name] = sig_id
+
+        if self.n_signals is not None and self.n_signals < 100:
+            self._get_all_signals()
+
+        cached = {s.name: s.id for s in self._signals.values()}
+        for name in exact:
+            if (signal_id := cached.get(name)) is not None:
+                found[name] = signal_id
+            elif (signal_id := self._client.get_signal_id(name)) is not None:
+                found[name] = signal_id
+
+        return found
+
+    def _get_signals_by_ids(self, signal_ids: list[int], *, refresh: bool = False) -> list["Signal"]:
         if not signal_ids:
             return []
 
@@ -254,7 +274,7 @@ class Dataset(BaseModel):
             A pandas DataFrame containing one column per signal, aligned on time.
         """
         return self._get_signals_dataframe(
-            self._client.find_matching_signals(signals).items(),
+            self._find_signal_ids(signals).items(),
             resample_rule,
             resample_aggregate,
             dtype,
@@ -504,18 +524,16 @@ class Dataset(BaseModel):
         Warning:
             This is a destructive action that cannot be undone.
         """
-        ids = list(signal_ids)
-        if not ids:
+        to_delete = list(set(signal_ids))
+        if not to_delete:
             return
         r = self._client.post(
             f"/stream/{self.datastream_id}/dataset/{self.id}/signals/delete",
-            json={"signal_ids": ids},
+            json={"signal_ids": to_delete},
         )
         validate_response(r, "Delete signals failed")
-        for sid in ids:
-            self._signals.pop(sid, None)
-        if self.n_signals is not None:
-            self.n_signals = max(0, self.n_signals - len(set(ids)))
+        for signal_id in to_delete:
+            self._signals.pop(signal_id, None)
 
     def delete(self) -> None:
         """
@@ -720,7 +738,7 @@ class DatasetList(UserList[Dataset]):
         if len(self.data) == 0:
             return
         # Avoid having to search signals for every individual dataset
-        signal_pairs = list(self.data[0]._client.find_matching_signals(signals).items())
+        signal_pairs = list(self.data[0]._find_signal_ids(signals).items())
         for dataset in self.data:
             yield dataset, dataset._get_signals_dataframe(
                 signals=signal_pairs,

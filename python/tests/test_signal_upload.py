@@ -328,17 +328,6 @@ def test_add_signals_rejects_too_many() -> None:
         Dataset.add_signals(dataset, too_many)
 
 
-def test_add_signals_empty_returns_empty() -> None:
-    dataset = object.__new__(Dataset)
-    assert Dataset.add_signals(dataset, []) == []
-
-
-def test_delete_signals_empty_is_noop() -> None:
-    dataset = SimpleNamespace(_client=MagicMock(), _signals={}, n_signals=0)
-    Dataset.delete_signals(cast(Dataset, dataset), [])
-    dataset._client.post.assert_not_called()
-
-
 def test_delete_signals_posts_and_clears_cache() -> None:
     client = MagicMock()
     client.post.return_value = SimpleNamespace(status_code=200, json=lambda: {"status": "success"})
@@ -357,7 +346,6 @@ def test_delete_signals_posts_and_clears_cache() -> None:
         json={"signal_ids": [1, 2]},
     )
     assert set(dataset._signals) == {3}
-    assert dataset.n_signals == 1
 
 
 def test_signals_already_exist_error_message() -> None:

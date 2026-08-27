@@ -145,5 +145,8 @@ class Signal(BaseModel):
         Warning:
             This is a destructive action that cannot be undone.
         """
-        if self._dataset is not None and hasattr(self._dataset, "delete_signal"):
-            self._dataset.delete_signal(self.id)  # type: ignore[attr-defined]
+        r = self._client.post(
+            f"/stream/{self.datastream_id}/dataset/{self.dataset_id}/signals/delete",
+            json={"signal_ids": [self.id]},
+        )
+        validate_response(r, "Delete signal failed")
