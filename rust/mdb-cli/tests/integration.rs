@@ -44,12 +44,15 @@ fn parse_json_stdout(output: &assert_cmd::assert::Assert) -> Value {
         .unwrap_or_else(|e| panic!("failed to parse JSON stdout: {e}\nstdout:\n{s}"))
 }
 
-fn unique_stream_name() -> String {
-    let ts = SystemTime::now()
+fn unique_nanos() -> u128 {
+    SystemTime::now()
         .duration_since(UNIX_EPOCH)
         .expect("clock")
-        .as_secs();
-    format!("Salty Compulsory Rusttest {ts}")
+        .as_nanos()
+}
+
+fn unique_stream_name() -> String {
+    format!("Salty Compulsory Rusttest {}", unique_nanos())
 }
 
 fn find_last_i32(s: &str) -> Option<i32> {
@@ -68,9 +71,18 @@ fn find_last_i32(s: &str) -> Option<i32> {
     s[j..i].parse::<i32>().ok()
 }
 
-fn tiny_csv_path() -> PathBuf {
+fn example_csv_path() -> PathBuf {
     let root = Path::new(env!("CARGO_MANIFEST_DIR"));
-    root.join("../../test_data/tiny_race.csv")
+    root.join("../../test_data/examples_race.csv")
+}
+
+fn staged_csv(label: &str) -> (tempfile::TempDir, PathBuf) {
+    let tmp = tempfile::tempdir().expect("tempdir");
+    let dest = tmp
+        .path()
+        .join(format!("rust-cli-{label}-{}.csv", unique_nanos()));
+    fs::copy(example_csv_path(), &dest).expect("copy example CSV");
+    (tmp, dest)
 }
 
 async fn download_to_file(url: &str, dest: &Path) {
@@ -257,7 +269,7 @@ async fn test_db_flow_via_cli() {
     };
 
     let stream_name = unique_stream_name();
-    let csv_path = tiny_csv_path();
+    let (_csv_tmp, csv_path) = staged_csv("ingest");
     assert!(csv_path.exists(), "example CSV missing at {:?}", csv_path);
     let csv_size = fs::metadata(&csv_path).expect("csv metadata").len();
     let metadata_deployment = "integration-test";

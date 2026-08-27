@@ -45,19 +45,31 @@ async fn integration_test_guard() -> tokio::sync::MutexGuard<'static, ()> {
         .await
 }
 
-fn unique_stream_name(suffix: &str) -> String {
-    let ts = SystemTime::now()
+fn unique_nanos() -> u128 {
+    SystemTime::now()
         .duration_since(UNIX_EPOCH)
         .expect("clock")
-        .as_secs();
-    format!("{TEST_STREAM_PREFIX} {suffix} {ts}")
+        .as_nanos()
 }
 
-fn tiny_csv_path() -> PathBuf {
+fn unique_stream_name(suffix: &str) -> String {
+    format!("{TEST_STREAM_PREFIX} {suffix} {}", unique_nanos())
+}
+
+fn example_csv_path() -> PathBuf {
     Path::new(env!("CARGO_MANIFEST_DIR"))
-        .join("../../test_data/tiny_race.csv")
+        .join("../../test_data/examples_race.csv")
         .canonicalize()
-        .expect("tiny CSV path")
+        .expect("example CSV path")
+}
+
+fn staged_csv(label: &str) -> anyhow::Result<(tempfile::TempDir, PathBuf)> {
+    let tmp = tempfile::tempdir()?;
+    let path = tmp
+        .path()
+        .join(format!("rust-sdk-{label}-{}.csv", unique_nanos()));
+    fs::copy(example_csv_path(), &path)?;
+    Ok((tmp, path))
 }
 
 async fn cleanup_streams(db: &MarpleDB) -> anyhow::Result<()> {
@@ -116,25 +128,19 @@ async fn upload_and_assert_dataset(
     options: PushFileOptions,
     expected_metadata: &[(&str, &str)],
     exercise_generic_endpoints: bool,
-    wait_for_import: bool,
 ) -> anyhow::Result<Dataset> {
     anyhow::ensure!(file_path.exists(), "test file missing at {:?}", file_path);
     let expected_size = fs::metadata(file_path)?.len();
     anyhow::ensure!(expected_size > 0, "test file is empty");
 
     let dataset = db.push_file(stream_id, file_path, options).await?;
-    let dataset = if wait_for_import {
-        let dataset = db
-            .wait_for_import(stream_id, dataset.id, Duration::from_secs(180))
-            .await?;
-        anyhow::ensure!(
-            dataset.import_status == ImportStatus::Finished,
-            "ingest failed"
-        );
-        dataset
-    } else {
-        dataset
-    };
+    let dataset = db
+        .wait_for_import(stream_id, dataset.id, Duration::from_secs(180))
+        .await?;
+    anyhow::ensure!(
+        dataset.import_status == ImportStatus::Finished,
+        "ingest failed"
+    );
 
     for (key, value) in expected_metadata {
         anyhow::ensure!(
@@ -143,15 +149,13 @@ async fn upload_and_assert_dataset(
         );
     }
 
-    if wait_for_import || dataset.backup_size.is_some() {
-        let backup_size = dataset
-            .backup_size
-            .ok_or_else(|| anyhow::anyhow!("dataset has no backup_size"))?;
-        anyhow::ensure!(
-            backup_size == expected_size,
-            "backup_size mismatch: source file is {expected_size} bytes, backup_size is {backup_size} bytes"
-        );
-    }
+    let backup_size = dataset
+        .backup_size
+        .ok_or_else(|| anyhow::anyhow!("finished dataset has no backup_size"))?;
+    anyhow::ensure!(
+        backup_size == expected_size,
+        "backup_size mismatch: source file is {expected_size} bytes, backup_size is {backup_size} bytes"
+    );
 
     anyhow::ensure!(
         db.get_datasets(stream_id)
@@ -160,10 +164,6 @@ async fn upload_and_assert_dataset(
             .any(|candidate| candidate.id == dataset.id),
         "dataset id not found in dataset list"
     );
-
-    if !wait_for_import {
-        return Ok(dataset);
-    }
 
     if exercise_generic_endpoints {
         let query = "select path, stream_id, metadata from mdb_default_dataset limit 1;";
@@ -184,9 +184,6 @@ async fn upload_and_assert_dataset(
         );
     }
 
-    let backup_size = dataset
-        .backup_size
-        .ok_or_else(|| anyhow::anyhow!("finished dataset has no backup_size"))?;
     let download_url = db.get_download_link(&dataset).await?;
     let response = db.storage_client().get(download_url).send().await?;
     anyhow::ensure!(
@@ -208,11 +205,17 @@ async fn upload_and_assert_dataset(
     Ok(dataset)
 }
 
-fn generate_multipart_blob(output_dir: &Path) -> anyhow::Result<PathBuf> {
-    let output_path = output_dir.join("multipart-blob.bin");
+fn generate_multipart_csv(output_dir: &Path) -> anyhow::Result<PathBuf> {
+    let source = fs::read(example_csv_path())?;
+    anyhow::ensure!(!source.is_empty(), "source CSV is empty");
+
+    let output_path = output_dir.join(format!("rust-sdk-multipart-{}.csv", unique_nanos()));
+    let repeat_count = (MULTIPART_THRESHOLD / source.len() as u64) + 1;
     let mut output = fs::File::create(&output_path)?;
-    output.write_all(b"multipart-upload-test")?;
-    output.set_len(MULTIPART_THRESHOLD + 1)?;
+
+    for _ in 0..repeat_count {
+        output.write_all(&source)?;
+    }
     output.flush()?;
 
     anyhow::ensure!(
@@ -301,7 +304,7 @@ async fn test_sdk_multipart_upload_flow() -> anyhow::Result<()> {
 }
 
 async fn run_auto_upload_flow(db: &MarpleDB, stream: Stream) -> anyhow::Result<()> {
-    let csv_path = tiny_csv_path();
+    let (_tmp, csv_path) = staged_csv("auto")?;
 
     let fetched = db.get_stream(&stream.name).await?;
     anyhow::ensure!(fetched.id == stream.id, "fetched stream id mismatch");
@@ -334,7 +337,6 @@ async fn run_auto_upload_flow(db: &MarpleDB, stream: Stream) -> anyhow::Result<(
             .build(),
         &[("Deployment", metadata_deployment), ("Foo", metadata_foo)],
         true,
-        true,
     )
     .await?;
 
@@ -342,7 +344,7 @@ async fn run_auto_upload_flow(db: &MarpleDB, stream: Stream) -> anyhow::Result<(
 }
 
 async fn run_server_upload_flow(db: &MarpleDB, stream: Stream) -> anyhow::Result<()> {
-    let csv_path = tiny_csv_path();
+    let (_tmp, csv_path) = staged_csv("server")?;
     let upload_mode = "server";
 
     upload_and_assert_dataset(
@@ -355,7 +357,6 @@ async fn run_server_upload_flow(db: &MarpleDB, stream: Stream) -> anyhow::Result
             .build(),
         &[("upload_mode", upload_mode)],
         false,
-        true,
     )
     .await?;
 
@@ -363,9 +364,7 @@ async fn run_server_upload_flow(db: &MarpleDB, stream: Stream) -> anyhow::Result
 }
 
 async fn run_overwrite_flow(db: &MarpleDB, stream: Stream) -> anyhow::Result<()> {
-    let tmp = tempfile::tempdir()?;
-    let csv_path = tmp.path().join("overwrite_test.csv");
-    fs::copy(tiny_csv_path(), &csv_path)?;
+    let (_tmp, csv_path) = staged_csv("overwrite")?;
 
     let dataset = upload_and_assert_dataset(
         db,
@@ -376,7 +375,6 @@ async fn run_overwrite_flow(db: &MarpleDB, stream: Stream) -> anyhow::Result<()>
             .build(),
         &[("version", "1")],
         false,
-        true,
     )
     .await?;
 
@@ -390,7 +388,6 @@ async fn run_overwrite_flow(db: &MarpleDB, stream: Stream) -> anyhow::Result<()>
             .build(),
         &[("version", "2")],
         false,
-        true,
     )
     .await?;
 
@@ -410,18 +407,17 @@ async fn run_overwrite_flow(db: &MarpleDB, stream: Stream) -> anyhow::Result<()>
 
 async fn run_multipart_upload_flow(db: &MarpleDB, stream: Stream) -> anyhow::Result<()> {
     let tmp = tempfile::tempdir()?;
-    let blob_path = generate_multipart_blob(tmp.path())?;
+    let csv_path = generate_multipart_csv(tmp.path())?;
     let upload_mode = "multipart";
 
     upload_and_assert_dataset(
         db,
         stream.id,
-        &blob_path,
+        &csv_path,
         PushFileOptions::builder()
             .metadata([("upload_mode".to_string(), json!(upload_mode))])
             .build(),
         &[("upload_mode", upload_mode)],
-        false,
         false,
     )
     .await?;

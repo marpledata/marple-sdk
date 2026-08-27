@@ -31,7 +31,7 @@ from marple.db.signal_upload import (
     _plan_row_counts,
     run_signal_uploads,
 )
-from support import isolated_stream
+from support import isolated_stream, unique_name
 
 SIGNAL_UPLOAD_TEST_PREFIX = "Salty Compulsory PytestSignalUpload"
 
@@ -373,7 +373,7 @@ def test_signals_already_exist_error_message() -> None:
 @pytest.mark.integration
 def test_add_signal_from_existing(signal_upload_stream: DataStream) -> None:
     dataset = signal_upload_stream.add_dataset(
-        "pytest-from-existing", metadata={"test": "add_signal_from_existing"}
+        unique_name("py-sig"), metadata={"test": "add_signal_from_existing"}
     )
     t0 = 1_700_000_000_000_000_000
     speed_df = pd.DataFrame({COL_TIME: [t0, t0 + 1_000_000_000], COL_VAL: [1.0, 2.0]})
@@ -406,7 +406,7 @@ def test_add_signal_from_existing(signal_upload_stream: DataStream) -> None:
 
 @pytest.mark.integration
 def test_add_signals_overwrite_and_conflict(signal_upload_stream: DataStream) -> None:
-    dataset = signal_upload_stream.add_dataset("pytest-overwrite", metadata={"test": "add_signals_overwrite"})
+    dataset = signal_upload_stream.add_dataset(unique_name("py-sig"), metadata={"test": "add_signals_overwrite"})
     t0 = 1_700_000_000_000_000_000
     times = [t0, t0 + 1_000_000_000]
     df = pd.DataFrame({COL_TIME: times, COL_VAL: [1.0, 2.0]})
@@ -429,7 +429,9 @@ def test_add_signals_overwrite_and_conflict(signal_upload_stream: DataStream) ->
 @pytest.mark.integration
 def test_add_dataset_then_add_signals(signal_upload_stream: DataStream) -> None:
     """Custom file-stream ingest: empty dataset via add_dataset, then add_signals."""
-    dataset = signal_upload_stream.add_dataset("pytest-custom", metadata={"test": "add_dataset_add_signals"})
+    dataset = signal_upload_stream.add_dataset(
+        unique_name("py-sig"), metadata={"test": "add_dataset_add_signals"}
+    )
     t0 = 1_700_000_000_000_000_000
     df_a = pd.DataFrame({COL_TIME: [t0, t0 + 1_000_000_000], COL_VAL: [1.0, 2.0]})
     df_b = pd.DataFrame({COL_TIME: [t0, t0 + 1_000_000_000], COL_VAL: [3.0, 4.0]})
@@ -459,7 +461,7 @@ def test_add_dataset_then_add_signals(signal_upload_stream: DataStream) -> None:
 
 @pytest.mark.integration
 def test_delete_signals_integration(signal_upload_stream: DataStream, require_signal_delete_api: None) -> None:
-    dataset = signal_upload_stream.add_dataset("pytest-delete", metadata={"test": "delete_signals"})
+    dataset = signal_upload_stream.add_dataset(unique_name("py-sig"), metadata={"test": "delete_signals"})
     t0 = 1_700_000_000_000_000_000
     df_a = pd.DataFrame({COL_TIME: [t0, t0 + 1_000_000_000], COL_VAL: [1.0, 2.0]})
     df_b = pd.DataFrame({COL_TIME: [t0, t0 + 1_000_000_000], COL_VAL: [3.0, 4.0]})
