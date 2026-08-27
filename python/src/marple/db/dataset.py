@@ -504,18 +504,16 @@ class Dataset(BaseModel):
         Warning:
             This is a destructive action that cannot be undone.
         """
-        ids = list(signal_ids)
-        if not ids:
+        to_delete = list(set(signal_ids))
+        if not to_delete:
             return
         r = self._client.post(
             f"/stream/{self.datastream_id}/dataset/{self.id}/signals/delete",
-            json={"signal_ids": ids},
+            json={"signal_ids": to_delete},
         )
         validate_response(r, "Delete signals failed")
-        for sid in ids:
-            self._signals.pop(sid, None)
-        if self.n_signals is not None:
-            self.n_signals = max(0, self.n_signals - len(set(ids)))
+        for signal_id in to_delete:
+            self._signals.pop(signal_id, None)
 
     def delete(self) -> None:
         """
