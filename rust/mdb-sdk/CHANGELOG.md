@@ -24,6 +24,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - Stream, dataset, signal, user, license, and ingestion ids are `i64` so they match JSON integers and cannot overflow an `i32`.
 - `wait_for_import` treats `CoolingFailed` as a terminal import failure, polls with `tokio::time::timeout`, and reports API status names on timeout.
+- `SourceError`'s `Debug` impl shows the underlying cause instead of a quoted display string.
+- Oversized in-memory upload chunks are `Error::Protocol`. `Error::IntegerConversion` was removed.
 - `PushFileOptions` is configured with chained setters on the options value itself (`PushFileOptions::default().metadata(...).overwrite(true)`).
 - SDK-built HTTP clients use the Python SDK timeout and retry defaults (5s connect / 300s API, 1800s storage; retries on the same methods and status codes).
 - Documented MSRV is Rust 1.85 (edition 2024). crates.io now links to docs.rs for API docs.

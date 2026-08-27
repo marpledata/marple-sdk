@@ -431,6 +431,7 @@ fn settings_types_known_keys_and_keeps_the_rest() {
         "INSIGHT_DISTANCE_MODE_ENABLED": "true",
         "DB_PORT": 5432.0,
         "SANDBOX_JOBS_ENABLED": 1,
+        "DB_NAME": "mdb_acme",
         "CUSTOM_FLAG": "on"
     }))
     .expect("settings JSON");
@@ -439,8 +440,6 @@ fn settings_types_known_keys_and_keeps_the_rest() {
         settings.insight_url.as_deref(),
         Some("https://insight.example")
     );
-    assert_eq!(settings.insight_distance_mode_enabled, Some(true));
-    assert_eq!(settings.db_port, Some(5432));
-    assert_eq!(settings.sandbox_jobs_enabled, Some(true));
+    assert_eq!(settings.db_name, Some(String::from("mdb_acme")));
     assert_eq!(settings.extra.get("CUSTOM_FLAG"), Some(&json!("on")));
 }

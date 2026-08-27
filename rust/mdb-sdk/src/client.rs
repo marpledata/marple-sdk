@@ -1,17 +1,16 @@
 use crate::errors::{Error, Result};
 use crate::models::{
-    CurrentWorkspace, Dataset, HealthResponse, ImportStatus, Settings, Signal, Stream, UsageSeries,
-    UsageType, UserInfo, WorkspaceLicense,
+    CurrentWorkspace, Dataset, HealthResponse, Settings, Signal, Stream, UsageSeries, UsageType,
+    UserInfo, WorkspaceLicense,
 };
 use crate::progress::{NoopProgress, ProgressReporter};
 use crate::retry::{self, API_RETRY, STORAGE_RETRY};
 use futures_util::StreamExt;
 use reqwest::{
-    Client, Method, Response,
+    Client, Method,
     header::{AUTHORIZATION, HeaderMap, HeaderName, HeaderValue, USER_AGENT},
 };
-use serde::Serialize;
-use serde::de::DeserializeOwned;
+use serde::{Serialize, de::DeserializeOwned};
 use serde_json::Value;
 use std::path::{Path, PathBuf};
 use std::time::Duration;
@@ -72,7 +71,7 @@ impl MarpleDB {
 
     /// Checks MarpleDB API health.
     pub async fn health(&self) -> Result<HealthResponse> {
-        self.get("health", &()).await
+        self.get_json("health").await
     }
 
     /// Fetches workspace settings (`/settings`).
@@ -80,12 +79,12 @@ impl MarpleDB {
     /// The payload is a mix of Insight, storage-path, and build keys. Unknown
     /// keys are kept on [`Settings::extra`].
     pub async fn get_settings(&self) -> Result<Settings> {
-        self.get("settings", &()).await
+        self.get_json("settings").await
     }
 
     /// Lists metadata field names used by datasets in a stream.
     pub async fn get_metadata_fields(&self, stream_id: i64) -> Result<Vec<String>> {
-        self.get(&format!("stream/{stream_id}/metadata/fields"), &())
+        self.get_json(&format!("stream/{stream_id}/metadata/fields"))
             .await
     }
 
@@ -94,15 +93,12 @@ impl MarpleDB {
     /// Returns `Ok(None)` when the API returns JSON `null` or HTTP 404. The
     /// top-level `workspace` field is the workspace slug, not the license row id.
     pub async fn get_workspace_license(&self) -> Result<Option<WorkspaceLicense>> {
-        match self.get("workspace/license", &()).await {
-            Err(Error::Api { status: 404, .. }) => Ok(None),
-            result => result,
-        }
+        Self::map_404(self.get_json("workspace/license").await, || Ok(None))
     }
 
     /// Fetches the authenticated user profile, including workspace memberships.
     pub async fn get_user_info(&self) -> Result<UserInfo> {
-        self.get("user/info", &()).await
+        self.get_json("user/info").await
     }
 
     /// Fetches a workspace usage series (`cold_storage`, `hot_storage`, …).
@@ -135,9 +131,7 @@ impl MarpleDB {
         let info = info?;
         let id = info
             .current_workspace_id()
-            .ok_or_else(|| {
-                Error::Protocol("could not resolve current workspace from /user/info".to_string())
-            })?
+            .ok_or_else(|| Error::protocol("could not resolve current workspace from /user/info"))?
             .to_string();
         Ok(CurrentWorkspace {
             name: info.workspace_name(&id).to_string(),
@@ -151,10 +145,7 @@ impl MarpleDB {
 
     /// Lists all streams visible to the token.
     pub async fn get_streams(&self) -> Result<Vec<Stream>> {
-        Ok(self
-            .get::<_, StreamsResponse>("streams", &())
-            .await?
-            .streams)
+        Ok(self.get_json::<StreamsResponse>("streams").await?.streams)
     }
 
     /// Finds a stream by name.
@@ -170,10 +161,9 @@ impl MarpleDB {
 
     /// Fetches a stream by id.
     pub async fn get_stream_by_id(&self, stream_id: i64) -> Result<Stream> {
-        match self.get(&format!("stream/{stream_id}"), &()).await {
-            Err(Error::Api { status: 404, .. }) => Err(Error::StreamIdNotFound { id: stream_id }),
-            result => result,
-        }
+        Self::map_404(self.get_json(&format!("stream/{stream_id}")).await, || {
+            Err(Error::StreamIdNotFound { id: stream_id })
+        })
     }
 
     /// Creates a stream with a name and serializable options object.
@@ -188,8 +178,8 @@ impl MarpleDB {
         let mut options = match serde_json::to_value(options)? {
             Value::Object(options) => options,
             _ => {
-                return Err(Error::Protocol(
-                    "create_stream options must serialize to a JSON object".to_string(),
+                return Err(Error::protocol(
+                    "create_stream options must serialize to a JSON object",
                 ));
             }
         };
@@ -214,34 +204,30 @@ impl MarpleDB {
 
     /// Lists datasets in a stream.
     pub async fn get_datasets(&self, stream_id: i64) -> Result<Vec<Dataset>> {
-        self.get(&format!("stream/{}/datasets", stream_id), &())
-            .await
+        self.get_json(&format!("stream/{stream_id}/datasets")).await
     }
 
     /// Lists all datasets in a datapool.
     pub async fn get_datapool_datasets(&self, pool: &str) -> Result<Vec<Dataset>> {
-        self.get(&format!("datapool/{}/datasets", pool), &()).await
+        self.get_json(&format!("datapool/{pool}/datasets")).await
     }
 
     /// Lists datasets currently in the ingest queue for a datapool.
     pub async fn get_datapool_ingest_queue(&self, pool: &str) -> Result<Vec<Dataset>> {
-        self.get(&format!("datapool/{}/ingest/queue", pool), &())
+        self.get_json(&format!("datapool/{pool}/ingest/queue"))
             .await
     }
 
     /// Fetches a dataset by stream id and dataset id.
     pub async fn get_dataset(&self, stream_id: i64, dataset_id: i64) -> Result<Dataset> {
-        self.get(&format!("stream/{}/dataset/{}", stream_id, dataset_id), &())
+        self.get_json(&format!("stream/{stream_id}/dataset/{dataset_id}"))
             .await
     }
 
     /// Lists signals in a dataset.
     pub async fn get_signals(&self, stream_id: i64, dataset_id: i64) -> Result<Vec<Signal>> {
         let mut signals: Vec<Signal> = self
-            .get(
-                &format!("stream/{stream_id}/dataset/{dataset_id}/signals"),
-                &(),
-            )
+            .get_json(&format!("stream/{stream_id}/dataset/{dataset_id}/signals"))
             .await?;
         for signal in &mut signals {
             signal.datastream_id = Some(stream_id);
@@ -259,14 +245,15 @@ impl MarpleDB {
             return Err(Error::NoBackup { id: dataset.id });
         }
         let endpoint = format!(
-            "stream/{}/dataset/{}/backup",
-            dataset.datastream_id, dataset.id
+            "stream/{stream_id}/dataset/{dataset_id}/backup",
+            stream_id = dataset.datastream_id,
+            dataset_id = dataset.id
         );
         #[derive(serde::Deserialize)]
         struct DownloadLink {
             path: String,
         }
-        let link: DownloadLink = self.get(&endpoint, &()).await?;
+        let link: DownloadLink = self.get_json(&endpoint).await?;
         Ok(link.path.parse()?)
     }
 
@@ -301,22 +288,13 @@ impl MarpleDB {
         tokio::fs::create_dir_all(dest_dir).await?;
         let path = dest_dir.join(file_name);
 
-        let response =
-            retry::send_with_retry(self.storage_client.get(url), &Method::GET, &STORAGE_RETRY)
-                .await
-                .map_err(|source| Error::storage("storage GET failed", None, None, Some(source)))?;
-        if !response.status().is_success() {
-            let status = response.status();
-            let body = response.text().await.map_err(|source| {
-                Error::storage("storage GET failed", Some(status), None, Some(source))
-            })?;
-            return Err(Error::storage(
-                "storage GET failed",
-                Some(status),
-                Some(body),
-                None,
-            ));
-        }
+        let response = send_storage(
+            self.storage_client.get(url),
+            &Method::GET,
+            "storage GET failed",
+        )
+        .await?;
+        let response = ensure_storage_success(response, "storage GET failed").await?;
 
         let mut file = tokio::fs::File::create(&path).await?;
         let mut downloaded = 0u64;
@@ -344,34 +322,36 @@ impl MarpleDB {
         dataset_id: i64,
         timeout: Duration,
     ) -> Result<Dataset> {
-        let deadline = std::time::Instant::now() + timeout;
         let mut last_status = "unknown".to_string();
+        let poll = async {
+            loop {
+                let dataset = self.get_dataset(stream_id, dataset_id).await?;
+                last_status = dataset.import_status.to_string();
 
-        while std::time::Instant::now() < deadline {
-            let dataset = self.get_dataset(stream_id, dataset_id).await?;
-            last_status = dataset.import_status.to_string();
+                if dataset.import_status.is_failure() {
+                    return Err(Error::ImportFailed {
+                        id: dataset.id,
+                        message: dataset
+                            .import_message
+                            .unwrap_or_else(|| dataset.import_status.to_string()),
+                    });
+                }
 
-            if dataset.import_status.is_failure() {
-                return Err(Error::ImportFailed {
-                    id: dataset.id,
-                    message: dataset
-                        .import_message
-                        .clone()
-                        .unwrap_or_else(|| format!("{:?}", dataset.import_status)),
-                });
+                if dataset.import_status.is_success() {
+                    return Ok(dataset);
+                }
+
+                tokio::time::sleep(Duration::from_millis(500)).await;
             }
+        };
 
-            if dataset.import_status.is_success() {
-                return Ok(dataset);
-            }
-
-            tokio::time::sleep(Duration::from_millis(500)).await;
+        match tokio::time::timeout(timeout, poll).await {
+            Ok(result) => result,
+            Err(_) => Err(Error::ImportTimeout {
+                timeout_secs: timeout.as_secs(),
+                last_status,
+            }),
         }
-
-        Err(Error::ImportTimeout {
-            timeout_secs: timeout.as_secs(),
-            last_status,
-        })
     }
 
     /// Sends a GET request and deserializes the JSON response.
@@ -384,8 +364,8 @@ impl MarpleDB {
         Q: Serialize + ?Sized,
         R: DeserializeOwned,
     {
-        let request = self.client.get(self.url(endpoint)).query(query);
-        self.send_request(endpoint, Method::GET, request).await
+        self.send_json(Method::GET, endpoint, |request| request.query(query))
+            .await
     }
 
     /// Sends a POST request with a JSON body and deserializes the JSON response.
@@ -398,8 +378,8 @@ impl MarpleDB {
         B: Serialize + ?Sized,
         R: DeserializeOwned,
     {
-        let request = self.client.post(self.url(endpoint)).json(body);
-        self.send_request(endpoint, Method::POST, request).await
+        self.send_json(Method::POST, endpoint, |request| request.json(body))
+            .await
     }
 
     /// Sends a PATCH request with a JSON body and deserializes the JSON response.
@@ -412,8 +392,8 @@ impl MarpleDB {
         B: Serialize + ?Sized,
         R: DeserializeOwned,
     {
-        let request = self.client.patch(self.url(endpoint)).json(body);
-        self.send_request(endpoint, Method::PATCH, request).await
+        self.send_json(Method::PATCH, endpoint, |request| request.json(body))
+            .await
     }
 
     /// Sends a DELETE request with a JSON body and deserializes the JSON response.
@@ -426,24 +406,35 @@ impl MarpleDB {
         B: Serialize + ?Sized,
         R: DeserializeOwned,
     {
-        let request = self.client.delete(self.url(endpoint)).json(body);
-        self.send_request(endpoint, Method::DELETE, request).await
+        self.send_json(Method::DELETE, endpoint, |request| request.json(body))
+            .await
     }
 
     fn url(&self, endpoint: &str) -> String {
         self.base_url.clone() + endpoint.trim_start_matches('/')
     }
 
-    async fn send_request<R>(
+    async fn get_json<R: DeserializeOwned>(&self, endpoint: &str) -> Result<R> {
+        self.get(endpoint, &()).await
+    }
+
+    fn map_404<T>(result: Result<T>, on_404: impl FnOnce() -> Result<T>) -> Result<T> {
+        match result {
+            Err(Error::Api { status: 404, .. }) => on_404(),
+            result => result,
+        }
+    }
+
+    async fn send_json<R>(
         &self,
-        endpoint: &str,
         method: Method,
-        request: reqwest::RequestBuilder,
+        endpoint: &str,
+        build: impl FnOnce(reqwest::RequestBuilder) -> reqwest::RequestBuilder,
     ) -> Result<R>
     where
         R: DeserializeOwned,
     {
-        let request = request
+        let request = build(self.client.request(method.clone(), self.url(endpoint)))
             .header(AUTHORIZATION, self.auth_header.clone())
             .header(REQUEST_SOURCE_HEADER, self.request_source.clone());
         let response = retry::send_with_retry(request, &method, &API_RETRY)
@@ -455,10 +446,10 @@ impl MarpleDB {
             .text()
             .await
             .map_err(|source| Error::transport(&method, endpoint, source))?;
-        if !status.is_success() {
-            Err(Error::api(method, endpoint, status, body))
-        } else {
+        if status.is_success() {
             Ok(serde_json::from_str(&body)?)
+        } else {
+            Err(Error::api(method, endpoint, status, body))
         }
     }
 
@@ -468,8 +459,8 @@ impl MarpleDB {
         endpoint: &str,
         form: reqwest::multipart::Form,
     ) -> Result<Value> {
-        let request = self.client.post(self.url(endpoint)).multipart(form);
-        self.send_request(endpoint, Method::POST, request).await
+        self.send_json(Method::POST, endpoint, |request| request.multipart(form))
+            .await
     }
 
     async fn latest_usage(&self, usage_type: UsageType) -> Option<u64> {
@@ -576,11 +567,11 @@ impl MarpleDBBuilder {
     pub fn build(self) -> Result<MarpleDB> {
         let url = self
             .url
-            .ok_or_else(|| Error::Config("missing MarpleDB API URL".to_string()))?;
+            .ok_or_else(|| Error::config("missing MarpleDB API URL"))?;
         let token = self
             .token
-            .ok_or_else(|| Error::Config("missing MarpleDB API token".to_string()))?;
-        let mut auth_header = header_value(&format!("Bearer {}", token))?;
+            .ok_or_else(|| Error::config("missing MarpleDB API token"))?;
+        let mut auth_header = header_value(&format!("Bearer {token}"))?;
         auth_header.set_sensitive(true);
 
         let request_source = match self.request_source {
@@ -643,7 +634,7 @@ struct CreatedStream {
 
 fn header_value(value: &str) -> Result<HeaderValue> {
     HeaderValue::from_str(value)
-        .map_err(|error| Error::Config(format!("invalid HTTP header value: {error}")))
+        .map_err(|error| Error::config(format!("invalid HTTP header value: {error}")))
 }
 
 fn build_client(
@@ -662,4 +653,42 @@ fn build_client(
     builder
         .build()
         .map_err(|source| Error::transport(&Method::GET, "client builder", source))
+}
+
+pub(crate) async fn send_storage(
+    request: reqwest::RequestBuilder,
+    method: &Method,
+    context: impl Into<String>,
+) -> Result<reqwest::Response> {
+    let context = context.into();
+    retry::send_with_retry(request, method, &STORAGE_RETRY)
+        .await
+        .map_err(|source| Error::storage(context, None, None, Some(source)))
+}
+
+pub(crate) async fn ensure_storage_success(
+    response: reqwest::Response,
+    context: impl Into<String>,
+) -> Result<reqwest::Response> {
+    if response.status().is_success() {
+        Ok(response)
+    } else {
+        let context = context.into();
+        let status = response.status();
+        let body = response
+            .text()
+            .await
+            .map_err(|source| Error::storage(context.clone(), Some(status), None, Some(source)))?;
+        Err(Error::storage(context, Some(status), Some(body), None))
+    }
+}
+
+pub(crate) async fn put_storage(
+    request: reqwest::RequestBuilder,
+    context: impl Into<String>,
+) -> Result<()> {
+    let context = context.into();
+    let response = send_storage(request, &Method::PUT, context.clone()).await?;
+    ensure_storage_success(response, context).await?;
+    Ok(())
 }

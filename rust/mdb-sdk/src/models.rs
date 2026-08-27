@@ -832,28 +832,6 @@ where
     })
 }
 
-fn deserialize_opt_bool<'de, D>(deserializer: D) -> std::result::Result<Option<bool>, D::Error>
-where
-    D: serde::Deserializer<'de>,
-{
-    Ok(match Option::<Value>::deserialize(deserializer)? {
-        None | Some(Value::Null) => None,
-        Some(Value::Bool(value)) => Some(value),
-        Some(Value::Number(number)) => number.as_i64().map(|value| value != 0).or_else(|| {
-            number
-                .as_f64()
-                .filter(|value| value.is_finite())
-                .map(|value| value != 0.0)
-        }),
-        Some(Value::String(text)) => match text.trim().to_ascii_lowercase().as_str() {
-            "true" | "1" | "yes" => Some(true),
-            "false" | "0" | "no" => Some(false),
-            _ => None,
-        },
-        Some(_) => None,
-    })
-}
-
 fn i64_from_value(value: Value) -> Option<i64> {
     match value {
         Value::Number(number) => number

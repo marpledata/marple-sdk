@@ -25,6 +25,7 @@ def trino_db(db: DB) -> DB:
     return db
 
 
+@pytest.mark.integration
 def test_trino_info_exposes_catalogs(trino_db: DB) -> None:
     info = trino_db.trino_info
     assert set(info) >= {"host", "user", "hot_catalog", "cold_catalog", "datapool"}
@@ -33,6 +34,7 @@ def test_trino_info_exposes_catalogs(trino_db: DB) -> None:
     assert info["user"].startswith("mdb_")
 
 
+@pytest.mark.integration
 def test_query_returns_dataframe(trino_db: DB) -> None:
     df = trino_db.query("SHOW CATALOGS")
     assert isinstance(df, pd.DataFrame)
@@ -42,6 +44,7 @@ def test_query_returns_dataframe(trino_db: DB) -> None:
     assert info["cold_catalog"] in catalogs
 
 
+@pytest.mark.integration
 def test_query_with_params(trino_db: DB) -> None:
     df = trino_db.query("SELECT ? AS a, ? AS b", params=[1, 2])
     assert list(df.iloc[0]) == [1, 2]

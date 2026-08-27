@@ -16,11 +16,11 @@ dotenv.load_dotenv()
 def _required_env(name: str) -> str:
     value = os.getenv(name)
     if value is None:
-        pytest.fail(f"Missing env var {name}; skipping integration test.")
+        pytest.skip(f"Missing env var {name}; skipping integration test.")
     return value
 
 
-@pytest.fixture()
+@pytest.fixture(scope="session")
 def db() -> DB:
     url = os.getenv("MDB_URL", marple.db.SAAS_URL)
     assert url is not None
@@ -35,17 +35,13 @@ def insight() -> Insight:
 
 
 @pytest.fixture(scope="session")
-def example_stream() -> Generator[DataStream, None, None]:
-    url = os.getenv("MDB_URL", marple.db.SAAS_URL)
-    assert url is not None
-    session_db = DB(_required_env("MDB_TOKEN"), url)
-
+def example_stream(db: DB) -> Generator[DataStream, None, None]:
     name = "Salty Compulsory Pytest " + datetime.now().isoformat()
-    yield session_db.create_stream(name)
+    yield db.create_stream(name)
     print("Cleaning up stream...")
-    session_db.delete_stream(name)
+    db.delete_stream(name)
 
 
-@pytest.fixture()
+@pytest.fixture(scope="session")
 def example_dataset(example_stream: DataStream) -> Dataset:
     return ingest_dataset(example_stream, metadata={"A": 1, "B": 1})

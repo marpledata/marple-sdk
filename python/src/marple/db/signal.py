@@ -137,3 +137,13 @@ class Signal(BaseModel):
                 warnings.warn(f"Signal {self.name} did not reach a queryable state after {timeout} seconds")
                 return fresh
             time.sleep(0.5)
+
+    def delete(self) -> None:
+        """
+        Delete this signal from its dataset.
+
+        Warning:
+            This is a destructive action that cannot be undone.
+        """
+        if self._dataset is not None and hasattr(self._dataset, "delete_signal"):
+            self._dataset.delete_signal(self.id)  # type: ignore[attr-defined]

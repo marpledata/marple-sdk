@@ -1,7 +1,11 @@
 use std::error::Error as StdError;
 use std::fmt;
-use std::num::TryFromIntError;
 use thiserror::Error;
+
+/// Concrete HTTP-client error, hidden behind [`SourceError`].
+trait SourceInner: StdError + Send + Sync + fmt::Debug {}
+
+impl<T> SourceInner for T where T: StdError + Send + Sync + fmt::Debug {}
 
 /// Opaque cause of an HTTP transport or storage failure.
 ///
@@ -9,13 +13,13 @@ use thiserror::Error;
 /// `reqwest` version bumps are not breaking changes. Use [`std::fmt::Display`]
 /// or [`StdError::source`] for diagnostics.
 pub struct SourceError {
-    inner: Box<dyn StdError + Send + Sync>,
+    inner: Box<dyn SourceInner>,
 }
 
 impl SourceError {
     pub(crate) fn new<E>(error: E) -> Self
     where
-        E: StdError + Send + Sync + 'static,
+        E: StdError + Send + Sync + fmt::Debug + 'static,
     {
         Self {
             inner: Box::new(error),
@@ -25,7 +29,7 @@ impl SourceError {
 
 impl fmt::Debug for SourceError {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        fmt::Debug::fmt(&self.inner.to_string(), f)
+        f.debug_tuple("SourceError").field(&self.inner).finish()
     }
 }
 
@@ -163,10 +167,6 @@ pub enum Error {
     /// JSON serialization or deserialization failed.
     #[error("JSON error: {0}")]
     Json(#[from] serde_json::Error),
-
-    /// Integer conversion failed.
-    #[error("integer conversion failed")]
-    IntegerConversion(#[from] TryFromIntError),
 }
 
 impl Error {
@@ -218,7 +218,28 @@ impl Error {
             source: source.map(SourceError::new),
         }
     }
+
+    pub(crate) fn protocol(message: impl Into<String>) -> Self {
+        Self::Protocol(message.into())
+    }
+
+    pub(crate) fn config(message: impl Into<String>) -> Self {
+        Self::Config(message.into())
+    }
 }
 
 /// Result type returned by the MarpleDB SDK.
 pub type Result<T> = std::result::Result<T, Error>;
+
+#[cfg(test)]
+mod tests {
+    use super::SourceError;
+
+    #[test]
+    fn source_error_debug_shows_the_cause() {
+        let error = SourceError::new(std::io::Error::other("boom"));
+        let debug = format!("{error:?}");
+        assert!(debug.contains("SourceError"), "{debug}");
+        assert!(debug.contains("boom"), "{debug}");
+    }
+}

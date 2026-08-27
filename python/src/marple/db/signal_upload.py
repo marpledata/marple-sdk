@@ -286,7 +286,7 @@ def _presign_signals(
             body = {}
         raise SignalsAlreadyExistError(
             body.get("signals") or [],  # type: ignore[arg-type]
-            message=f"Signal upload failed: {body.get('error', 'signals_already_exist')}",
+            message=f"Signal upload failed (use overwrite=True to replace existing signals): {body.get('error', 'signals_already_exist')}",
         )
     signals = {
         item["name"]: PresignedSignal.model_validate(item)

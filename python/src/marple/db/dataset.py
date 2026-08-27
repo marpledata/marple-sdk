@@ -390,7 +390,7 @@ class Dataset(BaseModel):
             return []
         if len(signals) > MAX_SIGNALS_PER_ADD:
             raise ValueError(f"Provide at most {MAX_SIGNALS_PER_ADD} signals per call")
-        if self.import_status != ImportStatus.FINISHED:
+        if self.import_status not in (ImportStatus.FINISHED, ImportStatus.POSTPROCESSING):
             raise ValueError(f"Dataset {self.id} is not in a writable state (status: {self.import_status})")
 
         signal_ids = run_signal_uploads(self, signals, overwrite=overwrite, concurrency=concurrency)
@@ -487,6 +487,35 @@ class Dataset(BaseModel):
             time.sleep(0.5)
         warnings.warn(f"Import did not finish after {timeout} seconds")
         return self.fetch(self._client, self.id)
+
+    def delete_signal(self, signal_id: int) -> None:
+        """
+        Delete a single signal from this dataset by ID.
+
+        Warning:
+            This is a destructive action that cannot be undone.
+        """
+        self.delete_signals([signal_id])
+
+    def delete_signals(self, signal_ids: Sequence[int]) -> None:
+        """
+        Delete one or more signals from this dataset by ID.
+
+        Warning:
+            This is a destructive action that cannot be undone.
+        """
+        ids = list(signal_ids)
+        if not ids:
+            return
+        r = self._client.post(
+            f"/stream/{self.datastream_id}/dataset/{self.id}/signals/delete",
+            json={"signal_ids": ids},
+        )
+        validate_response(r, "Delete signals failed")
+        for sid in ids:
+            self._signals.pop(sid, None)
+        if self.n_signals is not None:
+            self.n_signals = max(0, self.n_signals - len(set(ids)))
 
     def delete(self) -> None:
         """
