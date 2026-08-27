@@ -68,9 +68,9 @@ fn find_last_i32(s: &str) -> Option<i32> {
     s[j..i].parse::<i32>().ok()
 }
 
-fn example_csv_path() -> PathBuf {
+fn tiny_csv_path() -> PathBuf {
     let root = Path::new(env!("CARGO_MANIFEST_DIR"));
-    root.join("../../test_data/examples_race.csv")
+    root.join("../../test_data/tiny_race.csv")
 }
 
 async fn download_to_file(url: &str, dest: &Path) {
@@ -257,7 +257,7 @@ async fn test_db_flow_via_cli() {
     };
 
     let stream_name = unique_stream_name();
-    let csv_path = example_csv_path();
+    let csv_path = tiny_csv_path();
     assert!(csv_path.exists(), "example CSV missing at {:?}", csv_path);
     let csv_size = fs::metadata(&csv_path).expect("csv metadata").len();
     let metadata_deployment = "integration-test";

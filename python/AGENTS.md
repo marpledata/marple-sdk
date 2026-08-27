@@ -15,6 +15,7 @@ This directory contains the Python SDK package published as `marpledata`.
 ## Commands
 
 - Run tests with output: `uv run pytest -vs`
+- Unit tests only: `uv run pytest -m "not integration"`
 - Build docs: `uv run --group docs sphinx-build -b html docs docs/_build/html`
 - Build package: `uv build`
 - Fix formatting: `uv run isort src tests && uv run black src tests`
@@ -29,5 +30,6 @@ Run commands from `python/` unless a command explicitly says otherwise.
 - Keep Python SDK tests in `python/tests/`.
 - Integration tests run against live Marple services and may require
   `MDB_TOKEN`, `MDB_URL`, `INSIGHT_TOKEN`, and `INSIGHT_URL`. Tests should skip
-  or fail clearly when required credentials are missing.
+  clearly when required credentials are missing. Mark live tests with
+  `pytest.mark.integration`.
 - Release steps: `RELEASING.md`.

@@ -2,11 +2,9 @@
 
 from __future__ import annotations
 
-from contextlib import contextmanager
-from datetime import datetime
 from pathlib import Path
 from types import SimpleNamespace
-from typing import Any, Iterator, cast
+from typing import Any, cast
 from unittest.mock import MagicMock
 
 import pandas as pd
@@ -15,7 +13,7 @@ import pyarrow.parquet as pq
 import pytest
 
 from marple import DB
-from marple.db import Dataset, SignalsAlreadyExistError, SignalUpload
+from marple.db import Dataset, DataStream, SignalsAlreadyExistError, SignalUpload
 from marple.db.constants import (
     COL_TIME,
     COL_VAL,
@@ -33,17 +31,30 @@ from marple.db.signal_upload import (
     _plan_row_counts,
     run_signal_uploads,
 )
-from support import ingest_dataset
+from support import isolated_stream
 
 SIGNAL_UPLOAD_TEST_PREFIX = "Salty Compulsory PytestSignalUpload"
 
 
-@pytest.fixture()
+@pytest.fixture(scope="session")
 def require_signal_upload_api(db: DB) -> None:
     """Skip when the Marple DB deployment does not expose signal upload endpoints."""
     response = db.client.post("/stream/0/dataset/0/signal/uploads", json={"signals": []})
     if response.status_code in (404, 405):
         pytest.skip("Signal upload API not available on this Marple DB deployment")
+
+
+@pytest.fixture(scope="session")
+def require_signal_delete_api(db: DB, require_signal_upload_api: None) -> None:
+    probe = db.client.post("/stream/0/dataset/0/signals/delete", json={"signal_ids": []})
+    if probe.status_code in (404, 405):
+        pytest.skip("Signal delete API not available on this Marple DB deployment")
+
+
+@pytest.fixture(scope="module")
+def signal_upload_stream(db: DB, require_signal_upload_api: None):
+    with isolated_stream(db, SIGNAL_UPLOAD_TEST_PREFIX, "shared", plugin_args="--use-index") as stream:
+        yield stream
 
 
 def _fake_dataset(
@@ -359,138 +370,117 @@ def test_signals_already_exist_error_message() -> None:
     assert len(err.signals) == 2
 
 
-def _cleanup_signal_upload_streams(db: DB) -> None:
-    for stream in db.get_streams():
-        if stream.name.startswith(SIGNAL_UPLOAD_TEST_PREFIX):
-            db.delete_stream(stream.id)
-
-
-@contextmanager
-def _signal_upload_stream(db: DB, suffix: str) -> Iterator:
-    _cleanup_signal_upload_streams(db)
-    stream = db.create_stream(
-        f"{SIGNAL_UPLOAD_TEST_PREFIX} {suffix} {datetime.now().isoformat()}",
-        plugin_args="--use-index",
+@pytest.mark.integration
+def test_add_signal_from_existing(signal_upload_stream: DataStream) -> None:
+    dataset = signal_upload_stream.add_dataset(
+        "pytest-from-existing", metadata={"test": "add_signal_from_existing"}
     )
-    try:
-        yield stream
-    finally:
-        _cleanup_signal_upload_streams(db)
+    t0 = 1_700_000_000_000_000_000
+    speed_df = pd.DataFrame({COL_TIME: [t0, t0 + 1_000_000_000], COL_VAL: [1.0, 2.0]})
+    speed = dataset.add_signal("car.speed", speed_df).wait_until_available(timeout=180)
+    derived = speed.get_data() * 3.6
+    signal = dataset.add_signal(
+        "sdk.car.speed_kmh",
+        derived,
+        metadata={"unit": "km/h"},
+    ).wait_until_available(timeout=180)
+
+    assert signal.name == "sdk.car.speed_kmh"
+    assert signal.storage_status == "COLD"
+    assert signal.count == len(derived)
+    assert signal.metadata.get("unit") == "km/h" or signal.unit == "km/h"
+
+    by_name = dataset.get_signal("sdk.car.speed_kmh")
+    assert by_name is not None
+    assert by_name.id == signal.id
+
+    data = signal.get_data(refresh_cache=True)
+    assert len(data) == len(derived)
+    pd.testing.assert_series_equal(
+        data["value"].reset_index(drop=True),
+        derived[COL_VAL].reset_index(drop=True),
+        check_names=False,
+        rtol=1e-9,
+    )
 
 
-def test_add_signal_demo_csv_integration(db: DB, require_signal_upload_api: None) -> None:
-    with _signal_upload_stream(db, "demo-csv") as stream:
-        dataset = ingest_dataset(stream, metadata={"test": "add_signal_demo_csv"})
-        speed = dataset.get_signal("car.speed")
-        assert speed is not None
-        derived = speed.get_data() * 3.6
-        signal = dataset.add_signal(
-            "sdk.car.speed_kmh",
-            derived,
-            metadata={"unit": "km/h"},
-        ).wait_until_available(timeout=180)
+@pytest.mark.integration
+def test_add_signals_overwrite_and_conflict(signal_upload_stream: DataStream) -> None:
+    dataset = signal_upload_stream.add_dataset("pytest-overwrite", metadata={"test": "add_signals_overwrite"})
+    t0 = 1_700_000_000_000_000_000
+    times = [t0, t0 + 1_000_000_000]
+    df = pd.DataFrame({COL_TIME: times, COL_VAL: [1.0, 2.0]})
 
-        assert signal.name == "sdk.car.speed_kmh"
-        assert signal.storage_status == "COLD"
-        assert signal.count == len(derived)
-        assert signal.metadata.get("unit") == "km/h" or signal.unit == "km/h"
+    first = dataset.add_signal("sdk.from_df", df).wait_until_available(timeout=180)
+    first_id = first.id
 
-        # Signal map / cache should resolve the new name without a new DB client.
-        by_name = dataset.get_signal("sdk.car.speed_kmh")
-        assert by_name is not None
-        assert by_name.id == signal.id
+    with pytest.raises(SignalsAlreadyExistError) as exc:
+        dataset.add_signals([{"name": "sdk.from_df", "data": df}])
+    assert any(s.get("status") == "EXISTS" for s in exc.value.signals)
 
-        data = signal.get_data(refresh_cache=True)
-        assert len(data) == len(derived)
-        pd.testing.assert_series_equal(
-            data["value"].reset_index(drop=True),
-            derived[COL_VAL].reset_index(drop=True),
-            check_names=False,
-            rtol=1e-9,
-        )
+    df2 = pd.DataFrame({COL_TIME: times, COL_VAL: [10.0, 20.0]})
+    second = dataset.add_signal("sdk.from_df", df2, overwrite=True).wait_until_available(timeout=180)
+    assert second.id == first_id
+    assert second.storage_status == "COLD"
+    data = second.get_data(refresh_cache=True)
+    assert list(data["value"]) == [10.0, 20.0]
 
 
-def test_add_signals_overwrite_and_conflict(db: DB, require_signal_upload_api: None) -> None:
-    with _signal_upload_stream(db, "overwrite") as stream:
-        dataset = ingest_dataset(stream, metadata={"test": "add_signals_overwrite"})
-        assert dataset.timestamp_start is not None
-        times = [dataset.timestamp_start, dataset.timestamp_start + 1_000_000_000]
-        df = pd.DataFrame({COL_TIME: times, COL_VAL: [1.0, 2.0]})
-
-        first = dataset.add_signal("sdk.from_df", df).wait_until_available(timeout=180)
-        first_id = first.id
-
-        with pytest.raises(SignalsAlreadyExistError) as exc:
-            dataset.add_signals([{"name": "sdk.from_df", "data": df}])
-        assert any(s.get("status") == "EXISTS" for s in exc.value.signals)
-
-        df2 = pd.DataFrame({COL_TIME: times, COL_VAL: [10.0, 20.0]})
-        second = dataset.add_signal("sdk.from_df", df2, overwrite=True).wait_until_available(timeout=180)
-        assert second.id == first_id
-        assert second.storage_status == "COLD"
-        data = second.get_data(refresh_cache=True)
-        assert list(data["value"]) == [10.0, 20.0]
-
-
-def test_add_dataset_then_add_signals(db: DB, require_signal_upload_api: None) -> None:
+@pytest.mark.integration
+def test_add_dataset_then_add_signals(signal_upload_stream: DataStream) -> None:
     """Custom file-stream ingest: empty dataset via add_dataset, then add_signals."""
-    with _signal_upload_stream(db, "custom-ingest") as stream:
-        dataset = stream.add_dataset("pytest-custom", metadata={"test": "add_dataset_add_signals"})
-        t0 = 1_700_000_000_000_000_000
-        df_a = pd.DataFrame({COL_TIME: [t0, t0 + 1_000_000_000], COL_VAL: [1.0, 2.0]})
-        df_b = pd.DataFrame({COL_TIME: [t0, t0 + 1_000_000_000], COL_VAL: [3.0, 4.0]})
+    dataset = signal_upload_stream.add_dataset("pytest-custom", metadata={"test": "add_dataset_add_signals"})
+    t0 = 1_700_000_000_000_000_000
+    df_a = pd.DataFrame({COL_TIME: [t0, t0 + 1_000_000_000], COL_VAL: [1.0, 2.0]})
+    df_b = pd.DataFrame({COL_TIME: [t0, t0 + 1_000_000_000], COL_VAL: [3.0, 4.0]})
 
-        ids = dataset.add_signals(
-            [
-                {"name": "sdk.custom.a", "data": df_a, "metadata": {"unit": "1"}},
-                {"name": "sdk.custom.b", "data": df_b},
-            ],
-            concurrency=2,
-        )
-        assert len(ids) == 2
+    ids = dataset.add_signals(
+        [
+            {"name": "sdk.custom.a", "data": df_a, "metadata": {"unit": "1"}},
+            {"name": "sdk.custom.b", "data": df_b},
+        ],
+        concurrency=2,
+    )
+    assert len(ids) == 2
 
-        signals = dataset.get_signals(signal_ids=ids, refresh=True)
-        assert [s.id for s in signals] == ids
-        for signal in signals:
-            signal.wait_until_available(timeout=180)
+    signals = dataset.get_signals(signal_ids=ids, refresh=True)
+    assert [s.id for s in signals] == ids
+    for signal in signals:
+        signal.wait_until_available(timeout=180)
 
-        a = dataset.get_signal("sdk.custom.a", refresh=True)
-        b = dataset.get_signal("sdk.custom.b", refresh=True)
-        assert a is not None and b is not None
-        assert a.storage_status == "COLD"
-        assert b.storage_status == "COLD"
-        assert list(a.get_data(refresh_cache=True)["value"]) == [1.0, 2.0]
-        assert list(b.get_data(refresh_cache=True)["value"]) == [3.0, 4.0]
+    a = dataset.get_signal("sdk.custom.a", refresh=True)
+    b = dataset.get_signal("sdk.custom.b", refresh=True)
+    assert a is not None and b is not None
+    assert a.storage_status == "COLD"
+    assert b.storage_status == "COLD"
+    assert list(a.get_data(refresh_cache=True)["value"]) == [1.0, 2.0]
+    assert list(b.get_data(refresh_cache=True)["value"]) == [3.0, 4.0]
 
 
-def test_delete_signals_integration(db: DB, require_signal_upload_api: None) -> None:
-    probe = db.client.post("/stream/0/dataset/0/signals/delete", json={"signal_ids": []})
-    if probe.status_code in (404, 405):
-        pytest.skip("Signal delete API not available on this Marple DB deployment")
+@pytest.mark.integration
+def test_delete_signals_integration(signal_upload_stream: DataStream, require_signal_delete_api: None) -> None:
+    dataset = signal_upload_stream.add_dataset("pytest-delete", metadata={"test": "delete_signals"})
+    t0 = 1_700_000_000_000_000_000
+    df_a = pd.DataFrame({COL_TIME: [t0, t0 + 1_000_000_000], COL_VAL: [1.0, 2.0]})
+    df_b = pd.DataFrame({COL_TIME: [t0, t0 + 1_000_000_000], COL_VAL: [3.0, 4.0]})
+    df_c = pd.DataFrame({COL_TIME: [t0, t0 + 1_000_000_000], COL_VAL: [5.0, 6.0]})
 
-    with _signal_upload_stream(db, "delete-signals") as stream:
-        dataset = stream.add_dataset("pytest-delete", metadata={"test": "delete_signals"})
-        t0 = 1_700_000_000_000_000_000
-        df_a = pd.DataFrame({COL_TIME: [t0, t0 + 1_000_000_000], COL_VAL: [1.0, 2.0]})
-        df_b = pd.DataFrame({COL_TIME: [t0, t0 + 1_000_000_000], COL_VAL: [3.0, 4.0]})
-        df_c = pd.DataFrame({COL_TIME: [t0, t0 + 1_000_000_000], COL_VAL: [5.0, 6.0]})
+    ids = dataset.add_signals(
+        [
+            {"name": "sdk.delete.a", "data": df_a},
+            {"name": "sdk.delete.b", "data": df_b},
+            {"name": "sdk.delete.c", "data": df_c},
+        ]
+    )
+    assert len(ids) == 3
+    for signal in dataset.get_signals(signal_ids=ids, refresh=True):
+        signal.wait_until_available(timeout=180)
 
-        ids = dataset.add_signals(
-            [
-                {"name": "sdk.delete.a", "data": df_a},
-                {"name": "sdk.delete.b", "data": df_b},
-                {"name": "sdk.delete.c", "data": df_c},
-            ]
-        )
-        assert len(ids) == 3
-        for signal in dataset.get_signals(signal_ids=ids, refresh=True):
-            signal.wait_until_available(timeout=180)
+    a = dataset.get_signal("sdk.delete.a", refresh=True)
+    assert a is not None
+    a.delete()
+    assert dataset.get_signal("sdk.delete.a", refresh=True) is None
 
-        a = dataset.get_signal("sdk.delete.a", refresh=True)
-        assert a is not None
-        a.delete()
-        assert dataset.get_signal("sdk.delete.a", refresh=True) is None
-
-        dataset.delete_signals(ids[1:])
-        remaining = dataset.get_signals(refresh=True)
-        assert {s.name for s in remaining} == set()
+    dataset.delete_signals(ids[1:])
+    remaining = dataset.get_signals(refresh=True)
+    assert {s.name for s in remaining} == set()

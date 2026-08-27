@@ -7,8 +7,10 @@ from h5py import File
 from marple import Insight
 from marple.db import Dataset
 
+pytestmark = pytest.mark.integration
 
-@pytest.fixture()
+
+@pytest.fixture(scope="session")
 def insight_dataset(insight: Insight, example_dataset: Dataset):
     yield insight.get_dataset_mdb(example_dataset.id)
 
