@@ -72,6 +72,11 @@ docs = [
   "sphinx>=7.2.6",
 ]
 
+[tool.pytest.ini_options]
+markers = [
+  "integration: tests that talk to a live Marple DB / Insight instance",
+]
+
 [tool.black]
 line-length = 113
 target-version = ["py311"]
