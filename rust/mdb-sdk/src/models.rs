@@ -11,10 +11,137 @@ pub type Metadata = Map<String, Value>;
 
 /// Health response returned by the MarpleDB API.
 #[non_exhaustive]
-#[derive(Clone, Debug, Serialize, Deserialize)]
+#[derive(Clone, Debug, Default, Serialize, Deserialize)]
 pub struct HealthResponse {
     /// Service health status.
+    #[serde(default)]
     pub status: String,
+}
+
+/// Workspace settings returned by `/settings`.
+///
+/// Field names match the API's `SCREAMING_SNAKE_CASE` keys. Unknown keys are
+/// preserved in [`Settings::extra`] so a server-side addition does not fail
+/// deserialization. Known fields that the API omits or types unexpectedly
+/// become `None`.
+#[non_exhaustive]
+#[derive(Clone, Debug, Default, Serialize, Deserialize)]
+pub struct Settings {
+    #[serde(
+        rename = "INSIGHT_URL",
+        default,
+        deserialize_with = "deserialize_opt_string"
+    )]
+    pub insight_url: Option<String>,
+    #[serde(
+        rename = "INSIGHT_DISTANCE_MODE_ENABLED",
+        default,
+        deserialize_with = "deserialize_opt_bool"
+    )]
+    pub insight_distance_mode_enabled: Option<bool>,
+    #[serde(
+        rename = "INSIGHT_DEFAULT_DISTANCE_SIGNAL",
+        default,
+        deserialize_with = "deserialize_opt_string"
+    )]
+    pub insight_default_distance_signal: Option<String>,
+    #[serde(
+        rename = "INSIGHT_SEGMENTS_ENABLED",
+        default,
+        deserialize_with = "deserialize_opt_bool"
+    )]
+    pub insight_segments_enabled: Option<bool>,
+    #[serde(
+        rename = "INSIGHT_SEGMENTS_SIGNAL",
+        default,
+        deserialize_with = "deserialize_opt_string"
+    )]
+    pub insight_segments_signal: Option<String>,
+    #[serde(
+        rename = "PATH_COLD",
+        default,
+        deserialize_with = "deserialize_opt_string"
+    )]
+    pub path_cold: Option<String>,
+    #[serde(
+        rename = "PATH_BACKUP",
+        default,
+        deserialize_with = "deserialize_opt_string"
+    )]
+    pub path_backup: Option<String>,
+    #[serde(
+        rename = "PATH_SWAP",
+        default,
+        deserialize_with = "deserialize_opt_string"
+    )]
+    pub path_swap: Option<String>,
+    #[serde(
+        rename = "PATH_LOGS",
+        default,
+        deserialize_with = "deserialize_opt_string"
+    )]
+    pub path_logs: Option<String>,
+    #[serde(
+        rename = "SUPERUSER_MANAGES_USERS",
+        default,
+        deserialize_with = "deserialize_opt_bool"
+    )]
+    pub superuser_manages_users: Option<bool>,
+    #[serde(
+        rename = "SANDBOX_JOBS_ENABLED",
+        default,
+        deserialize_with = "deserialize_opt_bool"
+    )]
+    pub sandbox_jobs_enabled: Option<bool>,
+    #[serde(rename = "INGEST_PLUGINS_ADDITIONAL", default)]
+    pub ingest_plugins_additional: Option<Value>,
+    #[serde(
+        rename = "DB_HOST",
+        default,
+        deserialize_with = "deserialize_opt_string"
+    )]
+    pub db_host: Option<String>,
+    #[serde(rename = "DB_PORT", default, deserialize_with = "deserialize_opt_i64")]
+    pub db_port: Option<i64>,
+    #[serde(
+        rename = "DB_NAME",
+        default,
+        deserialize_with = "deserialize_opt_string"
+    )]
+    pub db_name: Option<String>,
+    #[serde(
+        rename = "DB_USER",
+        default,
+        deserialize_with = "deserialize_opt_string"
+    )]
+    pub db_user: Option<String>,
+    #[serde(
+        rename = "INSIGHT_WEBHOOK_CONFIGURED",
+        default,
+        deserialize_with = "deserialize_opt_bool"
+    )]
+    pub insight_webhook_configured: Option<bool>,
+    #[serde(
+        rename = "VERSION",
+        default,
+        deserialize_with = "deserialize_opt_string"
+    )]
+    pub version: Option<String>,
+    #[serde(
+        rename = "GIT_HASH",
+        default,
+        deserialize_with = "deserialize_opt_string"
+    )]
+    pub git_hash: Option<String>,
+    #[serde(
+        rename = "BUILD_TIMESTAMP",
+        default,
+        deserialize_with = "deserialize_opt_string"
+    )]
+    pub build_timestamp: Option<String>,
+    /// Additional settings keys returned by the API.
+    #[serde(flatten)]
+    pub extra: Map<String, Value>,
 }
 
 /// Workspace storage usage category used by `/usage/series/{usage_type}`.
@@ -148,8 +275,8 @@ pub struct LicenseLimits {
     pub cold_bytes: Option<StorageQuota>,
     #[serde(default)]
     pub archive_bytes: Option<StorageQuota>,
-    #[serde(default)]
-    pub ingestion_workers: Option<u32>,
+    #[serde(default, deserialize_with = "deserialize_opt_i64")]
+    pub ingestion_workers: Option<i64>,
     #[serde(default)]
     pub realtime: Option<RealtimeTier>,
 }
@@ -178,8 +305,8 @@ pub struct LicensePayload {
 #[non_exhaustive]
 #[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
 pub struct WorkspaceLicense {
-    #[serde(default)]
-    pub id: Option<i32>,
+    #[serde(default, deserialize_with = "deserialize_opt_i64")]
+    pub id: Option<i64>,
     #[serde(default)]
     pub version: String,
     #[serde(default)]
@@ -224,7 +351,8 @@ pub struct WorkspaceMembership {
 #[non_exhaustive]
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct UserInfo {
-    pub id: i32,
+    #[serde(default, deserialize_with = "deserialize_i64")]
+    pub id: i64,
     #[serde(default)]
     pub email: String,
     #[serde(default)]
@@ -283,13 +411,16 @@ pub struct CurrentWorkspace {
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct Stream {
     /// Stream id.
-    pub id: i32,
+    #[serde(default, deserialize_with = "deserialize_i64")]
+    pub id: i64,
     /// Stream name.
+    #[serde(default)]
     pub name: String,
-    /// Stream type.
-    #[serde(rename = "type")]
+    /// Stream type. Unknown API values become [`StreamType::Unknown`].
+    #[serde(rename = "type", default)]
     pub stream_type: StreamType,
     /// Owning datapool.
+    #[serde(default)]
     pub datapool: String,
     /// Stream description.
     #[serde(default, deserialize_with = "deserialize_default_string")]
@@ -319,11 +450,14 @@ pub struct Stream {
 
 /// MarpleDB stream type.
 #[non_exhaustive]
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "lowercase")]
 pub enum StreamType {
     Files,
     Realtime,
+    #[default]
+    #[serde(other)]
+    Unknown,
 }
 
 fn deserialize_default_string<'de, D>(deserializer: D) -> std::result::Result<String, D::Error>
@@ -338,14 +472,74 @@ fn deserialize_optional_epoch<'de, D>(deserializer: D) -> std::result::Result<Op
 where
     D: serde::Deserializer<'de>,
 {
+    deserialize_opt_i64(deserializer)
+}
+
+fn deserialize_i64<'de, D>(deserializer: D) -> std::result::Result<i64, D::Error>
+where
+    D: serde::Deserializer<'de>,
+{
+    i64_from_value(Value::deserialize(deserializer)?)
+        .ok_or_else(|| serde::de::Error::custom("expected a number"))
+}
+
+fn deserialize_opt_i64<'de, D>(deserializer: D) -> std::result::Result<Option<i64>, D::Error>
+where
+    D: serde::Deserializer<'de>,
+{
     Ok(match Option::<Value>::deserialize(deserializer)? {
         None | Some(Value::Null) => None,
-        Some(Value::Number(number)) => number
-            .as_i64()
-            .or_else(|| number.as_f64().and_then(epoch_from_f64)),
-        Some(Value::String(text)) => text.parse::<f64>().ok().and_then(epoch_from_f64),
+        Some(value) => i64_from_value(value),
+    })
+}
+
+fn deserialize_opt_string<'de, D>(deserializer: D) -> std::result::Result<Option<String>, D::Error>
+where
+    D: serde::Deserializer<'de>,
+{
+    Ok(match Option::<Value>::deserialize(deserializer)? {
+        None | Some(Value::Null) => None,
+        Some(Value::String(text)) => Some(text).filter(|text| !text.is_empty()),
+        Some(Value::Number(number)) => Some(number.to_string()),
+        Some(Value::Bool(value)) => Some(value.to_string()),
         Some(_) => None,
     })
+}
+
+fn deserialize_opt_bool<'de, D>(deserializer: D) -> std::result::Result<Option<bool>, D::Error>
+where
+    D: serde::Deserializer<'de>,
+{
+    Ok(match Option::<Value>::deserialize(deserializer)? {
+        None | Some(Value::Null) => None,
+        Some(Value::Bool(value)) => Some(value),
+        Some(Value::Number(number)) => number.as_i64().map(|value| value != 0).or_else(|| {
+            number
+                .as_f64()
+                .filter(|value| value.is_finite())
+                .map(|value| value != 0.0)
+        }),
+        Some(Value::String(text)) => match text.trim().to_ascii_lowercase().as_str() {
+            "true" | "1" | "yes" => Some(true),
+            "false" | "0" | "no" => Some(false),
+            _ => None,
+        },
+        Some(_) => None,
+    })
+}
+
+fn i64_from_value(value: Value) -> Option<i64> {
+    match value {
+        Value::Number(number) => number
+            .as_i64()
+            .or_else(|| number.as_u64().and_then(|value| i64::try_from(value).ok()))
+            .or_else(|| number.as_f64().and_then(epoch_from_f64)),
+        Value::String(text) => text
+            .parse::<i64>()
+            .ok()
+            .or_else(|| text.parse::<f64>().ok().and_then(epoch_from_f64)),
+        _ => None,
+    }
 }
 
 fn epoch_from_f64(value: f64) -> Option<i64> {
@@ -355,8 +549,9 @@ fn epoch_from_f64(value: f64) -> Option<i64> {
 /// Dataset import lifecycle status.
 ///
 /// Serialized values match the MarpleDB API and Python SDK enum names.
+/// Unknown API values become [`ImportStatus::Unknown`] instead of failing.
 #[non_exhaustive]
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "SCREAMING_SNAKE_CASE")]
 pub enum ImportStatus {
     /// File upload is still in progress.
@@ -379,58 +574,97 @@ pub enum ImportStatus {
     Cooling,
     /// Realtime dataset cooling failed.
     CoolingFailed,
+    /// Status the SDK does not know about yet.
+    #[default]
+    #[serde(other)]
+    Unknown,
 }
 
 /// Dataset metadata returned by the MarpleDB API.
+///
+/// Matches the backend `File` row returned by dataset list/get endpoints.
+/// Optional fields default when omitted; unknown keys land in [`Dataset::extra`].
 #[non_exhaustive]
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct Dataset {
     /// Dataset id.
-    pub id: i32,
-    /// Owning stream id.
-    pub datastream_id: i32,
+    #[serde(default, deserialize_with = "deserialize_i64")]
+    pub id: i64,
+    /// Owning stream id. Accepts `stream_id` as an alias.
+    #[serde(default, alias = "stream_id", deserialize_with = "deserialize_i64")]
+    pub datastream_id: i64,
     /// Owning stream version.
-    pub datastream_version: Option<i32>,
+    #[serde(default, deserialize_with = "deserialize_opt_i64")]
+    pub datastream_version: Option<i64>,
+    /// Ingestion record id, if the API returned one.
+    #[serde(default, deserialize_with = "deserialize_opt_i64")]
+    pub import_id: Option<i64>,
     /// Creation timestamp as epoch seconds.
+    #[serde(default)]
     pub created_at: f64,
     /// User that created the dataset, if available.
+    #[serde(default)]
     pub created_by: Option<String>,
     /// Current import status.
+    #[serde(default)]
     pub import_status: ImportStatus,
     /// Current import progress, if available.
+    #[serde(default)]
     pub import_progress: Option<f64>,
     /// Import status message, if available.
+    #[serde(default)]
     pub import_message: Option<String>,
     /// Import duration, if available.
+    #[serde(default)]
     pub import_time: Option<f64>,
     /// Original dataset path or filename.
+    #[serde(default)]
     pub path: String,
     /// User-defined dataset metadata.
+    #[serde(default)]
     pub metadata: Metadata,
     /// Cold-storage path.
+    #[serde(default)]
     pub cold_path: Option<String>,
     /// Cold-storage byte size.
+    #[serde(default)]
     pub cold_bytes: Option<u64>,
     /// Hot-storage byte size.
+    #[serde(default)]
     pub hot_bytes: Option<u64>,
     /// Backup path, if available.
+    #[serde(default)]
     pub backup_path: Option<String>,
     /// Backup byte size, if available.
+    #[serde(default)]
     pub backup_size: Option<u64>,
     /// Import plugin name.
+    #[serde(default)]
     pub plugin: Option<String>,
     /// Import plugin arguments.
+    #[serde(default)]
     pub plugin_args: Option<String>,
     /// Number of datapoints, if known.
+    #[serde(default)]
     pub n_datapoints: Option<u64>,
     /// Number of signals, if known.
+    #[serde(default)]
     pub n_signals: Option<u64>,
     /// Dataset start timestamp, if known.
+    #[serde(default)]
     pub timestamp_start: Option<f64>,
     /// Dataset stop timestamp, if known.
+    #[serde(default)]
     pub timestamp_stop: Option<f64>,
     /// Import speed, if known.
+    #[serde(default)]
     pub import_speed: Option<f64>,
+    /// Parquet format version, if known.
+    #[serde(default, deserialize_with = "deserialize_opt_i64")]
+    pub parquet_version: Option<i64>,
+    /// Additional dataset fields returned by the API.
+    #[serde(flatten)]
+    pub extra: Value,
 }
 
 /// Storage lifecycle of a signal.
@@ -452,8 +686,10 @@ pub enum StorageStatus {
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct Signal {
     /// Signal id.
-    pub id: i32,
+    #[serde(default, deserialize_with = "deserialize_i64")]
+    pub id: i64,
     /// Signal name.
+    #[serde(default)]
     pub name: String,
     /// Engineering unit, if set.
     #[serde(default)]
@@ -492,14 +728,14 @@ pub struct Signal {
     #[serde(default)]
     pub time_max: Option<i64>,
     /// Parquet format version, if known.
-    #[serde(default)]
-    pub parquet_version: Option<i32>,
+    #[serde(default, deserialize_with = "deserialize_opt_i64")]
+    pub parquet_version: Option<i64>,
     /// Owning stream id.
-    #[serde(default)]
-    pub datastream_id: Option<i32>,
+    #[serde(default, deserialize_with = "deserialize_opt_i64")]
+    pub datastream_id: Option<i64>,
     /// Owning dataset id.
-    #[serde(default)]
-    pub dataset_id: Option<i32>,
+    #[serde(default, deserialize_with = "deserialize_opt_i64")]
+    pub dataset_id: Option<i64>,
 }
 
 /// Upload mode preference for `MarpleDB::push_file`.
@@ -658,6 +894,12 @@ pub(crate) struct StreamsResponse {
     pub(crate) streams: Vec<Stream>,
 }
 
+#[derive(Deserialize)]
+pub(crate) struct CreatedStream {
+    #[serde(deserialize_with = "deserialize_i64")]
+    pub(crate) id: i64,
+}
+
 #[derive(Debug, Deserialize)]
 #[serde(rename_all = "lowercase")]
 pub(crate) enum UploadMode {
@@ -669,8 +911,8 @@ pub(crate) enum UploadMode {
 
 #[derive(Debug, Deserialize)]
 pub(crate) struct IngestionInit {
-    pub(crate) dataset_id: i32,
-    pub(crate) ingestion_id: i32,
+    pub(crate) dataset_id: i64,
+    pub(crate) ingestion_id: i64,
     pub(crate) mode: UploadMode,
     pub(crate) presigned_url: Option<String>,
     pub(crate) part_size: Option<u64>,

@@ -52,7 +52,7 @@ fn unique_stream_name() -> String {
     format!("Salty Compulsory Rusttest {ts}")
 }
 
-fn find_last_i32(s: &str) -> Option<i32> {
+fn find_last_i64(s: &str) -> Option<i64> {
     let bytes = s.as_bytes();
     let mut i = bytes.len();
     while i > 0 && !bytes[i - 1].is_ascii_digit() {
@@ -65,7 +65,7 @@ fn find_last_i32(s: &str) -> Option<i32> {
     while j > 0 && bytes[j - 1].is_ascii_digit() {
         j -= 1;
     }
-    s[j..i].parse::<i32>().ok()
+    s[j..i].parse::<i64>().ok()
 }
 
 fn example_csv_path() -> PathBuf {
@@ -293,7 +293,7 @@ async fn test_db_flow_via_cli() {
     let stream_id = stream_obj
         .get("id")
         .and_then(|v| v.as_i64())
-        .expect("stream id") as i32;
+        .expect("stream id");
 
     // Ensure stream appears in list
     let streams_json = mdb_cmd(&token, url.as_deref())
@@ -323,7 +323,7 @@ async fn test_db_flow_via_cli() {
         .assert()
         .success();
     let ingest_out = String::from_utf8_lossy(&ingest.get_output().stdout).to_string();
-    let dataset_id = find_last_i32(&ingest_out).expect("dataset_id from ingest output");
+    let dataset_id = find_last_i64(&ingest_out).expect("dataset_id from ingest output");
 
     // Poll ingest status until finished/failed
     let deadline = std::time::Instant::now() + Duration::from_secs(60);
@@ -400,7 +400,7 @@ async fn test_db_flow_via_cli() {
     assert!(
         datasets
             .iter()
-            .any(|d| d.get("id").and_then(|v| v.as_i64()) == Some(dataset_id as i64)),
+            .any(|d| d.get("id").and_then(|v| v.as_i64()) == Some(dataset_id)),
         "dataset id not found in dataset list"
     );
 
@@ -432,7 +432,7 @@ async fn test_db_flow_via_cli() {
     assert!(
         datapool_datasets
             .iter()
-            .any(|d| d.get("id").and_then(|v| v.as_i64()) == Some(dataset_id as i64)),
+            .any(|d| d.get("id").and_then(|v| v.as_i64()) == Some(dataset_id)),
         "dataset id not found in datapool dataset list"
     );
 
@@ -497,7 +497,7 @@ async fn test_db_flow_via_cli() {
         .first()
         .and_then(|s| s.get("id"))
         .and_then(|v| v.as_i64())
-        .expect("signal id") as i32;
+        .expect("signal id");
 
     let paths_json = mdb_cmd(&token, url.as_deref())
         .args([

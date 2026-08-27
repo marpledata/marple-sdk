@@ -9,9 +9,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
-- Typed helpers for `/workspace/license`, `/user/info`, and `/usage/series/{usage_type}`, plus `get_current_workspace()` to resolve the connected workspace from `/user/info` (name, id, license quotas, and latest storage usage).
-- `StorageQuota` for license byte caps (`limit < 0` is unlimited). Missing license/signal fields default; unknown enum values become `Unknown`.
+- Typed helpers for `/workspace/license`, `/user/info`, `/usage/series/{usage_type}`, `/settings`, and `/stream/{id}/metadata/fields`, plus `get_current_workspace()` to resolve the connected workspace from `/user/info` (name, id, license quotas, and latest storage usage).
+- `get_stream_by_id()` for `GET /stream/{id}`. `create_stream` and `update_stream` now reload through that endpoint instead of re-listing every stream.
+- `StorageQuota` for license byte caps (`limit < 0` is unlimited). Missing license/signal/dataset/stream fields default; unknown enum values become `Unknown`.
 - `get_signals()` and a typed `Signal` model for dataset signal metadata.
+- `Settings` for `/settings`, with `INSIGHT_URL` and other known keys typed and remaining keys in `extra`.
+
+### Changed
+
+- Stream, dataset, signal, user, license, and ingestion ids are `i64` so they match JSON integers and cannot overflow an `i32`.
+- `wait_for_import` treats `CoolingFailed` as a terminal import failure.
 
 ### Fixed
 

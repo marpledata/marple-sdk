@@ -1,7 +1,7 @@
 use crate::errors::{Error, Result};
 use crate::models::{
-    CurrentWorkspace, Dataset, HealthResponse, ImportStatus, Signal, Stream, StreamsResponse,
-    UsageSeries, UsageType, UserInfo, WorkspaceLicense,
+    CreatedStream, CurrentWorkspace, Dataset, HealthResponse, ImportStatus, Settings, Signal,
+    Stream, StreamsResponse, UsageSeries, UsageType, UserInfo, WorkspaceLicense,
 };
 use reqwest::{
     Client, Method, Response, StatusCode, Url,
@@ -168,6 +168,20 @@ impl MarpleDB {
         self.get("health", &()).await
     }
 
+    /// Fetches workspace settings (`/settings`).
+    ///
+    /// The payload is a mix of Insight, storage-path, and build keys. Unknown
+    /// keys are kept on [`Settings::extra`].
+    pub async fn get_settings(&self) -> Result<Settings> {
+        self.get("settings", &()).await
+    }
+
+    /// Lists metadata field names used by datasets in a stream.
+    pub async fn get_metadata_fields(&self, stream_id: i64) -> Result<Vec<String>> {
+        self.get(&format!("stream/{stream_id}/metadata/fields"), &())
+            .await
+    }
+
     /// Fetches the license for the workspace bound to this token.
     ///
     /// Returns `Ok(None)` when the API returns JSON `null` or HTTP 404. The
@@ -254,6 +268,16 @@ impl MarpleDB {
             })
     }
 
+    /// Fetches a stream by id.
+    pub async fn get_stream_by_id(&self, stream_id: i64) -> Result<Stream> {
+        match self.get(&format!("stream/{stream_id}"), &()).await {
+            Err(Error::Api { status, .. }) if status == StatusCode::NOT_FOUND => {
+                Err(Error::StreamIdNotFound { id: stream_id })
+            }
+            result => result,
+        }
+    }
+
     /// Creates a stream with a name and serializable options object.
     ///
     /// `options` must serialize to a JSON object. The SDK adds the `name`
@@ -272,8 +296,8 @@ impl MarpleDB {
             }
         };
         options.insert("name".to_string(), Value::String(stream_name.to_string()));
-        self.post::<_, Value>("stream", &options).await?;
-        self.get_stream(stream_name).await
+        let response: CreatedStream = self.post("stream", &options).await?;
+        self.get_stream_by_id(response.id).await
     }
 
     /// Updates a stream with a serializable options object.
@@ -282,20 +306,16 @@ impl MarpleDB {
     /// stream update endpoint.
     pub async fn update_stream<S: Serialize + ?Sized>(
         &self,
-        stream_id: i32,
+        stream_id: i64,
         options: &S,
     ) -> Result<Stream> {
         let endpoint = format!("stream/update/{stream_id}");
         self.post::<_, Value>(&endpoint, options).await?;
-        self.get_streams()
-            .await?
-            .into_iter()
-            .find(|stream| stream.id == stream_id)
-            .ok_or(Error::StreamIdNotFound { id: stream_id })
+        self.get_stream_by_id(stream_id).await
     }
 
     /// Lists datasets in a stream.
-    pub async fn get_datasets(&self, stream_id: i32) -> Result<Vec<Dataset>> {
+    pub async fn get_datasets(&self, stream_id: i64) -> Result<Vec<Dataset>> {
         self.get(&format!("stream/{}/datasets", stream_id), &())
             .await
     }
@@ -312,13 +332,13 @@ impl MarpleDB {
     }
 
     /// Fetches a dataset by stream id and dataset id.
-    pub async fn get_dataset(&self, stream_id: i32, dataset_id: i32) -> Result<Dataset> {
+    pub async fn get_dataset(&self, stream_id: i64, dataset_id: i64) -> Result<Dataset> {
         self.get(&format!("stream/{}/dataset/{}", stream_id, dataset_id), &())
             .await
     }
 
     /// Lists signals in a dataset.
-    pub async fn get_signals(&self, stream_id: i32, dataset_id: i32) -> Result<Vec<Signal>> {
+    pub async fn get_signals(&self, stream_id: i64, dataset_id: i64) -> Result<Vec<Signal>> {
         let mut signals: Vec<Signal> = self
             .get(
                 &format!("stream/{stream_id}/dataset/{dataset_id}/signals"),
@@ -355,11 +375,12 @@ impl MarpleDB {
     /// Waits until an import reaches a terminal status or times out.
     ///
     /// Polls every 500ms. `Finished` and `Live` return the dataset, while
-    /// `Failed` and `PostprocessingFailed` return [`Error::ImportFailed`].
+    /// `Failed`, `PostprocessingFailed`, and `CoolingFailed` return
+    /// [`Error::ImportFailed`].
     pub async fn wait_for_import(
         &self,
-        stream_id: i32,
-        dataset_id: i32,
+        stream_id: i64,
+        dataset_id: i64,
         timeout: Duration,
     ) -> Result<Dataset> {
         let deadline = std::time::Instant::now() + timeout;
@@ -371,7 +392,9 @@ impl MarpleDB {
 
             match dataset.import_status {
                 ImportStatus::Finished | ImportStatus::Live => return Ok(dataset),
-                ImportStatus::Failed | ImportStatus::PostprocessingFailed => {
+                ImportStatus::Failed
+                | ImportStatus::PostprocessingFailed
+                | ImportStatus::CoolingFailed => {
                     return Err(Error::ImportFailed {
                         id: dataset.id,
                         message: dataset

@@ -200,7 +200,7 @@ enum DatasetCommands {
     /// Get a dataset
     Get {
         /// Dataset ID
-        dataset_id: i32,
+        dataset_id: i64,
     },
 
     /// Download one dataset, or all datasets when no dataset id is provided
@@ -210,7 +210,7 @@ enum DatasetCommands {
         output_dir: Option<String>,
 
         /// Dataset ID; omit to download all datasets in the stream
-        dataset_id: Option<i32>,
+        dataset_id: Option<i64>,
     },
 }
 
@@ -561,7 +561,7 @@ async fn handle_ingest(
 
 async fn ingest_path(
     marpledb: &MarpleDB,
-    stream_id: i32,
+    stream_id: i64,
     existing: &HashSet<String>,
     metadata: &Metadata,
     options: &IngestOptions<'_>,

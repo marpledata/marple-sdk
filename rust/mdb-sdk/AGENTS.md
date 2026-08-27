@@ -26,7 +26,8 @@ This crate is the async Rust SDK for the MarpleDB API. The package name is
   facing.
 - Prefer typed helpers on `MarpleDB` for stable API behavior and generic
   `get`, `post`, and `delete` helpers for endpoints that do not have typed
-  wrappers yet.
+  wrappers yet. Public response types should keep deserializing when the API
+  adds fields or enum values (`#[serde(default)]`, `#[serde(other)]`, `extra`).
 - Use `marple_db::Error` for SDK errors and preserve useful status/body context
   for API and storage failures.
 - The SDK is async but does not install a runtime. Examples may use Tokio.

@@ -16,7 +16,7 @@ pub(crate) struct RecentEnv {
 pub(crate) struct BrowseSettings {
     pub env_file: Option<PathBuf>,
     #[serde(default)]
-    pub stream_id: Option<i32>,
+    pub stream_id: Option<i64>,
     #[serde(default)]
     pub recents: Vec<RecentEnv>,
 }
@@ -78,8 +78,8 @@ pub(crate) fn apply_env_file(path: &Path) -> Result<(String, String)> {
     for item in dotenvy::from_path_iter(path)
         .with_context(|| format!("failed to load env file {}", path.display()))?
     {
-        let (key, value) = item
-            .with_context(|| format!("failed to load env file {}", path.display()))?;
+        let (key, value) =
+            item.with_context(|| format!("failed to load env file {}", path.display()))?;
         if key == "MDB_URL" {
             file_url = Some(value.clone());
         }

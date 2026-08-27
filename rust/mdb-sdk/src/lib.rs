@@ -41,6 +41,7 @@
 //! - [`CurrentWorkspace`] is the resolved workspace from [`MarpleDB::get_current_workspace`].
 //! - [`UserInfo`] and [`WorkspaceLicense`] come from `/user/info` and `/workspace/license`.
 //! - [`UsageSeries`] is a workspace usage series from [`MarpleDB::get_usage_series`].
+//! - [`Settings`] is the workspace settings bag from [`MarpleDB::get_settings`].
 //! - [`PushFileOptions`] configures uploads.
 //! - [`ImportStatus`] describes dataset import state.
 //! - [`Signal`] is dataset signal metadata from [`MarpleDB::get_signals`].
@@ -75,7 +76,7 @@ pub use client::{MarpleDB, MarpleDBBuilder};
 pub use errors::{Error, Result};
 pub use models::{
     CurrentWorkspace, Dataset, HealthResponse, ImportStatus, LicenseLimits, LicensePayload,
-    LicenseType, Metadata, PushFileOptions, PushFileOptionsBuilder, RealtimeTier, Signal,
+    LicenseType, Metadata, PushFileOptions, PushFileOptionsBuilder, RealtimeTier, Settings, Signal,
     StorageQuota, StorageStatus, Stream, StreamType, UploadModeOverride, UsageSeries, UsageType,
     UserInfo, WorkspaceLicense, WorkspaceMembership,
 };

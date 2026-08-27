@@ -71,10 +71,10 @@ pub(super) struct App {
     streams: Vec<Stream>,
     datasets: Vec<Dataset>,
     signals: Vec<Signal>,
-    loaded_stream_id: Option<i32>,
-    signals_dataset_id: Option<i32>,
-    loading_datasets: Option<i32>,
-    loading_signals: Option<(i32, i32)>,
+    loaded_stream_id: Option<i64>,
+    signals_dataset_id: Option<i64>,
+    loading_datasets: Option<i64>,
+    loading_signals: Option<(i64, i64)>,
     stream_state: TableState,
     dataset_state: TableState,
     signal_state: TableState,
@@ -151,8 +151,8 @@ async fn event_loop(terminal: &mut ratatui::DefaultTerminal, app: &mut App) -> R
 }
 
 enum LoadResult {
-    Datasets(i32, Vec<Dataset>),
-    Signals(i32, Vec<Signal>),
+    Datasets(i64, Vec<Dataset>),
+    Signals(i64, Vec<Signal>),
 }
 
 async fn run_pending_load(terminal: &mut ratatui::DefaultTerminal, app: &mut App) {
@@ -635,7 +635,7 @@ impl App {
         }
     }
 
-    fn request_datasets(&mut self, stream_id: i32) {
+    fn request_datasets(&mut self, stream_id: i64) {
         if !self.connected {
             self.prompt_for_env();
             return;
@@ -647,7 +647,7 @@ impl App {
         self.load_tick = 0;
     }
 
-    fn request_signals(&mut self, stream_id: i32, dataset_id: i32) {
+    fn request_signals(&mut self, stream_id: i64, dataset_id: i64) {
         if !self.connected {
             self.prompt_for_env();
             return;
@@ -702,7 +702,7 @@ impl App {
         }
     }
 
-    fn apply_datasets(&mut self, stream_id: i32, mut datasets: Vec<Dataset>) {
+    fn apply_datasets(&mut self, stream_id: i64, mut datasets: Vec<Dataset>) {
         datasets.sort_by(|left, right| right.id.cmp(&left.id));
         self.datasets = datasets;
         self.signals.clear();
@@ -715,7 +715,7 @@ impl App {
         });
     }
 
-    fn apply_signals(&mut self, dataset_id: i32, mut signals: Vec<Signal>) {
+    fn apply_signals(&mut self, dataset_id: i64, mut signals: Vec<Signal>) {
         signals.sort_by(|left, right| left.name.cmp(&right.name));
         self.signals = signals;
         self.signals_dataset_id = Some(dataset_id);
@@ -726,7 +726,7 @@ impl App {
         });
     }
 
-    async fn ensure_datasets(&mut self, stream_id: i32) -> std::result::Result<(), String> {
+    async fn ensure_datasets(&mut self, stream_id: i64) -> std::result::Result<(), String> {
         if !self.connected {
             self.prompt_for_env();
             return Err(self.status.clone());

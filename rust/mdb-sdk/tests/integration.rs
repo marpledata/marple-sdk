@@ -102,7 +102,7 @@ where
 
 async fn upload_and_assert_dataset(
     db: &MarpleDB,
-    stream_id: i32,
+    stream_id: i64,
     file_path: &Path,
     options: PushFileOptions,
     expected_metadata: &[(&str, &str)],
@@ -240,6 +240,7 @@ async fn test_sdk_user_info_and_usage() -> anyhow::Result<()> {
     db.get_workspace_license().await?;
     db.get_usage_series(UsageType::ColdStorage, None, None)
         .await?;
+    db.get_settings().await?;
 
     let workspace = db.get_current_workspace().await?;
     anyhow::ensure!(
@@ -301,6 +302,12 @@ async fn run_auto_upload_flow(db: &MarpleDB) -> anyhow::Result<()> {
 
     let fetched = db.get_stream(&stream.name).await?;
     anyhow::ensure!(fetched.id == stream.id, "fetched stream id mismatch");
+    let fetched_by_id = db.get_stream_by_id(stream.id).await?;
+    anyhow::ensure!(
+        fetched_by_id.id == stream.id,
+        "fetched stream-by-id mismatch"
+    );
+    db.get_metadata_fields(stream.id).await?;
 
     anyhow::ensure!(
         db.get_streams()

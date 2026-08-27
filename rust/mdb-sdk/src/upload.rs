@@ -118,7 +118,7 @@ async fn send_storage(
 impl MarpleDB {
     async fn init_ingestion(
         &self,
-        stream_id: i32,
+        stream_id: i64,
         dataset_name: &str,
         file_size: u64,
         metadata: &crate::Metadata,
@@ -136,7 +136,7 @@ impl MarpleDB {
 
     async fn get_part_urls(
         &self,
-        ingestion_id: i32,
+        ingestion_id: i64,
         start_part: u32,
         count: usize,
     ) -> Result<PartUrlsResponse> {
@@ -148,14 +148,14 @@ impl MarpleDB {
         .await
     }
 
-    async fn complete_upload(&self, ingestion_id: i32) -> Result<()> {
+    async fn complete_upload(&self, ingestion_id: i64) -> Result<()> {
         let endpoint = format!("ingestion/{}/upload/complete", ingestion_id);
         self.post::<_, Value>(&endpoint, &serde_json::json!({}))
             .await?;
         Ok(())
     }
 
-    async fn abort_upload(&self, ingestion_id: i32, reason: &str) -> Result<()> {
+    async fn abort_upload(&self, ingestion_id: i64, reason: &str) -> Result<()> {
         let endpoint = format!("ingestion/{}/abort", ingestion_id);
         self.post::<_, Value>(&endpoint, &serde_json::json!({ "reason": reason }))
             .await?;
@@ -407,7 +407,7 @@ impl MarpleDB {
 
     fn signed_parts_stream(
         &self,
-        ingestion_id: i32,
+        ingestion_id: i64,
         batch_size: usize,
     ) -> impl futures_util::Stream<Item = Result<PartUrl>> + '_ {
         async_stream::try_stream! {
@@ -486,7 +486,7 @@ impl MarpleDB {
     #[tracing::instrument(skip_all, fields(stream_id, path = %file_path.as_ref().display()))]
     pub async fn push_file(
         &self,
-        stream_id: i32,
+        stream_id: i64,
         file_path: impl AsRef<Path>,
         options: PushFileOptions,
     ) -> Result<Dataset> {

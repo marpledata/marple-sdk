@@ -1,6 +1,6 @@
 use marple_db::{
-    LicenseType, RealtimeTier, Signal, StorageQuota, StorageStatus, Stream, StreamType,
-    UsageSeries, UserInfo, WorkspaceLicense,
+    Dataset, ImportStatus, LicenseType, RealtimeTier, Settings, Signal, StorageQuota,
+    StorageStatus, Stream, StreamType, UsageSeries, UserInfo, WorkspaceLicense,
 };
 use serde_json::json;
 
@@ -65,28 +65,31 @@ fn deserializes_realtime_stream_without_file_plugin_fields() {
 }
 
 #[test]
-fn stream_type_and_datapool_are_required() {
-    let missing_type = serde_json::from_value::<Stream>(json!({
+fn stream_type_and_datapool_default_instead_of_failing() {
+    let missing_type: Stream = serde_json::from_value(json!({
         "id": 3,
         "name": "IMC",
         "datapool": "default"
-    }));
-    assert!(missing_type.is_err());
+    }))
+    .expect("missing type");
+    assert_eq!(missing_type.stream_type, StreamType::Unknown);
 
-    let missing_datapool = serde_json::from_value::<Stream>(json!({
+    let missing_datapool: Stream = serde_json::from_value(json!({
         "id": 3,
         "name": "IMC",
         "type": "files"
-    }));
-    assert!(missing_datapool.is_err());
+    }))
+    .expect("missing datapool");
+    assert_eq!(missing_datapool.datapool, "");
 
-    let unknown_type = serde_json::from_value::<Stream>(json!({
+    let unknown_type: Stream = serde_json::from_value(json!({
         "id": 3,
         "name": "IMC",
         "type": "archive",
         "datapool": "default"
-    }));
-    assert!(unknown_type.is_err());
+    }))
+    .expect("unknown type");
+    assert_eq!(unknown_type.stream_type, StreamType::Unknown);
 }
 
 #[test]
@@ -358,4 +361,61 @@ fn deserializes_signal_stats_when_float_max_is_an_integer() {
     let stats = signal.stats.expect("stats");
     assert!(stats.get("max").is_some());
     assert!(stats.get("min").is_some());
+}
+
+#[test]
+fn dataset_accepts_stream_id_alias_unknown_status_and_extra_fields() {
+    let dataset: Dataset = serde_json::from_value(json!({
+        "id": 42,
+        "stream_id": 3,
+        "path": "run.csv",
+        "import_status": "PREPARING",
+        "unexpected": true,
+        "import_id": 9,
+        "parquet_version": 2
+    }))
+    .expect("dataset JSON");
+
+    assert_eq!(dataset.id, 42);
+    assert_eq!(dataset.datastream_id, 3);
+    assert_eq!(dataset.import_status, ImportStatus::Unknown);
+    assert_eq!(dataset.import_id, Some(9));
+    assert_eq!(dataset.parquet_version, Some(2));
+    assert_eq!(dataset.extra.get("unexpected"), Some(&json!(true)));
+}
+
+#[test]
+fn dataset_id_accepts_float_json_numbers() {
+    let dataset: Dataset = serde_json::from_value(json!({
+        "id": 12.0,
+        "datastream_id": 4.0,
+        "path": "run.csv",
+        "import_status": "FINISHED"
+    }))
+    .expect("dataset JSON with float ids");
+
+    assert_eq!(dataset.id, 12);
+    assert_eq!(dataset.datastream_id, 4);
+    assert_eq!(dataset.import_status, ImportStatus::Finished);
+}
+
+#[test]
+fn settings_types_known_keys_and_keeps_the_rest() {
+    let settings: Settings = serde_json::from_value(json!({
+        "INSIGHT_URL": "https://insight.example",
+        "INSIGHT_DISTANCE_MODE_ENABLED": "true",
+        "DB_PORT": 5432.0,
+        "SANDBOX_JOBS_ENABLED": 1,
+        "CUSTOM_FLAG": "on"
+    }))
+    .expect("settings JSON");
+
+    assert_eq!(
+        settings.insight_url.as_deref(),
+        Some("https://insight.example")
+    );
+    assert_eq!(settings.insight_distance_mode_enabled, Some(true));
+    assert_eq!(settings.db_port, Some(5432));
+    assert_eq!(settings.sandbox_jobs_enabled, Some(true));
+    assert_eq!(settings.extra.get("CUSTOM_FLAG"), Some(&json!("on")));
 }

@@ -82,14 +82,14 @@ pub enum Error {
     #[error("stream {id} not found")]
     StreamIdNotFound {
         /// Requested stream id.
-        id: i32,
+        id: i64,
     },
 
     /// The dataset has no original-file backup available for download.
     #[error("dataset {id} has no backup available")]
     NoBackup {
         /// Dataset id.
-        id: i32,
+        id: i64,
     },
 
     /// Import polling reached its timeout before a terminal status.
@@ -105,7 +105,7 @@ pub enum Error {
     #[error("ingestion failed for dataset {id}: {message}")]
     ImportFailed {
         /// Dataset id.
-        id: i32,
+        id: i64,
         /// Failure message from the API, if present.
         message: String,
     },

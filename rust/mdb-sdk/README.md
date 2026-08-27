@@ -72,9 +72,12 @@ async fn main() -> anyhow::Result<()> {
 - `db.get_usage_series(UsageType::ColdStorage, None, None)` fetches a workspace usage series.
 - `db.get_streams()` lists streams.
 - `db.get_stream("runs")` finds a stream by name.
+- `db.get_stream_by_id(stream_id)` fetches a stream by id.
 - `db.create_stream("runs", &serde_json::json!({ "plugin": "csv" }))` creates a stream.
 - `db.update_stream(stream_id, &serde_json::json!({ ... }))` updates stream metadata.
 - `db.get_datasets(stream_id)` lists datasets in a stream.
+- `db.get_metadata_fields(stream_id)` lists metadata keys used in a stream.
+- `db.get_settings()` fetches workspace settings, including `INSIGHT_URL`.
 - `db.get_datapool_datasets("default")` lists datasets across a datapool.
 - `db.get_datapool_ingest_queue("default")` lists datasets currently in the ingest queue.
 - `db.get_dataset(stream_id, dataset_id)` fetches one dataset.
