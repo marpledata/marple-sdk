@@ -322,6 +322,33 @@ def test_add_signals_empty_returns_empty() -> None:
     assert Dataset.add_signals(dataset, []) == []
 
 
+def test_delete_signals_empty_is_noop() -> None:
+    dataset = SimpleNamespace(_client=MagicMock(), _signals={}, n_signals=0)
+    Dataset.delete_signals(cast(Dataset, dataset), [])
+    dataset._client.post.assert_not_called()
+
+
+def test_delete_signals_posts_and_clears_cache() -> None:
+    client = MagicMock()
+    client.post.return_value = SimpleNamespace(status_code=200, json=lambda: {"status": "success"})
+    dataset = SimpleNamespace(
+        id=10,
+        datastream_id=5,
+        n_signals=3,
+        _client=client,
+        _signals={1: MagicMock(), 2: MagicMock(), 3: MagicMock()},
+    )
+
+    Dataset.delete_signals(cast(Dataset, dataset), [1, 2])
+
+    client.post.assert_called_once_with(
+        "/stream/5/dataset/10/signals/delete",
+        json={"signal_ids": [1, 2]},
+    )
+    assert set(dataset._signals) == {3}
+    assert dataset.n_signals == 1
+
+
 def test_signals_already_exist_error_message() -> None:
     err = SignalsAlreadyExistError(
         [{"name": "a", "status": "EXISTS"}, {"name": "b", "status": "DUPLICATE"}],
@@ -434,3 +461,36 @@ def test_add_dataset_then_add_signals(db: DB, require_signal_upload_api: None) -
         assert b.storage_status == "COLD"
         assert list(a.get_data(refresh_cache=True)["value"]) == [1.0, 2.0]
         assert list(b.get_data(refresh_cache=True)["value"]) == [3.0, 4.0]
+
+
+def test_delete_signals_integration(db: DB, require_signal_upload_api: None) -> None:
+    probe = db.client.post("/stream/0/dataset/0/signals/delete", json={"signal_ids": []})
+    if probe.status_code in (404, 405):
+        pytest.skip("Signal delete API not available on this Marple DB deployment")
+
+    with _signal_upload_stream(db, "delete-signals") as stream:
+        dataset = stream.add_dataset("pytest-delete", metadata={"test": "delete_signals"})
+        t0 = 1_700_000_000_000_000_000
+        df_a = pd.DataFrame({COL_TIME: [t0, t0 + 1_000_000_000], COL_VAL: [1.0, 2.0]})
+        df_b = pd.DataFrame({COL_TIME: [t0, t0 + 1_000_000_000], COL_VAL: [3.0, 4.0]})
+        df_c = pd.DataFrame({COL_TIME: [t0, t0 + 1_000_000_000], COL_VAL: [5.0, 6.0]})
+
+        ids = dataset.add_signals(
+            [
+                {"name": "sdk.delete.a", "data": df_a},
+                {"name": "sdk.delete.b", "data": df_b},
+                {"name": "sdk.delete.c", "data": df_c},
+            ]
+        )
+        assert len(ids) == 3
+        for signal in dataset.get_signals(signal_ids=ids, refresh=True):
+            signal.wait_until_available(timeout=180)
+
+        a = dataset.get_signal("sdk.delete.a", refresh=True)
+        assert a is not None
+        a.delete()
+        assert dataset.get_signal("sdk.delete.a", refresh=True) is None
+
+        dataset.delete_signals(ids[1:])
+        remaining = dataset.get_signals(refresh=True)
+        assert {s.name for s in remaining} == set()
