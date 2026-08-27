@@ -195,20 +195,22 @@ class Dataset(BaseModel):
         if signal_ids is None and signal_names is None:
             return self._get_all_signals()
         if signal_ids is None:
+            assert signal_names is not None
             signal_ids = self._find_signal_ids(signal_names).values()
         return self._get_signals_by_ids(list(signal_ids), refresh=refresh)
 
     def _find_signal_ids(self, signals: Iterable[str | re.Pattern]) -> dict[str, int]:
         found: dict[str, int] = {}
-        exact, patterns = [], []
+        exact: list[str] = []
+        patterns: list[re.Pattern] = []
         for signal in signals:
-            (exact if isinstance(signal, str) else patterns).append(signal)
+            (exact if isinstance(signal, str) else patterns).append(signal)  # type: ignore [arg-type]
 
         if patterns:
             # Only look up the signal map in the regex case.
-            for name, signal_id in self._client.get_signal_map().items():
+            for name, sig_id in self._client.get_signal_map().items():
                 if any(pattern.search(name) for pattern in patterns):
-                    found[name] = signal_id
+                    found[name] = sig_id
 
         if self.n_signals is not None and self.n_signals < 100:
             self._get_all_signals()
