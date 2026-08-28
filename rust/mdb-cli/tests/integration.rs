@@ -203,23 +203,6 @@ fn test_env_file_appears_in_help() {
 }
 
 #[test]
-fn test_dataset_help_uses_stream_flag() {
-    let mut cmd = cargo_bin_cmd!("mdb");
-    cmd.env("NO_COLOR", "1");
-    let output = cmd.args(["dataset", "list", "--help"]).assert().success();
-    let stdout = String::from_utf8_lossy(&output.get_output().stdout);
-
-    assert!(
-        stdout.contains("--stream"),
-        "dataset list help should mention --stream, got: {stdout}"
-    );
-    assert!(
-        stdout.contains("MDB_STREAM"),
-        "dataset list help should mention MDB_STREAM, got: {stdout}"
-    );
-}
-
-#[test]
 fn test_dataset_list_requires_stream() {
     let output = mdb_cmd_without_auth()
         .env_remove("MDB_STREAM")

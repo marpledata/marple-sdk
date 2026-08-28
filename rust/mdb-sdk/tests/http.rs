@@ -1,4 +1,4 @@
-use marple_db::{HealthResponse, MarpleDB};
+use marple_db::{Dataset, HealthResponse, MarpleDB};
 use serde_json::json;
 use wiremock::matchers::{method, path, query_param};
 use wiremock::{Mock, MockServer, ResponseTemplate};
@@ -64,8 +64,6 @@ async fn patch_sends_json_and_deserializes() {
 
 #[tokio::test]
 async fn download_original_writes_backup_bytes() {
-    use marple_db::Dataset;
-
     let server = MockServer::start().await;
     let body = b"csv-bytes";
 
@@ -104,8 +102,6 @@ async fn download_original_writes_backup_bytes() {
 
 #[tokio::test]
 async fn get_dataset_by_path_sends_query() {
-    use marple_db::Dataset;
-
     let server = MockServer::start().await;
     Mock::given(method("GET"))
         .and(path("/api/v1/datapool/default/dataset"))
