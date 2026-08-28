@@ -17,7 +17,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Changed
 
 - Browse TUI inherits the terminal foreground instead of grey/white, so text stays readable in light terminals.
+- Browse no longer restores the last open stream; restarting `mdb browse` lands on the workspace stream list.
 - Browse stream and dataset details sit under the left list; the child table uses the full right column. Press `i` to expand inspect.
+- Opening a dataset keeps focus on that dataset in the left list; back returns to the datasets table. Only the focused pane uses the cyan row cursor.
 - Dataset commands take `--stream` (or `MDB_STREAM`) instead of a leading stream name: `mdb dataset list --stream Metrics`, `mdb dataset get xyz.metrics --stream Metrics`.
 - Dataset `get`, `download`, `reingest`, `debug`, and `delete` accept a dataset path or numeric id.
 - Dataset status output uses SDK `ImportStatus` names, including `UNKNOWN`.
@@ -29,7 +31,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Optional `native-tls` Cargo feature for SChannel / Secure Transport / OpenSSL (the SDK default already uses rustls with OS certificate roots).
 
 - `mdb` and `mdb browse` open a stream / dataset / signal browser (bare `mdb` only when stdin and stdout are a terminal; otherwise help is printed). Press `v` for an env-file picker (folders, typed path, recent files labeled by workspace). Session is saved in `$XDG_CONFIG_HOME/mdb/browse.toml`. The workspace card shows license and usage.
-- Browse `u` uploads files or folders into the selected file stream. Space selects, enter confirms. The modal has overwrite, skip-existing, and extension options. The dataset table shows upload then import progress until the dataset is ready. `POSTPROCESSING` is shown as `PROCESSING`.
+- Browse `u` uploads files or folders into the selected file stream. Enter/space selects, `a` selects all in the current folder. The modal counts files vs folders, and has overwrite, skip-existing, and extension options. The dataset table shows upload then import progress until the dataset is ready. `POSTPROCESSING` is shown as `PROCESSING`.
+- Browse `d` downloads original files: enter/space select datasets, `a` selects all visible rows, `d` on a stream downloads the whole stream. A folder picker chooses the destination and shows how many datasets will be written; the dataset table shows a `DOWNLOADING` progress overlay.
+- Browse `x` deletes the selected datasets (enter confirms). Browse `r` re-queues them for ingest from the original file.
 - `/` filters the focused table (case-insensitive substring of any column). The `/` prompt is visible while editing; Enter keeps the filter, Esc cancels the edit, Esc again clears it. Long tables window the visible rows (`1–20 of 180`).
 
 ## [0.3.0] - 2026-08-20

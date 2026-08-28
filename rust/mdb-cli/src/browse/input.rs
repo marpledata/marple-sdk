@@ -18,6 +18,9 @@ pub(super) enum InputMode {
         files: bool,
         submit: bool,
     },
+    Download {
+        editing: bool,
+    },
 }
 
 impl App {
@@ -34,6 +37,8 @@ impl App {
                 files: false,
                 submit: false,
             }
+        } else if self.download_typing() {
+            InputMode::Download { editing: true }
         } else if self.search.editing {
             InputMode::Search
         } else if self.env_picker.is_some() {
@@ -44,6 +49,8 @@ impl App {
                 files: form.focus.is_files(),
                 submit: form.focus == FormFocus::Upload,
             }
+        } else if self.download.picker.is_some() {
+            InputMode::Download { editing: false }
         } else if self.info_expanded {
             InputMode::Info
         } else {
@@ -66,7 +73,12 @@ impl App {
                 "tab files  h/l field  enter toggle/edit  esc close".to_string()
             }
             InputMode::Upload { .. } => {
-                "tab footer  j/k  enter select  → open  ← parent  / path  esc close".to_string()
+                "tab footer  j/k  enter select  a all  → open  ← parent  / path  esc close"
+                    .to_string()
+            }
+            InputMode::Download { editing: true } => "enter download here  esc cancel".to_string(),
+            InputMode::Download { .. } => {
+                "j/k  enter this folder  → open  ← parent  / path  esc close".to_string()
             }
             InputMode::Env { editing: true } => "enter use or open  esc cancel".to_string(),
             InputMode::Env { .. } => {
@@ -77,12 +89,12 @@ impl App {
             }
             InputMode::Browse if self.browse_level == BrowseLevel::Root => {
                 format!(
-                    "j/k  S-↓/↑ page  gg/G  / filter  → open  i info  u upload  v env ({env})  q quit"
+                    "j/k  S-↓/↑ page  gg/G  / filter  → open  i info  u upload  d download  x delete  r reingest  v env ({env})  q quit"
                 )
             }
             InputMode::Browse => {
                 format!(
-                    "tab list|table  j/k  S-↓/↑ page  gg/G  / filter  → open  i info  u upload  ← back  v env ({env})  q quit"
+                    "tab list|table  j/k  S-↓/↑ page  gg/G  / filter  enter select  a all  → open  i info  u upload  d download  x delete  r reingest  ← back  v env ({env})  q quit"
                 )
             }
         }
@@ -127,6 +139,10 @@ pub(super) async fn handle_key(app: &mut App, mut key: KeyEvent) -> bool {
                 app.handle_upload_input(key);
                 return false;
             }
+            InputMode::Download { editing: true } => {
+                app.handle_download_input(key);
+                return false;
+            }
             InputMode::Search => {
                 if handle_search_key(&mut app.search, key) != SearchAction::Ignored {
                     app.snap_search();
@@ -160,6 +176,10 @@ pub(super) async fn handle_key(app: &mut App, mut key: KeyEvent) -> bool {
                         app.handle_upload_key(key);
                         false
                     }
+                    InputMode::Download { .. } => {
+                        app.handle_download_key(key);
+                        false
+                    }
                     InputMode::Info | InputMode::Browse => handle_browse_key(app, key),
                     InputMode::Search => unreachable!(),
                 };
@@ -169,6 +189,9 @@ pub(super) async fn handle_key(app: &mut App, mut key: KeyEvent) -> bool {
 }
 
 fn handle_browse_key(app: &mut App, key: KeyEvent) -> bool {
+    if app.handle_confirm_key(key) {
+        return false;
+    }
     if matches!(key.code, KeyCode::Char('/')) && !app.info_expanded {
         app.motion.clear();
         app.search.start();
@@ -185,10 +208,18 @@ fn handle_browse_key(app: &mut App, key: KeyEvent) -> bool {
             app.snap_search();
         }
         KeyCode::Esc | KeyCode::Char('h') | KeyCode::Left => app.go_back(),
+        KeyCode::Enter if app.dataset_table_focused() && !app.info_expanded => {
+            app.toggle_dataset_selection();
+        }
         KeyCode::Char('l') | KeyCode::Right | KeyCode::Enter => app.activate(),
         KeyCode::Char('i') => app.toggle_info(),
         KeyCode::Char('v') => app.open_env(),
         KeyCode::Char('u') => app.open_upload(),
+        KeyCode::Char('d') => app.open_download(),
+        KeyCode::Char('x') => app.request_delete(),
+        KeyCode::Char('r') => app.request_reingest(),
+        KeyCode::Char(' ') => app.toggle_dataset_selection(),
+        KeyCode::Char('a') => app.select_all_datasets(),
         _ => {}
     }
     false
@@ -341,6 +372,7 @@ fn apply_motion(app: &mut App, motion: Motion) {
     match app.input_mode() {
         InputMode::Env { .. } => apply_env_motion(app, motion),
         InputMode::Upload { .. } => app.apply_upload_motion(motion),
+        InputMode::Download { .. } => app.apply_download_motion(motion),
         InputMode::Info => apply_info_motion(app, motion),
         InputMode::Browse => apply_browse_motion(app, motion),
         _ => {}

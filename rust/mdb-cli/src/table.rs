@@ -1,4 +1,4 @@
-use crate::browse::style::{block, body_style, highlight};
+use crate::browse::style::{block, body_style, highlight, idle_highlight};
 use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
 use ratatui::Frame;
 use ratatui::layout::{Constraint, Rect};
@@ -184,7 +184,11 @@ pub(crate) fn render_table(
     let mut table = Table::new(rows, widths)
         .block(block(&title, focused))
         .style(body_style())
-        .row_highlight_style(highlight())
+        .row_highlight_style(if focused {
+            highlight()
+        } else {
+            idle_highlight()
+        })
         .highlight_symbol("");
     if !headers.is_empty() {
         table = table.header(header_row(headers));

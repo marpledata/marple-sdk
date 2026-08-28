@@ -7,7 +7,7 @@ use super::format::{
 use super::picker::FilePicker;
 use super::session::settings_path;
 use super::style::{accent, accent_bold, block, body_style, highlight};
-use super::upload::{FormFocus, UploadForm};
+use super::upload::{FormFocus, UploadForm, selected_summary};
 use super::{AUTO_LOAD_LIMIT, App, BrowseLevel, Focus};
 use crate::table::{render_table, search_title, text_col};
 use marple_db::{CurrentWorkspace, StorageQuota};
@@ -69,6 +69,14 @@ pub(super) fn draw(frame: &mut Frame, app: &App) -> u16 {
 
     if let Some(form) = &app.upload.form {
         draw_upload_picker(frame, form);
+    } else if let Some(picker) = &app.download.picker {
+        draw_file_picker(
+            frame,
+            picker,
+            &app.download.title(),
+            Some(vec![Line::from(app.download.footer())]),
+            None,
+        );
     } else if let Some(picker) = &app.env_picker {
         draw_file_picker(
             frame,
@@ -126,7 +134,7 @@ fn draw_list(frame: &mut Frame, app: &App, area: Rect) {
             );
         }
         BrowseLevel::Datasets => {
-            let path_width = text_col(area, COUNT_COL, 1);
+            let path_width = text_col(area, ID_COL + COUNT_COL, 2);
             let title = app
                 .loaded_stream()
                 .map(|stream| format!("datasets  /{}", stream.name))
@@ -143,7 +151,11 @@ fn draw_list(frame: &mut Frame, app: &App, area: Rect) {
                 &title,
                 focused,
                 &[],
-                [Constraint::Min(4), Constraint::Length(COUNT_COL)],
+                [
+                    Constraint::Length(ID_COL),
+                    Constraint::Min(4),
+                    Constraint::Length(COUNT_COL),
+                ],
                 &indices,
                 app.loaded_datasets
                     .as_ref()
@@ -151,6 +163,7 @@ fn draw_list(frame: &mut Frame, app: &App, area: Rect) {
                 |index| {
                     let dataset = &app.datasets()[index];
                     Row::new([
+                        Cell::from(dataset.id.to_string()),
                         Cell::from(ellipsis(&dataset.path, path_width)),
                         count_cell(dataset.n_signals, "s"),
                     ])
@@ -264,6 +277,11 @@ fn draw_table(frame: &mut Frame, app: &App, area: Rect) {
                 return;
             }
             let indices = app.dataset_indices(focused);
+            let title = selection_title(&title, app.selected_datasets.len());
+            let mut headers = vec![""];
+            headers.extend(col_headers(DATASET_COLS, &DATASET_EXTRA));
+            let mut widths = vec![Constraint::Length(4)];
+            widths.extend(col_widths(DATASET_COLS, &DATASET_EXTRA));
             render_table(
                 frame,
                 area,
@@ -273,21 +291,25 @@ fn draw_table(frame: &mut Frame, app: &App, area: Rect) {
                     title
                 },
                 focused,
-                &col_headers(DATASET_COLS, &DATASET_EXTRA),
-                col_widths(DATASET_COLS, &DATASET_EXTRA),
+                &headers,
+                widths,
                 &indices,
                 app.loaded_datasets
                     .as_ref()
                     .and_then(|loaded| loaded.selected_index()),
                 |index| {
                     let dataset = &app.datasets()[index];
-                    let mut cells = col_cells(DATASET_COLS, dataset);
+                    let mut cells =
+                        vec![Cell::from(dataset_mark(app.is_dataset_checked(dataset.id)))];
+                    cells.extend(col_cells(DATASET_COLS, dataset));
                     cells.push(Cell::from(dataset_status_cell(app, dataset)));
                     cells.push(progress_cell(
-                        app.upload
+                        app.download
                             .byte_ratio(dataset.id)
+                            .or_else(|| app.upload.byte_ratio(dataset.id))
                             .or(dataset.import_progress),
                         shows_progress(dataset.import_status)
+                            || app.download.byte_ratio(dataset.id).is_some()
                             || app.upload.byte_ratio(dataset.id).is_some(),
                     ));
                     Row::new(cells)
@@ -511,23 +533,35 @@ fn draw_help(frame: &mut Frame, app: &App, area: Rect) {
 }
 
 fn dataset_status_cell(app: &App, dataset: &marple_db::Dataset) -> String {
-    let status = dataset.import_status.as_str();
-    if app.upload.is_active(dataset.id) {
-        format!("{status} {}", app.loading_dots())
+    if app.download.is_active(dataset.id) {
+        format!("DOWNLOADING {}", app.loading_dots())
+    } else if app.batch.is_deleting(dataset.id) {
+        format!("DELETING {}", app.loading_dots())
+    } else if app.upload.is_active(dataset.id) {
+        format!("{} {}", dataset.import_status.as_str(), app.loading_dots())
     } else {
-        status.to_string()
+        dataset.import_status.as_str().to_string()
+    }
+}
+
+fn dataset_mark(checked: bool) -> &'static str {
+    if checked { "[x]" } else { "[ ]" }
+}
+
+fn selection_title(title: &str, selected: usize) -> String {
+    if selected == 0 {
+        title.to_string()
+    } else {
+        format!("{title}  ({selected} selected)")
     }
 }
 
 fn draw_upload_picker(frame: &mut Frame, form: &UploadForm) {
-    let title = if form.selected.is_empty() {
+    let summary = selected_summary(&form.selected);
+    let title = if summary.is_empty() {
         format!("upload  /{}", form.stream_name)
     } else {
-        format!(
-            "upload  /{}  ({} selected)",
-            form.stream_name,
-            form.selected.len()
-        )
+        format!("upload  /{}  ({summary})", form.stream_name)
     };
     draw_file_picker(
         frame,
@@ -606,11 +640,11 @@ fn upload_metadata_line(form: &UploadForm) -> Line<'static> {
 }
 
 fn upload_submit_line(form: &UploadForm) -> Line<'static> {
-    let n = form.selected.len();
-    let label = if n == 0 {
+    let summary = selected_summary(&form.selected);
+    let label = if summary.is_empty() {
         "upload  (select files)".to_string()
     } else {
-        format!("upload  {n} file{}", if n == 1 { "" } else { "s" })
+        format!("upload  {summary}")
     };
     Line::from(Span::styled(label, field_style(form, FormFocus::Upload)))
 }

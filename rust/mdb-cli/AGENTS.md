@@ -8,11 +8,12 @@ the Rust SDK crate `marple-db`.
 - `src/main.rs`: clap command definitions, argument parsing, command handlers,
   progress output, and process exit behavior.
 - `src/browse/`: stream / dataset / signal browser started by `mdb` (TTY) or
-  `mdb browse`. Session (env file and last stream) is saved in
+  `mdb browse`. Session (env file, recents, last upload folder) is saved in
   `$XDG_CONFIG_HOME/mdb/browse.toml`. Key handling and vim motion live in
   `input.rs`. The env-file modal lives in `picker.rs`. Upload from a stream
-  (`u`) lives in `upload.rs`. TUI palette and bordered chrome live in
-  `style.rs`.
+  (`u`) lives in `upload.rs`. Download of original files (`d`) lives in
+  `download.rs`. Dataset delete (`x`) and reingest (`r`) live in `batch.rs`.
+  TUI palette and bordered chrome live in `style.rs`.
 - `src/table.rs`: shared windowed table draw plus `/` substring row search used
   by browse.
 - `tests/integration.rs`: CLI tests using `assert_cmd`.

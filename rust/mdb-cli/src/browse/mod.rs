@@ -1,3 +1,5 @@
+mod batch;
+mod download;
 mod draw;
 mod format;
 mod input;
@@ -9,7 +11,9 @@ mod upload;
 use crate::connect;
 use crate::table::{TableSearch, Visible, goto_visible, snap_visible, step_visible};
 use anyhow::Result;
+use batch::BatchState;
 use crossterm::event::{Event, EventStream, KeyEventKind};
+use download::DownloadState;
 use draw::draw;
 use format::{
     ImportMix, dataset_info, dataset_matches, signal_info, signal_matches, stream_info,
@@ -25,6 +29,7 @@ use session::{
     BrowseSettings, RecentEnv, apply_env_file, env_label, load_settings, local_dotenv,
     remember_recent, save_settings,
 };
+use std::collections::HashSet;
 use std::path::{Path, PathBuf};
 use tokio::sync::mpsc::{UnboundedReceiver, UnboundedSender};
 use upload::UploadState;
@@ -89,15 +94,10 @@ fn step_back(level: BrowseLevel, focus: Focus) -> (BrowseLevel, Focus) {
     if focus == Focus::Table && level != BrowseLevel::Root {
         return (level, Focus::List);
     }
-    let level = match level {
-        BrowseLevel::Datasets => BrowseLevel::Streams,
-        _ => BrowseLevel::Root,
-    };
-    let focus = match level {
-        BrowseLevel::Root => Focus::Table,
-        _ => Focus::List,
-    };
-    (level, focus)
+    match level {
+        BrowseLevel::Datasets => (BrowseLevel::Streams, Focus::Table),
+        _ => (BrowseLevel::Root, Focus::Table),
+    }
 }
 
 #[derive(Clone, Copy)]
@@ -185,7 +185,6 @@ pub(super) struct App {
     loaded_datasets: Option<Loaded<Dataset>>,
     loaded_signals: Option<Loaded<Signal>>,
     pending: Option<PendingLoad>,
-    restore_stream_id: Option<i64>,
     load_gen: u64,
     events: UnboundedSender<Message>,
     browse_level: BrowseLevel,
@@ -200,6 +199,9 @@ pub(super) struct App {
     load_tick: u8,
     search: TableSearch,
     upload: UploadState,
+    download: DownloadState,
+    batch: BatchState,
+    selected_datasets: HashSet<i64>,
     upload_dir: Option<PathBuf>,
 }
 
@@ -219,7 +221,6 @@ pub async fn run(db: MarpleDB, url: String, env_file: Option<PathBuf>) -> Result
     };
     let (tx, rx) = tokio::sync::mpsc::unbounded_channel();
     let mut app = App::new(db, url, env_file, settings.recents.clone(), tx);
-    app.restore_stream_id = settings.stream_id;
     app.upload_dir = settings.upload_dir.filter(|path| path.is_dir());
     if let Some(path) = app.env_file.clone()
         && let Err(error) = app.connect_from_path(&path)
@@ -286,6 +287,8 @@ async fn apply_message(app: &mut App, message: Message) -> bool {
         Message::Tick => {
             app.load_tick = app.load_tick.wrapping_add(1);
             app.on_upload_tick().await;
+            app.on_download_tick();
+            app.on_batch_tick();
             false
         }
     }
@@ -333,7 +336,6 @@ impl App {
             loaded_datasets: None,
             loaded_signals: None,
             pending: None,
-            restore_stream_id: None,
             load_gen: 0,
             events,
             browse_level: BrowseLevel::Root,
@@ -348,6 +350,9 @@ impl App {
             load_tick: 0,
             search: TableSearch::default(),
             upload: UploadState::default(),
+            download: DownloadState::default(),
+            batch: BatchState::default(),
+            selected_datasets: HashSet::new(),
             upload_dir: None,
         }
     }
@@ -406,25 +411,11 @@ impl App {
     fn persist_settings(&mut self) {
         let settings = BrowseSettings {
             env_file: self.env_file.clone(),
-            stream_id: self.session_stream_id(),
             recents: self.recents.clone(),
             upload_dir: self.upload_dir.clone(),
         };
         if let Err(error) = save_settings(&settings) {
             self.status = error.to_string();
-        }
-    }
-
-    fn restore_session(&mut self, stream_id: i64) {
-        if let Some(index) = self
-            .streams
-            .iter()
-            .position(|stream| stream.id == stream_id)
-        {
-            self.stream_state.select(Some(index));
-            self.browse_level = BrowseLevel::Streams;
-            self.focus = Focus::List;
-            self.request_datasets(stream_id);
         }
     }
 
@@ -489,7 +480,7 @@ impl App {
             return;
         };
         self.browse_level = BrowseLevel::Datasets;
-        self.focus = Focus::Table;
+        self.focus = Focus::List;
         self.status.clear();
         self.request_signals(stream_id, dataset_id);
     }
@@ -562,7 +553,10 @@ impl App {
     }
 
     fn needs_tick(&self) -> bool {
-        self.pending.is_some() || self.upload.needs_tick()
+        self.pending.is_some()
+            || self.upload.needs_tick()
+            || self.download.needs_tick()
+            || self.batch.needs_tick()
     }
 
     pub(super) fn loading_dots(&self) -> &'static str {
@@ -644,9 +638,6 @@ impl App {
         );
         self.workspace = workspace.map(|workspace| *workspace);
         self.status.clear();
-        if let Some(stream_id) = self.restore_stream_id.take() {
-            self.restore_session(stream_id);
-        }
         self.remember_current_env();
         self.env_picker = None;
         self.persist_settings();
@@ -654,9 +645,12 @@ impl App {
 
     fn apply_datasets(&mut self, stream_id: i64, mut datasets: Vec<Dataset>) {
         datasets.sort_by_key(|dataset| std::cmp::Reverse(dataset.id));
+        self.selected_datasets.clear();
         self.upload.seed_watch(stream_id, &datasets);
         self.loaded_datasets = Some(Loaded::new(stream_id, datasets));
         self.loaded_signals = None;
+        self.on_datasets_loaded(stream_id);
+        self.on_batch_datasets_loaded(stream_id);
     }
 
     fn apply_signals(&mut self, dataset_id: i64, mut signals: Vec<Signal>) {
@@ -695,7 +689,10 @@ impl App {
         self.loaded_signals = None;
         self.pending = None;
         self.load_gen = self.load_gen.wrapping_add(1);
+        self.selected_datasets.clear();
         self.upload.clear();
+        self.download.clear();
+        self.batch.clear();
     }
 
     pub(super) fn datasets(&self) -> &[Dataset] {
@@ -718,14 +715,6 @@ impl App {
 
     pub(super) fn signals_dataset_id(&self) -> Option<i64> {
         self.loaded_signals.as_ref().map(|loaded| loaded.parent_id)
-    }
-
-    fn session_stream_id(&self) -> Option<i64> {
-        self.loaded_stream_id().or(match self.pending {
-            Some(PendingLoad::Datasets(id)) => Some(id),
-            Some(PendingLoad::Signals { stream_id, .. }) => Some(stream_id),
-            Some(PendingLoad::Streams) | None => None,
-        })
     }
 
     fn selected_stream(&self) -> Option<&Stream> {
@@ -928,7 +917,7 @@ mod tests {
         );
         assert_eq!(
             step_back(BrowseLevel::Datasets, Focus::List),
-            (BrowseLevel::Streams, Focus::List)
+            (BrowseLevel::Streams, Focus::Table)
         );
         assert_eq!(
             step_back(BrowseLevel::Streams, Focus::List),

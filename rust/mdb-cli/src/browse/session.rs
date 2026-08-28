@@ -16,8 +16,6 @@ pub(crate) struct RecentEnv {
 pub(crate) struct BrowseSettings {
     pub env_file: Option<PathBuf>,
     #[serde(default)]
-    pub stream_id: Option<i64>,
-    #[serde(default)]
     pub recents: Vec<RecentEnv>,
     #[serde(default)]
     pub upload_dir: Option<PathBuf>,
@@ -168,7 +166,6 @@ mod tests {
         with_xdg(tmp.path(), || {
             let settings = BrowseSettings {
                 env_file: Some(PathBuf::from("/tmp/custom.env")),
-                stream_id: Some(5),
                 recents: vec![RecentEnv {
                     path: PathBuf::from("/tmp/custom.env"),
                     workspace: "Staging".to_string(),
@@ -181,10 +178,25 @@ mod tests {
                 loaded.env_file.as_deref(),
                 Some(Path::new("/tmp/custom.env"))
             );
-            assert_eq!(loaded.stream_id, Some(5));
             assert_eq!(loaded.recents[0].workspace, "Staging");
             assert_eq!(loaded.upload_dir.as_deref(), Some(Path::new("/tmp/data")));
             assert!(tmp.path().join("mdb/browse.toml").is_file());
+        });
+    }
+
+    #[test]
+    fn ignores_legacy_stream_id_in_browse_toml() {
+        let tmp = tempfile::tempdir().unwrap();
+        with_xdg(tmp.path(), || {
+            let dir = tmp.path().join("mdb");
+            fs::create_dir_all(&dir).unwrap();
+            fs::write(
+                dir.join("browse.toml"),
+                "stream_id = 5\nenv_file = \"/tmp/x.env\"\n",
+            )
+            .unwrap();
+            let loaded = load_settings();
+            assert_eq!(loaded.env_file.as_deref(), Some(Path::new("/tmp/x.env")));
         });
     }
 

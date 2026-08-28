@@ -100,6 +100,20 @@ impl UploadState {
                 .any(|watch| watch.dataset_id == dataset_id)
     }
 
+    pub(super) fn watch_dataset(&mut self, stream_id: i64, dataset_id: i64) {
+        if self
+            .watch
+            .iter()
+            .any(|watch| watch.dataset_id == dataset_id)
+        {
+            return;
+        }
+        self.watch.push(Watch {
+            stream_id,
+            dataset_id,
+        });
+    }
+
     pub(super) fn seed_watch(&mut self, stream_id: i64, datasets: &[Dataset]) {
         self.watch.retain(|watch| watch.stream_id != stream_id);
         for dataset in datasets {
@@ -145,7 +159,7 @@ impl FormFocus {
 
 impl App {
     pub(super) fn open_upload(&mut self) {
-        if self.upload.form.is_some() {
+        if self.upload.form.is_some() || self.download.picker.is_some() {
             return;
         }
         if !self.connected {
@@ -231,6 +245,7 @@ impl App {
                 KeyCode::Char(' ') if form.focus.is_files() || form.is_checkbox() => {
                     form.activate()
                 }
+                KeyCode::Char('a') if form.focus.is_files() => form.toggle_all(),
                 KeyCode::Char('/') if form.focus.is_files() => form.picker.start_editing(),
                 KeyCode::Char('h') | KeyCode::Left if !form.focus.is_files() => {
                     form.focus = form.focus.prev_footer();
@@ -698,6 +713,49 @@ impl UploadForm {
             self.selected.insert(key);
         }
     }
+
+    fn toggle_all(&mut self) {
+        let keys: Vec<PathBuf> = self
+            .picker
+            .entries
+            .iter()
+            .filter(|entry| entry.name != "..")
+            .map(|entry| super::picker::path_key(&entry.path))
+            .collect();
+        if keys.is_empty() {
+            return;
+        }
+        let all_selected = keys.iter().all(|key| self.selected.contains(key));
+        if all_selected {
+            for key in keys {
+                self.selected.remove(&key);
+            }
+        } else {
+            self.selected.extend(keys);
+        }
+    }
+}
+
+pub(super) fn selected_summary(selected: &HashSet<PathBuf>) -> String {
+    let mut files = 0usize;
+    let mut folders = 0usize;
+    for path in selected {
+        if path.is_dir() {
+            folders += 1;
+        } else {
+            files += 1;
+        }
+    }
+    match (files, folders) {
+        (0, 0) => String::new(),
+        (files, 0) => format!("{files} file{}", if files == 1 { "" } else { "s" }),
+        (0, folders) => format!("{folders} folder{}", if folders == 1 { "" } else { "s" }),
+        (files, folders) => format!(
+            "{files} file{}, {folders} folder{}",
+            if files == 1 { "" } else { "s" },
+            if folders == 1 { "" } else { "s" }
+        ),
+    }
 }
 
 struct AtomicProgress(Arc<AtomicU64>);
@@ -759,9 +817,10 @@ fn collect_files(path: &Path, extension: Option<&str>) -> Result<Vec<PathBuf>, S
 
 #[cfg(test)]
 mod tests {
-    use super::{FormFocus, UploadForm, UploadState, collect_files, parse_meta};
+    use super::{FormFocus, UploadForm, UploadState, collect_files, parse_meta, selected_summary};
     use marple_db::Dataset;
     use serde_json::json;
+    use std::collections::HashSet;
     use std::fs;
 
     #[test]
@@ -842,5 +901,21 @@ mod tests {
         );
         assert!(parse_meta("nocolon").is_err());
         assert!(parse_meta("=value").is_err());
+    }
+
+    #[test]
+    fn selected_summary_names_files_and_folders() {
+        let tmp = tempfile::tempdir().unwrap();
+        let file = tmp.path().join("a.csv");
+        fs::write(&file, "x").unwrap();
+        let mut selected = HashSet::new();
+        selected.insert(file);
+        assert_eq!(selected_summary(&selected), "1 file");
+        selected.insert(tmp.path().to_path_buf());
+        let summary = selected_summary(&selected);
+        assert!(summary.contains("1 file"));
+        assert!(summary.contains("1 folder"));
+        selected.clear();
+        assert_eq!(selected_summary(&selected), "");
     }
 }

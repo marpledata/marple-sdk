@@ -8,7 +8,7 @@ pub(crate) fn body_style() -> Style {
 }
 
 pub(crate) fn accent() -> Style {
-    Style::default().fg(Color::Cyan)
+    Style::default().fg(Color::Blue)
 }
 
 pub(crate) fn accent_bold() -> Style {
@@ -18,9 +18,14 @@ pub(crate) fn accent_bold() -> Style {
 /// Cyan row highlight paints both fg and bg so it does not depend on the terminal theme.
 pub(crate) fn highlight() -> Style {
     Style::default()
-        .fg(Color::Black)
-        .bg(Color::Cyan)
+        .fg(Color::White)
+        .bg(Color::Blue)
         .add_modifier(Modifier::BOLD)
+}
+
+/// Unfocused row selection: painted background so it stays visible on light terminals.
+pub(crate) fn idle_highlight() -> Style {
+    Style::default().fg(Color::White).bg(Color::Gray)
 }
 
 pub(crate) fn block(title: &str, focused: bool) -> Block<'_> {
@@ -32,7 +37,7 @@ pub(crate) fn block(title: &str, focused: bool) -> Block<'_> {
 
 #[cfg(test)]
 mod tests {
-    use super::{accent, body_style, highlight};
+    use super::{accent, body_style, highlight, idle_highlight};
     use ratatui::style::{Color, Style};
 
     #[test]
@@ -41,5 +46,7 @@ mod tests {
         assert_eq!(accent().fg, Some(Color::Cyan));
         assert_eq!(highlight().fg, Some(Color::Black));
         assert_eq!(highlight().bg, Some(Color::Cyan));
+        assert_eq!(idle_highlight().fg, Some(Color::Black));
+        assert_eq!(idle_highlight().bg, Some(Color::Blue));
     }
 }

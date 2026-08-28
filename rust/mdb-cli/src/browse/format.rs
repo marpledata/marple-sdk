@@ -328,7 +328,7 @@ fn bar_color(ratio: f64) -> Color {
     } else if ratio >= 0.7 {
         Color::Yellow
     } else {
-        Color::Cyan
+        Color::Blue
     }
 }
 
@@ -387,7 +387,7 @@ pub(super) const STREAM_COLS: &[Col<Stream>] = &[
         stream_kind(stream).to_string()
     }),
     Col::new("name", Constraint::Min(16), |stream| stream.name.clone()),
-    Col::new("plugin", Constraint::Length(12), |stream| {
+    Col::new("plugin", Constraint::Length(16), |stream| {
         opt_text(stream.plugin.as_deref())
     }),
     Col::new("args", Constraint::Length(40), |stream| {
@@ -427,7 +427,7 @@ pub(super) const DATASET_COLS: &[Col<Dataset>] = &[
 ];
 
 pub(super) const DATASET_EXTRA: [(&str, Constraint); 2] = [
-    ("status", Constraint::Length(14)),
+    ("status", Constraint::Length(16)),
     ("progress", Constraint::Length(10)),
 ];
 
