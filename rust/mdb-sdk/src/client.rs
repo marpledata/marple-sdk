@@ -1,7 +1,7 @@
 use crate::errors::{Error, Result};
 use crate::models::{
-    CurrentWorkspace, Dataset, HealthResponse, Settings, Signal, Stream, UsageSeries, UsageType,
-    UserInfo, WorkspaceLicense,
+    CurrentWorkspace, Dataset, DatasetStatus, HealthResponse, Settings, Signal, Stream,
+    UsageSeries, UsageType, UserInfo, WorkspaceLicense,
 };
 use crate::progress::{NoopProgress, ProgressReporter};
 use crate::retry::{self, API_RETRY, STORAGE_RETRY};
@@ -202,6 +202,19 @@ impl MarpleDB {
         self.get_stream_by_id(stream_id).await
     }
 
+    /// Deletes a stream and all of its datasets.
+    ///
+    /// This cannot be undone. The API requires an admin token; a non-admin
+    /// request fails with [`Error::Api`] status 403.
+    pub async fn delete_stream(&self, stream_id: i64) -> Result<()> {
+        self.post::<_, Value>(
+            &format!("stream/{stream_id}/delete"),
+            &serde_json::json!({}),
+        )
+        .await?;
+        Ok(())
+    }
+
     /// Lists datasets in a stream.
     pub async fn get_datasets(&self, stream_id: i64) -> Result<Vec<Dataset>> {
         self.get_json(&format!("stream/{stream_id}/datasets")).await
@@ -221,6 +234,44 @@ impl MarpleDB {
     /// Fetches a dataset by stream id and dataset id.
     pub async fn get_dataset(&self, stream_id: i64, dataset_id: i64) -> Result<Dataset> {
         self.get_json(&format!("stream/{stream_id}/dataset/{dataset_id}"))
+            .await
+    }
+
+    /// Deletes a dataset.
+    ///
+    /// This cannot be undone.
+    pub async fn delete_dataset(&self, stream_id: i64, dataset_id: i64) -> Result<()> {
+        self.post::<_, Value>(
+            &format!("stream/{stream_id}/dataset/{dataset_id}/delete"),
+            &serde_json::json!({}),
+        )
+        .await?;
+        Ok(())
+    }
+
+    /// Re-queues a dataset for ingest from its original uploaded file.
+    pub async fn reingest_dataset(&self, stream_id: i64, dataset_id: i64) -> Result<()> {
+        self.post::<_, Value>(
+            &format!("stream/{stream_id}/dataset/{dataset_id}/reingest"),
+            &serde_json::json!({}),
+        )
+        .await?;
+        Ok(())
+    }
+
+    /// Fetches ingest debug messages for a dataset's latest ingestion record.
+    pub async fn get_debug_messages(&self, stream_id: i64, dataset_id: i64) -> Result<Vec<String>> {
+        self.get_json(&format!("stream/{stream_id}/dataset/{dataset_id}/debug"))
+            .await
+    }
+
+    /// Fetches current import status for the given dataset ids.
+    pub async fn get_dataset_statuses(
+        &self,
+        stream_id: i64,
+        dataset_ids: &[i64],
+    ) -> Result<Vec<DatasetStatus>> {
+        self.post(&format!("stream/{stream_id}/datasets/status"), &dataset_ids)
             .await
     }
 

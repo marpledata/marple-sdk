@@ -77,12 +77,17 @@ async fn main() -> anyhow::Result<()> {
 - `db.get_stream_by_id(stream_id)` fetches a stream by id.
 - `db.create_stream("runs", &serde_json::json!({ "plugin": "csv" }))` creates a stream.
 - `db.update_stream(stream_id, &serde_json::json!({ ... }))` updates stream metadata.
+- `db.delete_stream(stream_id)` deletes a stream and all of its datasets (admin token required).
 - `db.get_datasets(stream_id)` lists datasets in a stream.
 - `db.get_metadata_fields(stream_id)` lists metadata keys used in a stream.
 - `db.get_settings()` fetches workspace settings, including `INSIGHT_URL`.
 - `db.get_datapool_datasets("default")` lists datasets across a datapool.
 - `db.get_datapool_ingest_queue("default")` lists datasets currently in the ingest queue.
 - `db.get_dataset(stream_id, dataset_id)` fetches one dataset.
+- `db.delete_dataset(stream_id, dataset_id)` deletes a dataset.
+- `db.reingest_dataset(stream_id, dataset_id)` re-queues a dataset for ingest from its original file.
+- `db.get_debug_messages(stream_id, dataset_id)` fetches ingest debug messages.
+- `db.get_dataset_statuses(stream_id, &[dataset_id])` fetches import status for selected datasets.
 - `db.get_signals(stream_id, dataset_id)` lists signals in a dataset.
 - `db.push_file(stream_id, path, PushFileOptions::default())` uploads a file.
 - `db.wait_for_import(stream_id, dataset_id, timeout)` polls until import reaches a terminal status.

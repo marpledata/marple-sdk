@@ -9,7 +9,7 @@ use std::io::Write;
 use std::path::{Path, PathBuf};
 use std::sync::OnceLock;
 use std::sync::atomic::{AtomicBool, Ordering};
-use std::time::{Duration, SystemTime, UNIX_EPOCH};
+use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
 const TEST_STREAM_PREFIX: &str = "Salty Compulsory RustSdkTest";
 const MIB: u64 = 1024 * 1024;
@@ -77,9 +77,7 @@ async fn cleanup_streams(db: &MarpleDB) -> anyhow::Result<()> {
         if !stream.name.starts_with(TEST_STREAM_PREFIX) {
             continue;
         }
-        let _ = db
-            .post::<_, Value>(&format!("/stream/{}/delete", stream.id), &json!({}))
-            .await;
+        let _ = db.delete_stream(stream.id).await;
     }
     Ok(())
 }
@@ -101,9 +99,7 @@ async fn create_test_stream(db: &MarpleDB, suffix: &str) -> anyhow::Result<Strea
 }
 
 async fn delete_stream(db: &MarpleDB, stream_id: i64) {
-    let _ = db
-        .post::<_, Value>(&format!("/stream/{}/delete", stream_id), &json!({}))
-        .await;
+    let _ = db.delete_stream(stream_id).await;
 }
 
 async fn run_with_cleanup<F, Fut>(db: &MarpleDB, suffix: &str, flow: F) -> anyhow::Result<()>
@@ -180,6 +176,23 @@ async fn upload_and_assert_dataset(
                 signal.datastream_id == Some(stream_id) && signal.dataset_id == Some(dataset.id)
             }),
             "signals should include the parent stream and dataset ids"
+        );
+
+        let messages = db.get_debug_messages(stream_id, dataset.id).await?;
+        anyhow::ensure!(
+            !messages.is_empty(),
+            "finished import should have debug messages"
+        );
+
+        let statuses = db.get_dataset_statuses(stream_id, &[dataset.id]).await?;
+        let status = statuses
+            .iter()
+            .find(|status| status.dataset_id == dataset.id)
+            .ok_or_else(|| anyhow::anyhow!("dataset status missing for {}", dataset.id))?;
+        anyhow::ensure!(
+            status.import_status == ImportStatus::Finished,
+            "expected FINISHED status, got {}",
+            status.import_status
         );
     }
 
@@ -356,7 +369,7 @@ async fn run_auto_upload_flow(db: &MarpleDB, stream: Stream) -> anyhow::Result<(
 
     let metadata_deployment = "integration-test";
     let metadata_foo = "Bar";
-    upload_and_assert_dataset(
+    let dataset = upload_and_assert_dataset(
         db,
         stream.id,
         &csv_path,
@@ -368,6 +381,35 @@ async fn run_auto_upload_flow(db: &MarpleDB, stream: Stream) -> anyhow::Result<(
         true,
     )
     .await?;
+
+    db.reingest_dataset(stream.id, dataset.id).await?;
+    let busy_deadline = Instant::now() + Duration::from_secs(15);
+    loop {
+        let current = db.get_dataset(stream.id, dataset.id).await?;
+        if !current.import_status.is_success() {
+            break;
+        }
+        if Instant::now() > busy_deadline {
+            anyhow::bail!("reingest did not leave FINISHED");
+        }
+        tokio::time::sleep(Duration::from_millis(200)).await;
+    }
+    let reingested = db
+        .wait_for_import(stream.id, dataset.id, Duration::from_secs(180))
+        .await?;
+    anyhow::ensure!(
+        reingested.import_status == ImportStatus::Finished,
+        "reingest failed"
+    );
+
+    db.delete_dataset(stream.id, dataset.id).await?;
+    anyhow::ensure!(
+        db.get_datasets(stream.id)
+            .await?
+            .iter()
+            .all(|candidate| candidate.id != dataset.id),
+        "deleted dataset still present in dataset list"
+    );
 
     Ok(())
 }

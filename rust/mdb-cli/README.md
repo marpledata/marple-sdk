@@ -49,10 +49,14 @@ Exported shell variables take precedence over values in dotenv files, and explic
 - `mdb stream get <stream-name>` prints one stream.
 - `mdb stream new <stream-name> [key=value ...]` creates a stream.
 - `mdb stream update <stream-name> [key=value ...]` updates stream properties.
+- `mdb stream delete <stream-name>` deletes a stream and all of its datasets (admin token required).
 - `mdb ingest <stream-name> [options] <files-or-directories>...` uploads files.
 - `mdb dataset <stream-name> list [--format short|long]` lists datasets in a stream.
 - `mdb dataset <stream-name> get <dataset-id>` prints one dataset.
 - `mdb dataset <stream-name> download [--output-dir DIR] [dataset-id]` downloads original uploaded files.
+- `mdb dataset <stream-name> reingest <dataset-id>` re-queues a dataset for ingest; poll with `mdb dataset get`.
+- `mdb dataset <stream-name> debug <dataset-id>` prints ingest debug messages.
+- `mdb dataset <stream-name> delete <dataset-id>` deletes a dataset.
 - `mdb datapool datasets [--pool POOL] [--queue] [--format short|long]` lists datapool datasets.
 - `mdb get`, `mdb post`, and `mdb delete` call raw API endpoints.
 - `mdb` (no subcommand) opens a stream / dataset / signal browser when stdin and stdout are a terminal; otherwise it prints help. `mdb browse` opens the same browser explicitly. It loads `./.env` from the current directory, or the path last saved in `$XDG_CONFIG_HOME/mdb/browse.toml` (typically `~/.config/mdb/browse.toml`). Pass `--env-file` to choose another file, or press `v` to browse local folders, type a path, or pick a recently used file (shown with its workspace name). The chosen file is saved for the next session. Press `/` to filter the focused table.
@@ -103,6 +107,18 @@ mdb post "/query" query="select path, stream_id, metadata from mdb_default_datas
 
 # Download the original file
 mdb dataset "Test Stream" download --output-dir ./backups 12345
+
+# Print ingest debug messages
+mdb dataset "Test Stream" debug 12345
+
+# Re-queue the original file for ingest; poll with `mdb dataset get`
+mdb dataset "Test Stream" reingest 12345
+
+# Delete a dataset
+mdb dataset "Test Stream" delete 12345
+
+# Delete a stream and all of its datasets (admin token required)
+mdb stream delete "Test Stream"
 ```
 
 ### Batch Ingestion

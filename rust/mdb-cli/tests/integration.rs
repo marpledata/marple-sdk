@@ -203,6 +203,32 @@ fn test_env_file_appears_in_help() {
 }
 
 #[test]
+fn test_stream_help_mentions_delete() {
+    let mut cmd = cargo_bin_cmd!("mdb");
+    cmd.env("NO_COLOR", "1");
+    let output = cmd.args(["stream", "--help"]).assert().success();
+    let stdout = String::from_utf8_lossy(&output.get_output().stdout);
+    assert!(
+        stdout.contains("delete"),
+        "stream help should mention delete, got: {stdout}"
+    );
+}
+
+#[test]
+fn test_dataset_help_mentions_mutations() {
+    let mut cmd = cargo_bin_cmd!("mdb");
+    cmd.env("NO_COLOR", "1");
+    let output = cmd.args(["dataset", "--help"]).assert().success();
+    let stdout = String::from_utf8_lossy(&output.get_output().stdout);
+    for expected in ["delete", "reingest", "debug"] {
+        assert!(
+            stdout.contains(expected),
+            "dataset help should mention {expected}, got: {stdout}"
+        );
+    }
+}
+
+#[test]
 fn test_no_args_without_tty_prints_help() {
     let mut cmd = cargo_bin_cmd!("mdb");
     cmd.env("NO_COLOR", "1");
@@ -539,6 +565,62 @@ async fn test_db_flow_via_cli() {
         verify_parquet_columns(&p);
     }
 
+    let debug = mdb_cmd(&token, url.as_deref())
+        .args(["dataset", &stream_name, "debug", &dataset_id.to_string()])
+        .assert()
+        .success();
+    let messages = parse_json_stdout(&debug);
+    assert!(
+        messages
+            .as_array()
+            .is_some_and(|messages| !messages.is_empty()),
+        "debug messages should be a non-empty array"
+    );
+
+    mdb_cmd(&token, url.as_deref())
+        .args(["dataset", &stream_name, "reingest", &dataset_id.to_string()])
+        .assert()
+        .success();
+
+    last_status = None;
+    let mut saw_busy = false;
+    let deadline = std::time::Instant::now() + Duration::from_secs(60);
+    while std::time::Instant::now() < deadline {
+        let ds_get = mdb_cmd(&token, url.as_deref())
+            .args(["dataset", &stream_name, "get", &dataset_id.to_string()])
+            .assert()
+            .success();
+        let ds_obj = parse_json_stdout(&ds_get);
+        let status = ds_obj
+            .get("import_status")
+            .and_then(|v| v.as_str())
+            .unwrap_or("")
+            .to_string();
+        last_status = Some(status.clone());
+        if status != "FINISHED" && status != "FAILED" {
+            saw_busy = true;
+        }
+        if saw_busy && (status == "FINISHED" || status == "FAILED") {
+            break;
+        }
+        tokio::time::sleep(Duration::from_millis(500)).await;
+    }
+    assert_eq!(
+        last_status.as_deref(),
+        Some("FINISHED"),
+        "reingest did not finish"
+    );
+
+    mdb_cmd(&token, url.as_deref())
+        .args(["dataset", &stream_name, "delete", &dataset_id.to_string()])
+        .assert()
+        .success();
+
+    mdb_cmd(&token, url.as_deref())
+        .args(["stream", "delete", &stream_name])
+        .assert()
+        .success();
+
     // Cleanup leftovers: delete any stream whose name starts with "Salty Compulsory"
     // (covers stale streams from previously failed runs).
     let streams_json = mdb_cmd(&token, url.as_deref())
@@ -552,11 +634,8 @@ async fn test_db_flow_via_cli() {
         if !name.to_lowercase().starts_with("salty compulsory rusttest") {
             continue;
         }
-        let Some(id) = s.get("id").and_then(|v| v.as_i64()) else {
-            continue;
-        };
         let _ = mdb_cmd(&token, url.as_deref())
-            .args(["post", &format!("/stream/{id}/delete")])
+            .args(["stream", "delete", name])
             .assert()
             .success();
     }

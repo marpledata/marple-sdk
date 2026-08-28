@@ -591,6 +591,29 @@ pub struct Dataset {
     pub extra: Value,
 }
 
+/// Import status for one dataset, as returned by `POST /stream/{id}/datasets/status`.
+///
+/// Unknown keys such as the ingestion record `id` land in [`DatasetStatus::extra`].
+#[non_exhaustive]
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct DatasetStatus {
+    /// Dataset id.
+    #[serde(default, deserialize_with = "deserialize_i64")]
+    pub dataset_id: i64,
+    /// Current import status.
+    #[serde(default)]
+    pub import_status: ImportStatus,
+    /// Current import progress, if available.
+    #[serde(default)]
+    pub import_progress: Option<f64>,
+    /// Import status message, if available.
+    #[serde(default)]
+    pub import_message: Option<String>,
+    /// Additional status fields returned by the API.
+    #[serde(flatten)]
+    pub extra: Value,
+}
+
 /// Storage lifecycle of a signal.
 #[non_exhaustive]
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]

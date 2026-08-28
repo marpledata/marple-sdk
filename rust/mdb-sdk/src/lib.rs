@@ -64,9 +64,9 @@ pub const SAAS_URL: &str = "https://db.marpledata.com/api/v1";
 pub use client::{MarpleDB, MarpleDBBuilder};
 pub use errors::{Error, Result, SourceError};
 pub use models::{
-    CurrentWorkspace, Dataset, HealthResponse, ImportStatus, LicenseLimits, LicensePayload,
-    LicenseType, Metadata, PushFileOptions, RealtimeTier, Settings, Signal, StorageQuota,
-    StorageStatus, Stream, StreamType, UploadModeOverride, UsageSeries, UsageType, UserInfo,
-    WorkspaceLicense, WorkspaceMembership,
+    CurrentWorkspace, Dataset, DatasetStatus, HealthResponse, ImportStatus, LicenseLimits,
+    LicensePayload, LicenseType, Metadata, PushFileOptions, RealtimeTier, Settings, Signal,
+    StorageQuota, StorageStatus, Stream, StreamType, UploadModeOverride, UsageSeries, UsageType,
+    UserInfo, WorkspaceLicense, WorkspaceMembership,
 };
 pub use progress::{NoopProgress, ProgressReporter};

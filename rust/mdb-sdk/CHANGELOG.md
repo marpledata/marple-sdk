@@ -9,6 +9,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- `delete_stream()`, `delete_dataset()`, `reingest_dataset()`, `get_debug_messages()`, and `get_dataset_statuses()`.
 - Typed helpers for license, user/workspace info, usage, settings, stream metadata, `get_stream_by_id()`, and `get_signals()`.
 - `download_original()` / `download_original_with_progress()`.
 - TLS features (`rustls-tls-native-roots` default, `rustls-tls`, `native-tls`), `SAAS_URL`, `VERSION`, and a generic `patch` helper.

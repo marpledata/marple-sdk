@@ -184,6 +184,12 @@ enum StreamCommands {
         #[arg(num_args = 0.., value_parser = parse_key_val)]
         properties: Vec<(String, Value)>,
     },
+
+    /// Delete a stream and all of its datasets; requires an admin token
+    Delete {
+        /// Stream name
+        stream_name: String,
+    },
 }
 
 #[derive(Subcommand)]
@@ -209,6 +215,24 @@ enum DatasetCommands {
 
         /// Dataset ID; omit to download all datasets in the stream
         dataset_id: Option<i64>,
+    },
+
+    /// Re-queue a dataset for ingest from its original uploaded file
+    Reingest {
+        /// Dataset ID
+        dataset_id: i64,
+    },
+
+    /// Print ingest debug messages for a dataset
+    Debug {
+        /// Dataset ID
+        dataset_id: i64,
+    },
+
+    /// Delete a dataset
+    Delete {
+        /// Dataset ID
+        dataset_id: i64,
     },
 }
 
@@ -353,6 +377,17 @@ async fn handle_stream_commands(marpledb: &MarpleDB, command: &StreamCommands) -
                 .await?;
             println!("{}", serde_json::to_string_pretty(&updated_stream)?);
         }
+        StreamCommands::Delete { stream_name } => {
+            let stream = marpledb.get_stream(stream_name).await?;
+            marpledb.delete_stream(stream.id).await?;
+            println!(
+                "{}",
+                serde_json::to_string_pretty(&serde_json::json!({
+                    "status": "success",
+                    "id": stream.id,
+                }))?
+            );
+        }
     }
     Ok(())
 }
@@ -392,6 +427,18 @@ async fn handle_dataset_commands(
                     }
                 }
             }
+        }
+        DatasetCommands::Reingest { dataset_id } => {
+            marpledb.reingest_dataset(stream.id, *dataset_id).await?;
+            println!("{} {}", "✓".green(), dataset_id);
+        }
+        DatasetCommands::Debug { dataset_id } => {
+            let messages = marpledb.get_debug_messages(stream.id, *dataset_id).await?;
+            println!("{}", serde_json::to_string_pretty(&messages)?);
+        }
+        DatasetCommands::Delete { dataset_id } => {
+            marpledb.delete_dataset(stream.id, *dataset_id).await?;
+            println!("{} {}", "✓".green(), dataset_id);
         }
     }
     Ok(())

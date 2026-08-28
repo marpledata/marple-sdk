@@ -19,6 +19,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- `mdb stream delete`, `mdb dataset … delete`, `mdb dataset … reingest`, and `mdb dataset … debug`.
 - Optional `native-tls` Cargo feature for SChannel / Secure Transport / OpenSSL (the SDK default already uses rustls with OS certificate roots).
 
 - `mdb` and `mdb browse` open a stream / dataset / signal browser (bare `mdb` only when stdin and stdout are a terminal; otherwise help is printed). Press `v` for an env-file picker (folders, typed path, recent files labeled by workspace). Session is saved in `$XDG_CONFIG_HOME/mdb/browse.toml`. The workspace card shows license and usage.

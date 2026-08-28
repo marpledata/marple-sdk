@@ -1,6 +1,6 @@
-use marple_db::{HealthResponse, MarpleDB};
+use marple_db::{HealthResponse, ImportStatus, MarpleDB};
 use serde_json::json;
-use wiremock::matchers::{method, path};
+use wiremock::matchers::{body_json, method, path};
 use wiremock::{Mock, MockServer, ResponseTemplate};
 
 fn client(server: &MockServer) -> MarpleDB {
@@ -100,6 +100,103 @@ async fn download_original_writes_backup_bytes() {
         Some("run.csv")
     );
     assert_eq!(std::fs::read(&path).expect("bytes"), body);
+}
+
+#[tokio::test]
+async fn delete_stream_posts_empty_object() {
+    let server = MockServer::start().await;
+    Mock::given(method("POST"))
+        .and(path("/api/v1/stream/7/delete"))
+        .and(body_json(json!({})))
+        .respond_with(ResponseTemplate::new(200).set_body_json(json!({"status": "success"})))
+        .expect(1)
+        .mount(&server)
+        .await;
+
+    client(&server)
+        .delete_stream(7)
+        .await
+        .expect("delete stream");
+}
+
+#[tokio::test]
+async fn delete_dataset_posts_empty_object() {
+    let server = MockServer::start().await;
+    Mock::given(method("POST"))
+        .and(path("/api/v1/stream/7/dataset/42/delete"))
+        .and(body_json(json!({})))
+        .respond_with(ResponseTemplate::new(200).set_body_json(json!({"status": "success"})))
+        .expect(1)
+        .mount(&server)
+        .await;
+
+    client(&server)
+        .delete_dataset(7, 42)
+        .await
+        .expect("delete dataset");
+}
+
+#[tokio::test]
+async fn reingest_dataset_posts_empty_object() {
+    let server = MockServer::start().await;
+    Mock::given(method("POST"))
+        .and(path("/api/v1/stream/7/dataset/42/reingest"))
+        .and(body_json(json!({})))
+        .respond_with(ResponseTemplate::new(200).set_body_json(json!({"status": "success"})))
+        .expect(1)
+        .mount(&server)
+        .await;
+
+    client(&server)
+        .reingest_dataset(7, 42)
+        .await
+        .expect("reingest");
+}
+
+#[tokio::test]
+async fn get_debug_messages_returns_string_list() {
+    let server = MockServer::start().await;
+    Mock::given(method("GET"))
+        .and(path("/api/v1/stream/7/dataset/42/debug"))
+        .respond_with(ResponseTemplate::new(200).set_body_json(json!(["started", "done"])))
+        .expect(1)
+        .mount(&server)
+        .await;
+
+    let messages = client(&server)
+        .get_debug_messages(7, 42)
+        .await
+        .expect("debug");
+    assert_eq!(messages, ["started", "done"]);
+}
+
+#[tokio::test]
+async fn get_dataset_statuses_posts_id_array() {
+    let server = MockServer::start().await;
+    Mock::given(method("POST"))
+        .and(path("/api/v1/stream/7/datasets/status"))
+        .and(body_json(json!([42])))
+        .respond_with(ResponseTemplate::new(200).set_body_json(json!([{
+            "dataset_id": 42,
+            "import_status": "FINISHED",
+            "import_progress": 1.0,
+            "import_message": "done",
+            "id": 99
+        }])))
+        .expect(1)
+        .mount(&server)
+        .await;
+
+    let statuses = client(&server)
+        .get_dataset_statuses(7, &[42])
+        .await
+        .expect("statuses");
+    assert_eq!(statuses.len(), 1);
+    assert_eq!(statuses[0].dataset_id, 42);
+    assert_eq!(statuses[0].import_status, ImportStatus::Finished);
+    assert_eq!(statuses[0].import_progress, Some(1.0));
+    assert_eq!(statuses[0].import_message.as_deref(), Some("done"));
+    assert_eq!(statuses[0].extra.get("id"), Some(&json!(99)));
 }
 
 #[tokio::test]

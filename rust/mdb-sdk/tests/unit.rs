@@ -1,6 +1,7 @@
 use marple_db::{
-    Dataset, ImportStatus, LicenseType, RealtimeTier, SAAS_URL, Settings, Signal, StorageQuota,
-    StorageStatus, Stream, StreamType, UsageSeries, UserInfo, VERSION, WorkspaceLicense,
+    Dataset, DatasetStatus, ImportStatus, LicenseType, RealtimeTier, SAAS_URL, Settings, Signal,
+    StorageQuota, StorageStatus, Stream, StreamType, UsageSeries, UserInfo, VERSION,
+    WorkspaceLicense,
 };
 use serde_json::json;
 
@@ -422,6 +423,24 @@ fn dataset_id_accepts_float_json_numbers() {
     assert_eq!(dataset.id, 12);
     assert_eq!(dataset.datastream_id, 4);
     assert_eq!(dataset.import_status, ImportStatus::Finished);
+}
+
+#[test]
+fn dataset_status_keeps_ingestion_id_in_extra() {
+    let status: DatasetStatus = serde_json::from_value(json!({
+        "dataset_id": 42,
+        "import_status": "FINISHED",
+        "import_progress": 1.0,
+        "import_message": "done",
+        "id": 99
+    }))
+    .expect("dataset status JSON");
+
+    assert_eq!(status.dataset_id, 42);
+    assert_eq!(status.import_status, ImportStatus::Finished);
+    assert_eq!(status.import_progress, Some(1.0));
+    assert_eq!(status.import_message.as_deref(), Some("done"));
+    assert_eq!(status.extra.get("id"), Some(&json!(99)));
 }
 
 #[test]
