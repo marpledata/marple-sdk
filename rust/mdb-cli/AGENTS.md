@@ -43,6 +43,6 @@ the Rust SDK crate `marple-db`.
 - Keep progress bars and colored output out of JSON stdout paths so scripts can
   parse command responses reliably.
 - TUI palette lives in `src/browse/style.rs`. Body text inherits the terminal
-  foreground; do not use Gray, DarkGray, White, or Dim (they vanish on light
-  terminals). Row highlight paints both ends: black on LightBlue when focused,
-  white on Blue when idle.
+  foreground; do not use Gray, DarkGray, White, or Dim as foreground without a
+  background (they vanish on light terminals). Row highlight paints both ends:
+  black on Blue when focused, black on Gray when idle.

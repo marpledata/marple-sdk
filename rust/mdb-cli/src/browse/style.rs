@@ -16,17 +16,17 @@ pub(crate) fn accent_bold() -> Style {
     accent().add_modifier(Modifier::BOLD)
 }
 
-/// Focused row: black on light blue reads on light and dark terminals.
+/// Focused row: black on blue reads on light and dark terminals.
 pub(crate) fn highlight() -> Style {
     Style::default()
         .fg(Color::Black)
-        .bg(Color::LightBlue)
+        .bg(Color::Blue)
         .add_modifier(Modifier::BOLD)
 }
 
-/// Unfocused row: white on blue — both ends are painted, so neither theme washes out.
+/// Unfocused row: black on gray — both ends are painted, so neither theme washes out.
 pub(crate) fn idle_highlight() -> Style {
-    Style::default().fg(Color::White).bg(Color::Blue)
+    Style::default().fg(Color::Black).bg(Color::Gray)
 }
 
 pub(crate) fn block(title: &str, focused: bool) -> Block<'_> {
@@ -46,8 +46,8 @@ mod tests {
         assert_eq!(body_style(), Style::default());
         assert_eq!(accent().fg, Some(Color::Blue));
         assert_eq!(highlight().fg, Some(Color::Black));
-        assert_eq!(highlight().bg, Some(Color::LightBlue));
-        assert_eq!(idle_highlight().fg, Some(Color::White));
-        assert_eq!(idle_highlight().bg, Some(Color::Blue));
+        assert_eq!(highlight().bg, Some(Color::Blue));
+        assert_eq!(idle_highlight().fg, Some(Color::Black));
+        assert_eq!(idle_highlight().bg, Some(Color::Gray));
     }
 }
