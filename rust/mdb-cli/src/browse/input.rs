@@ -57,73 +57,94 @@ impl App {
         }
     }
 
-    pub(super) fn help_text(&self) -> String {
-        let env = self.env_label();
-        match self.input_mode() {
-            InputMode::Search if self.debug.search.editing => {
-                format!(
-                    "filter  /{}_  enter keep  esc cancel",
-                    self.debug.search.query
-                )
-            }
-            InputMode::Search => {
-                format!("filter  /{}_  enter keep  esc cancel", self.search.query)
-            }
-            _ if self.in_visual() => {
-                "visual  j/k  gg/G  v/enter/space keep  esc cancel".to_string()
-            }
-            _ if self
-                .upload
-                .form
-                .as_ref()
-                .is_some_and(UploadForm::in_visual) =>
-            {
-                "visual  j/k  gg/G  v/space keep  esc cancel".to_string()
-            }
-            _ if !self.status.is_empty() => self.status.clone(),
-            InputMode::Upload { editing: true, .. } => "enter keep  esc cancel".to_string(),
-            InputMode::Upload { submit: true, .. } => {
-                "enter upload  tab files  h/l field  esc close".to_string()
-            }
-            InputMode::Upload { files: false, .. } => {
-                "tab files  h/l field  enter toggle/edit  esc close".to_string()
-            }
-            InputMode::Upload { .. } => {
-                "tab footer  j/k  space toggle  v range  a all  A clear  → open  ← parent  / path  esc close"
-                    .to_string()
-            }
-            InputMode::Download { editing: true } => "enter download here  esc cancel".to_string(),
-            InputMode::Download { .. } => {
-                "j/k  enter this folder  enter ../ up  → open  ← parent  / path  esc close"
-                    .to_string()
-            }
-            InputMode::Env { editing: true } => "enter use or open  esc cancel".to_string(),
-            InputMode::Env { .. } => {
-                "j/k  tab recent|files  enter open/use  ← parent  / path  esc close".to_string()
-            }
-            InputMode::Info if self.info_expanded => {
-                format!("j/k scroll  S-↓/↑ page  gg/G  i/esc close  w env ({env})  q quit")
-            }
-            InputMode::Info => {
-                format!(
-                    "j/k scroll  S-↓/↑ page  gg/G  → view  ← back  / filter  i info  w env ({env})  q quit"
-                )
-            }
-            InputMode::Browse if self.browse_level == BrowseLevel::Root => {
-                format!(
-                    "j/k  S-↓/↑ page  gg/G  / filter  → open  i info  u upload  d download  x delete  r reingest  p process  w env ({env})  q quit"
-                )
-            }
-            InputMode::Browse if self.browse_level == BrowseLevel::Datasets => {
-                format!(
-                    "tab list|table  j/k  S-↓/↑ page  gg/G  / filter  → view  ← back  i info  u upload  d download  x delete  r reingest  p process  w env ({env})  q quit"
-                )
-            }
-            InputMode::Browse => {
-                format!(
-                    "tab list|table  j/k  S-↓/↑ page  gg/G  / filter  space toggle  v range  a all  A clear  → open  i info  u upload  d download  x delete  r reingest  p process  ← back  w env ({env})  q quit"
-                )
-            }
+    pub(super) fn hint_text(&self) -> String {
+        let visual =
+            self.in_visual() || self.upload.form.as_ref().is_some_and(UploadForm::in_visual);
+        let query = if self.debug.search.editing {
+            Some(self.debug.search.query.as_str())
+        } else if self.search.editing {
+            Some(self.search.query.as_str())
+        } else {
+            None
+        };
+        short_hint(
+            self.input_mode(),
+            visual,
+            self.browse_level,
+            self.info_expanded,
+            self.dataset_table_focused(),
+            query,
+        )
+    }
+}
+
+pub(super) const HELP_OVERLAY: &[(&str, &str)] = &[
+    ("move", "j/k  S-↓/↑ page  gg/G  0  Ng"),
+    ("open", "→/l/enter  ←/h/esc back  tab list|table"),
+    ("filter", "/  enter keep  esc clear"),
+    ("inspect", "i"),
+    ("select", "space toggle  v range  Nv  a all  A clear"),
+    (
+        "actions",
+        "u upload  d download  x delete  r reingest  p process",
+    ),
+    ("env", "w"),
+    ("quit", "q"),
+    (
+        "upload",
+        "tab footer  space  v  a/A  h/l field  enter  / path",
+    ),
+    ("download", "enter this folder  → open  ← parent  / path"),
+    ("env file", "tab recent|files  enter open/use  / path"),
+];
+
+fn short_hint(
+    mode: InputMode,
+    visual: bool,
+    browse_level: BrowseLevel,
+    info_expanded: bool,
+    dataset_table: bool,
+    filter_query: Option<&str>,
+) -> String {
+    if let Some(query) = filter_query {
+        return format!("/{query}_  enter keep  esc cancel");
+    }
+    if visual {
+        return "v/enter/space keep  esc cancel  ? help".to_string();
+    }
+    match mode {
+        InputMode::Upload { editing: true, .. } => "enter keep  esc cancel".to_string(),
+        InputMode::Upload { submit: true, .. } => {
+            "enter upload  tab files  esc close  ? help".to_string()
+        }
+        InputMode::Upload { files: false, .. } => {
+            "tab files  h/l field  enter  esc close  ? help".to_string()
+        }
+        InputMode::Upload { .. } => {
+            "tab footer  space toggle  v range  / path  esc close  ? help".to_string()
+        }
+        InputMode::Download { editing: true } => "enter download here  esc cancel".to_string(),
+        InputMode::Download { .. } => "enter here  → open  / path  esc close  ? help".to_string(),
+        InputMode::Env { editing: true } => "enter use or open  esc cancel".to_string(),
+        InputMode::Env { .. } => "tab  enter  / path  esc close  ? help".to_string(),
+        InputMode::Info if info_expanded => "i/esc close  ? help  q quit".to_string(),
+        InputMode::Info => {
+            "→ view  ← back  / filter  i info  u upload  d download  ? help  q quit".to_string()
+        }
+        InputMode::Browse if browse_level == BrowseLevel::Root => {
+            "→ open  / filter  i info  u upload  d download  ? help  q quit".to_string()
+        }
+        InputMode::Browse if browse_level == BrowseLevel::Datasets => {
+            "tab  → view  ← back  / filter  i info  u upload  d download  ? help  q quit"
+                .to_string()
+        }
+        InputMode::Browse if dataset_table => {
+            "tab  space toggle  v range  → open  / filter  u upload  d download  ? help  q quit"
+                .to_string()
+        }
+        InputMode::Browse | InputMode::Search => {
+            "tab  → open  ← back  / filter  i info  u upload  d download  ? help  q quit"
+                .to_string()
         }
     }
 }
@@ -193,6 +214,9 @@ pub(super) fn handle_key(app: &mut App, key: KeyEvent) -> bool {
             false
         }
         mode => {
+            if handle_help_key(app, key) {
+                return false;
+            }
             match read_motion(&mut app.motion, key) {
                 MotionRead::Pending => return false,
                 MotionRead::Act(motion) => {
@@ -219,6 +243,19 @@ pub(super) fn handle_key(app: &mut App, key: KeyEvent) -> bool {
             }
         }
     }
+}
+
+fn handle_help_key(app: &mut App, key: KeyEvent) -> bool {
+    if matches!(key.code, KeyCode::Char('?')) {
+        app.motion.clear();
+        app.help_open = !app.help_open;
+        return true;
+    }
+    if app.help_open {
+        app.help_open = false;
+        return true;
+    }
+    false
 }
 
 fn handle_browse_key(app: &mut App, key: KeyEvent) -> bool {
@@ -461,7 +498,10 @@ fn apply_info_motion(app: &mut App, motion: Motion) {
 
 #[cfg(test)]
 mod tests {
-    use super::{Motion, MotionRead, MotionState, read_motion};
+    use super::{
+        BrowseLevel, HELP_OVERLAY, InputMode, Motion, MotionRead, MotionState, read_motion,
+        short_hint,
+    };
     use crossterm::event::{KeyCode, KeyEvent, KeyEventKind, KeyModifiers};
 
     fn key(code: KeyCode) -> KeyEvent {
@@ -577,6 +617,111 @@ mod tests {
             MotionRead::None
         ));
         assert_eq!(state.count, Some(40));
+    }
+
+    #[test]
+    fn browse_hints_stay_short() {
+        let modes = [
+            (
+                InputMode::Browse,
+                BrowseLevel::Root,
+                false,
+                false,
+                "→ open  / filter  i info  u upload  d download  ? help  q quit",
+            ),
+            (
+                InputMode::Browse,
+                BrowseLevel::Streams,
+                false,
+                true,
+                "tab  space toggle  v range  → open  / filter  u upload  d download  ? help  q quit",
+            ),
+            (
+                InputMode::Browse,
+                BrowseLevel::Streams,
+                false,
+                false,
+                "tab  → open  ← back  / filter  i info  u upload  d download  ? help  q quit",
+            ),
+            (
+                InputMode::Browse,
+                BrowseLevel::Datasets,
+                false,
+                false,
+                "tab  → view  ← back  / filter  i info  u upload  d download  ? help  q quit",
+            ),
+            (
+                InputMode::Info,
+                BrowseLevel::Datasets,
+                false,
+                false,
+                "→ view  ← back  / filter  i info  u upload  d download  ? help  q quit",
+            ),
+            (
+                InputMode::Info,
+                BrowseLevel::Root,
+                true,
+                false,
+                "i/esc close  ? help  q quit",
+            ),
+        ];
+        for (mode, level, info, table, expected) in modes {
+            let hint = short_hint(mode, false, level, info, table, None);
+            assert_eq!(hint, expected);
+            assert!(hint.chars().count() <= 90, "{hint}");
+            assert!(
+                !hint.contains("u d x r p"),
+                "actions stay on ? overlay: {hint}"
+            );
+        }
+        assert_eq!(
+            short_hint(
+                InputMode::Browse,
+                true,
+                BrowseLevel::Streams,
+                false,
+                true,
+                None
+            ),
+            "v/enter/space keep  esc cancel  ? help"
+        );
+        assert_eq!(
+            short_hint(
+                InputMode::Search,
+                false,
+                BrowseLevel::Root,
+                false,
+                false,
+                Some("foo")
+            ),
+            "/foo_  enter keep  esc cancel"
+        );
+    }
+
+    #[test]
+    fn help_overlay_lists_actions_and_modals() {
+        let labels: Vec<_> = HELP_OVERLAY.iter().map(|(label, _)| *label).collect();
+        assert_eq!(
+            labels,
+            [
+                "move", "open", "filter", "inspect", "select", "actions", "env", "quit", "upload",
+                "download", "env file"
+            ]
+        );
+        let actions = HELP_OVERLAY
+            .iter()
+            .find(|(label, _)| *label == "actions")
+            .map(|(_, keys)| *keys)
+            .unwrap();
+        for key in [
+            "u upload",
+            "d download",
+            "x delete",
+            "r reingest",
+            "p process",
+        ] {
+            assert!(actions.contains(key), "{actions}");
+        }
     }
 
     #[test]

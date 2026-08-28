@@ -69,8 +69,9 @@ Session (env file, recents, last upload folder) is saved in `$XDG_CONFIG_HOME/md
 
 Stream and dataset details sit under the left list; the child table uses the full right column. Opening a dataset shows info and focuses that pane; `→` cycles debug messages and then signals. `←` returns to the dataset list.
 
-Keys (the footer repeats the current mode):
+Keys (the footer is a short hint; `?` opens the full map):
 
+- Help: `?` opens the key overlay; `?` or Esc closes it
 - Move: `j`/`k`, Shift+↓/↑ page, `gg`/`G`, Tab list|table
 - Open / back: `→` (or `l`) or Enter opens or cycles the right pane; `←`, `h`, or Esc go back
 - Filter: `/` on the focused table, or on debug lines when that view is focused. Enter keeps the filter, Esc cancels the edit, Esc again clears it

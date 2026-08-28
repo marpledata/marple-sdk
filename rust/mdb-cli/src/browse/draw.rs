@@ -4,6 +4,7 @@ use super::format::{
     kv, kv_styled, license_color, license_type, now_epoch, progress_cell, shows_progress,
     stream_card, sum_bytes, usage_bar,
 };
+use super::input::HELP_OVERLAY;
 use super::picker::FilePicker;
 use super::session::settings_path;
 use super::style::{accent, accent_bold, block, body_style, highlight, idle_highlight};
@@ -24,12 +25,13 @@ const ID_COL: u16 = 6;
 const COUNT_COL: u16 = 8;
 
 pub(super) fn draw(frame: &mut Frame, app: &App) -> u16 {
+    let footer = if app.status.is_empty() { 1 } else { 2 };
     let root = Layout::default()
         .direction(Direction::Vertical)
         .constraints([
             Constraint::Length(1),
             Constraint::Min(8),
-            Constraint::Length(1),
+            Constraint::Length(footer),
         ])
         .split(frame.area());
     draw_breadcrumb(frame, app, root[0]);
@@ -91,6 +93,9 @@ pub(super) fn draw(frame: &mut Frame, app: &App) -> u16 {
             None,
             None,
         );
+    }
+    if app.help_open {
+        draw_help_overlay(frame);
     }
     info_view
 }
@@ -583,7 +588,70 @@ fn workspace_usage(app: &App) -> (Option<u64>, Option<u64>, Option<u64>) {
 }
 
 fn draw_help(frame: &mut Frame, app: &App, area: Rect) {
-    frame.render_widget(Paragraph::new(app.help_text()).style(body_style()), area);
+    if app.status.is_empty() {
+        draw_hint_line(frame, app, area);
+        return;
+    }
+    let chunks = Layout::default()
+        .direction(Direction::Vertical)
+        .constraints([Constraint::Length(1), Constraint::Length(1)])
+        .split(area);
+    frame.render_widget(
+        Paragraph::new(app.status.as_str()).style(accent()),
+        chunks[0],
+    );
+    draw_hint_line(frame, app, chunks[1]);
+}
+
+fn draw_hint_line(frame: &mut Frame, app: &App, area: Rect) {
+    let env = format!("w {}", ellipsis(&app.footer_label(), 20));
+    let env_width = env.chars().count() as u16;
+    if area.width <= env_width.saturating_add(2) {
+        frame.render_widget(Paragraph::new(app.hint_text()).style(body_style()), area);
+        return;
+    }
+    let chunks = Layout::default()
+        .direction(Direction::Horizontal)
+        .constraints([Constraint::Min(1), Constraint::Length(env_width)])
+        .split(area);
+    frame.render_widget(
+        Paragraph::new(app.hint_text()).style(body_style()),
+        chunks[0],
+    );
+    frame.render_widget(
+        Paragraph::new(env)
+            .style(accent())
+            .alignment(Alignment::Right),
+        chunks[1],
+    );
+}
+
+fn draw_help_overlay(frame: &mut Frame) {
+    let lines: Vec<Line<'static>> = HELP_OVERLAY
+        .iter()
+        .map(|(label, keys)| {
+            Line::from(vec![
+                Span::styled(format!("{label:<10}"), accent()),
+                Span::styled((*keys).to_string(), body_style()),
+            ])
+        })
+        .collect();
+    let height = (lines.len() as u16)
+        .saturating_add(2)
+        .min(frame.area().height.saturating_sub(2))
+        .max(3);
+    let width = 72.min(frame.area().width.saturating_sub(4)).max(24);
+    let area = popup(frame.area(), width, height);
+    let bordered = block("keys  (? / esc close)", true);
+    let inner = bordered.inner(area);
+    frame.render_widget(ratatui::widgets::Clear, area);
+    frame.render_widget(bordered, area);
+    frame.render_widget(
+        Paragraph::new(lines)
+            .style(body_style())
+            .wrap(Wrap { trim: true }),
+        inner,
+    );
 }
 
 fn dataset_status_cell(app: &App, dataset: &marple_db::Dataset) -> String {
@@ -864,6 +932,17 @@ fn visual_item(
         item.style(idle_highlight())
     } else {
         item
+    }
+}
+
+fn popup(area: Rect, width: u16, height: u16) -> Rect {
+    let width = width.min(area.width);
+    let height = height.min(area.height);
+    Rect {
+        x: area.x + area.width.saturating_sub(width) / 2,
+        y: area.y + area.height.saturating_sub(height) / 2,
+        width,
+        height,
     }
 }
 

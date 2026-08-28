@@ -247,6 +247,7 @@ pub(super) struct App {
     visual: Option<selection::VisualSelection>,
     dataset_mix: Option<ImportMix>,
     upload_dir: Option<PathBuf>,
+    help_open: bool,
 }
 
 pub async fn run(db: MarpleDB, url: String, env_file: Option<PathBuf>) -> Result<()> {
@@ -424,6 +425,7 @@ impl App {
             visual: None,
             dataset_mix: None,
             upload_dir: None,
+            help_open: false,
         }
     }
 
@@ -496,6 +498,13 @@ impl App {
             .as_deref()
             .map(env_label)
             .unwrap_or_else(|| "env".to_string())
+    }
+
+    pub(super) fn footer_label(&self) -> String {
+        self.workspace
+            .as_ref()
+            .map(|workspace| workspace.name.clone())
+            .unwrap_or_else(|| self.env_label())
     }
 
     fn go_back(&mut self) {

@@ -10,9 +10,11 @@ the Rust SDK crate `marple-db`.
 - `src/browse/`: stream / dataset / signal browser started by `mdb` (TTY) or
   `mdb browse`. Session (env file, recents, last upload folder) is saved in
   `$XDG_CONFIG_HOME/mdb/browse.toml`. Key handling and vim motion live in
-  `input.rs`. Opening a dataset cycles right-pane views with `→` (info, debug
-  messages, signals) and focuses that pane; `←` returns to the dataset list. Debug
-  logs and import-status polls spawn off the main `PendingLoad` slot and the tick
+  `input.rs`. The footer is a short hint; `?` opens a key overlay. Status has
+  its own line above the hint. Opening a dataset cycles right-pane views with
+  `→` (info, debug messages, signals) and focuses that pane; `←` returns to the
+  dataset list. Debug logs and import-status polls spawn off the main
+  `PendingLoad` slot and the tick
   (messages: `DebugLoaded`, `Statuses`). Debug log fetch and display live in
   `debug.rs`. Dataset check / visual range (`v`) / select-all live in `selection.rs`. The
   env-file modal (`w`) lives in `picker.rs`.
