@@ -99,18 +99,50 @@ pub(crate) fn filter_indices(len: usize, mut keep: impl FnMut(usize) -> bool) ->
     (0..len).filter(|&index| keep(index)).collect()
 }
 
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub(crate) enum Visible {
+    All(usize),
+    Filtered(Vec<usize>),
+}
+
+impl Visible {
+    pub fn len(&self) -> usize {
+        match self {
+            Self::All(len) => *len,
+            Self::Filtered(indices) => indices.len(),
+        }
+    }
+
+    pub fn get(&self, pos: usize) -> Option<usize> {
+        match self {
+            Self::All(len) if pos < *len => Some(pos),
+            Self::Filtered(indices) => indices.get(pos).copied(),
+            _ => None,
+        }
+    }
+
+    pub fn position(&self, index: usize) -> Option<usize> {
+        match self {
+            Self::All(len) if index < *len => Some(index),
+            Self::Filtered(indices) => indices.iter().position(|&item| item == index),
+            _ => None,
+        }
+    }
+}
+
 pub(crate) fn step_visible(
-    visible: &[usize],
+    visible: &Visible,
     selected: Option<usize>,
     delta: i32,
 ) -> Option<usize> {
-    if visible.is_empty() {
+    let len = visible.len();
+    if len == 0 {
         return None;
     }
     let pos = selected
-        .and_then(|selected| visible.iter().position(|&index| index == selected))
+        .and_then(|selected| visible.position(selected))
         .unwrap_or(0) as i32;
-    Some(visible[wrap_index(visible.len(), pos, delta)])
+    visible.get(wrap_index(len, pos, delta))
 }
 
 pub(crate) fn wrap_index(len: usize, index: i32, delta: i32) -> usize {
@@ -120,17 +152,18 @@ pub(crate) fn wrap_index(len: usize, index: i32, delta: i32) -> usize {
     (index + delta).rem_euclid(len as i32) as usize
 }
 
-pub(crate) fn goto_visible(visible: &[usize], index: usize) -> Option<usize> {
-    if visible.is_empty() {
+pub(crate) fn goto_visible(visible: &Visible, index: usize) -> Option<usize> {
+    let len = visible.len();
+    if len == 0 {
         return None;
     }
-    Some(visible[index.min(visible.len() - 1)])
+    visible.get(index.min(len - 1))
 }
 
-pub(crate) fn snap_visible(visible: &[usize], selected: Option<usize>) -> Option<usize> {
+pub(crate) fn snap_visible(visible: &Visible, selected: Option<usize>) -> Option<usize> {
     match selected {
-        Some(selected) if visible.contains(&selected) => Some(selected),
-        _ => visible.first().copied(),
+        Some(selected) if visible.position(selected).is_some() => Some(selected),
+        _ => visible.get(0),
     }
 }
 
@@ -142,16 +175,15 @@ pub(crate) fn render_table(
     focused: bool,
     headers: &[&str],
     widths: impl IntoIterator<Item = Constraint>,
-    indices: &[usize],
+    visible: &Visible,
     selected: Option<usize>,
     mut row_at: impl FnMut(usize) -> Row<'static>,
 ) {
-    let pos = selected.and_then(|selected| indices.iter().position(|&index| index == selected));
-    let (start, end) = visible_range(indices.len(), pos, table_view_rows(area.height));
-    let title = window_title(title, start, end, indices.len());
-    let rows: Vec<Row> = indices[start..end]
-        .iter()
-        .map(|&index| row_at(index))
+    let pos = selected.and_then(|selected| visible.position(selected));
+    let (start, end) = visible_range(visible.len(), pos, table_view_rows(area.height));
+    let title = window_title(title, start, end, visible.len());
+    let rows: Vec<Row> = (start..end)
+        .filter_map(|pos| visible.get(pos).map(&mut row_at))
         .collect();
     let mut table = Table::new(rows, widths)
         .block(block(&title, focused))
@@ -209,8 +241,8 @@ pub(crate) fn visible_range(len: usize, selected: Option<usize>, view: usize) ->
 #[cfg(test)]
 mod tests {
     use super::{
-        TableSearch, filter_indices, goto_visible, handle_search_key, row_matches, search_title,
-        snap_visible, step_visible, visible_range, window_title, wrap_index,
+        TableSearch, Visible, filter_indices, goto_visible, handle_search_key, row_matches,
+        search_title, snap_visible, step_visible, visible_range, window_title, wrap_index,
     };
     use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
 
@@ -289,7 +321,7 @@ mod tests {
 
     #[test]
     fn visible_motion_steps_filtered_rows() {
-        let visible = vec![2, 5, 9];
+        let visible = Visible::Filtered(vec![2, 5, 9]);
         assert_eq!(step_visible(&visible, Some(5), 1), Some(9));
         assert_eq!(step_visible(&visible, Some(5), -1), Some(2));
         assert_eq!(step_visible(&visible, Some(2), -1), Some(9));
@@ -299,7 +331,11 @@ mod tests {
         assert_eq!(goto_visible(&visible, 99), Some(9));
         assert_eq!(snap_visible(&visible, Some(5)), Some(5));
         assert_eq!(snap_visible(&visible, Some(1)), Some(2));
-        assert_eq!(step_visible(&[], Some(0), 1), None);
+        assert_eq!(step_visible(&Visible::All(0), Some(0), 1), None);
+        let all = Visible::All(3);
+        assert_eq!(step_visible(&all, Some(1), 1), Some(2));
+        assert_eq!(snap_visible(&all, Some(1)), Some(1));
+        assert_eq!(goto_visible(&all, 99), Some(2));
         assert_eq!(wrap_index(3, 0, -1), 2);
         assert_eq!(wrap_index(3, 2, 1), 0);
         assert_eq!(wrap_index(3, 1, -4), 0);

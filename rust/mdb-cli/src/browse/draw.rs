@@ -1,7 +1,7 @@
 use super::format::{
-    clip_args, compact_count, count_cell, dataset_card, ellipsis, format_expiry, format_usage,
-    host_from_url, kv, kv_styled, license_color, license_type, now_epoch, opt_bytes, opt_count,
-    opt_text, progress_cell, shows_progress, signal_kind, signal_source, stream_card, stream_kind,
+    DATASET_COLS, DATASET_EXTRA, SIGNAL_COLS, STREAM_COLS, col_cells, col_headers, col_row,
+    col_widths, count_cell, dataset_card, ellipsis, format_expiry, format_usage, host_from_url, kv,
+    kv_styled, license_color, license_type, now_epoch, progress_cell, shows_progress, stream_card,
     sum_bytes, usage_bar,
 };
 use super::picker::FilePicker;
@@ -23,7 +23,7 @@ const LEFT_PANE: [Constraint; 2] = [Constraint::Percentage(24), Constraint::Perc
 const ID_COL: u16 = 6;
 const COUNT_COL: u16 = 8;
 
-pub(super) fn draw(frame: &mut Frame, app: &mut App) {
+pub(super) fn draw(frame: &mut Frame, app: &App) -> u16 {
     let root = Layout::default()
         .direction(Direction::Vertical)
         .constraints([
@@ -33,8 +33,10 @@ pub(super) fn draw(frame: &mut Frame, app: &mut App) {
         ])
         .split(frame.area());
     draw_breadcrumb(frame, app, root[0]);
+    let mut info_view = app.info_view;
     if app.browse_level == BrowseLevel::Root {
         if app.info_expanded {
+            info_view = root[1].height;
             draw_info(frame, app, root[1]);
         } else {
             let stack = Layout::default()
@@ -51,6 +53,7 @@ pub(super) fn draw(frame: &mut Frame, app: &mut App) {
             .split(root[1]);
         if app.info_expanded {
             draw_list(frame, app, body[0]);
+            info_view = body[1].height;
             draw_info(frame, app, body[1]);
         } else {
             let left = Layout::default()
@@ -75,6 +78,7 @@ pub(super) fn draw(frame: &mut Frame, app: &mut App) {
             None,
         );
     }
+    info_view
 }
 
 fn draw_breadcrumb(frame: &mut Frame, app: &App, area: Rect) {
@@ -141,7 +145,7 @@ fn draw_list(frame: &mut Frame, app: &App, area: Rect) {
                 &[],
                 [Constraint::Min(4), Constraint::Length(COUNT_COL)],
                 &indices,
-                app.dataset_state.selected(),
+                app.dataset_selected_index(),
                 |index| {
                     let dataset = &app.datasets()[index];
                     Row::new([
@@ -219,34 +223,11 @@ fn draw_table(frame: &mut Frame, app: &App, area: Rect) {
                 area,
                 &search_title("streams", &app.search),
                 focused,
-                &[
-                    "id", "type", "name", "plugin", "args", "datasets", "cold", "hot",
-                ],
-                [
-                    Constraint::Length(8),
-                    Constraint::Length(9),
-                    Constraint::Min(16),
-                    Constraint::Length(12),
-                    Constraint::Length(40),
-                    Constraint::Length(9),
-                    Constraint::Length(12),
-                    Constraint::Length(12),
-                ],
+                &col_headers(STREAM_COLS, &[]),
+                col_widths(STREAM_COLS, &[]),
                 &indices,
                 app.stream_state.selected(),
-                |index| {
-                    let stream = &app.streams[index];
-                    Row::new(vec![
-                        Cell::from(stream.id.to_string()),
-                        Cell::from(stream_kind(stream)),
-                        Cell::from(stream.name.clone()),
-                        Cell::from(opt_text(stream.plugin.as_deref())),
-                        Cell::from(clip_args(stream.plugin_args.as_deref(), 40)),
-                        Cell::from(opt_count(stream.n_datasets)),
-                        Cell::from(opt_bytes(stream.cold_bytes)),
-                        Cell::from(opt_bytes(stream.hot_bytes)),
-                    ])
-                },
+                |index| col_row(STREAM_COLS, &app.streams[index]),
             );
         }
         BrowseLevel::Streams => {
@@ -280,49 +261,22 @@ fn draw_table(frame: &mut Frame, app: &App, area: Rect) {
                     title
                 },
                 focused,
-                &[
-                    "id",
-                    "path",
-                    "signals",
-                    "datapoints",
-                    "archive",
-                    "cold",
-                    "hot",
-                    "status",
-                    "progress",
-                ],
-                [
-                    Constraint::Length(8),
-                    Constraint::Min(16),
-                    Constraint::Length(8),
-                    Constraint::Length(10),
-                    Constraint::Length(12),
-                    Constraint::Length(12),
-                    Constraint::Length(12),
-                    Constraint::Length(14),
-                    Constraint::Length(10),
-                ],
+                &col_headers(DATASET_COLS, &DATASET_EXTRA),
+                col_widths(DATASET_COLS, &DATASET_EXTRA),
                 &indices,
-                app.dataset_state.selected(),
+                app.dataset_selected_index(),
                 |index| {
                     let dataset = &app.datasets()[index];
-                    Row::new(vec![
-                        Cell::from(dataset.id.to_string()),
-                        Cell::from(dataset.path.clone()),
-                        Cell::from(opt_count(dataset.n_signals)),
-                        Cell::from(compact_count(dataset.n_datapoints)),
-                        Cell::from(opt_bytes(dataset.backup_size)),
-                        Cell::from(opt_bytes(dataset.cold_bytes)),
-                        Cell::from(opt_bytes(dataset.hot_bytes)),
-                        Cell::from(dataset_status_cell(app, dataset)),
-                        progress_cell(
-                            app.upload
-                                .byte_ratio(dataset.id)
-                                .or(dataset.import_progress),
-                            shows_progress(dataset.import_status)
-                                || app.upload.byte_ratio(dataset.id).is_some(),
-                        ),
-                    ])
+                    let mut cells = col_cells(DATASET_COLS, dataset);
+                    cells.push(Cell::from(dataset_status_cell(app, dataset)));
+                    cells.push(progress_cell(
+                        app.upload
+                            .byte_ratio(dataset.id)
+                            .or(dataset.import_progress),
+                        shows_progress(dataset.import_status)
+                            || app.upload.byte_ratio(dataset.id).is_some(),
+                    ));
+                    Row::new(cells)
                 },
             );
         }
@@ -357,41 +311,11 @@ fn draw_table(frame: &mut Frame, app: &App, area: Rect) {
                     title
                 },
                 focused,
-                &[
-                    "type",
-                    "id",
-                    "name",
-                    "unit",
-                    "source",
-                    "datapoints",
-                    "cold",
-                    "hot",
-                ],
-                [
-                    Constraint::Length(5),
-                    Constraint::Length(8),
-                    Constraint::Min(16),
-                    Constraint::Length(8),
-                    Constraint::Length(8),
-                    Constraint::Length(10),
-                    Constraint::Length(12),
-                    Constraint::Length(12),
-                ],
+                &col_headers(SIGNAL_COLS, &[]),
+                col_widths(SIGNAL_COLS, &[]),
                 &indices,
-                app.signal_state.selected(),
-                |index| {
-                    let signal = &app.signals()[index];
-                    Row::new(vec![
-                        Cell::from(signal_kind(signal)),
-                        Cell::from(signal.id.to_string()),
-                        Cell::from(signal.name.clone()),
-                        Cell::from(signal.unit.clone().unwrap_or_default()),
-                        Cell::from(signal_source(signal)),
-                        Cell::from(compact_count(signal.count)),
-                        Cell::from(opt_bytes(signal.cold_bytes)),
-                        Cell::from(opt_bytes(signal.hot_bytes)),
-                    ])
-                },
+                app.signal_selected_index(),
+                |index| col_row(SIGNAL_COLS, &app.signals()[index]),
             );
         }
     }
@@ -412,8 +336,7 @@ fn draw_card(frame: &mut Frame, app: &App, area: Rect) {
     );
 }
 
-fn draw_info(frame: &mut Frame, app: &mut App, area: Rect) {
-    app.info_view = area.height;
+fn draw_info(frame: &mut Frame, app: &App, area: Rect) {
     let (title, lines) = app.info_for_inspect();
     let title = format!("{title}  i close");
     frame.render_widget(
@@ -568,35 +491,7 @@ fn workspace_usage(app: &App) -> (Option<u64>, Option<u64>, Option<u64>) {
 }
 
 fn draw_help(frame: &mut Frame, app: &App, area: Rect) {
-    let env = app.env_label();
-    let help = if app.search.editing {
-        format!("filter  /{}_  enter keep  esc cancel", app.search.query)
-    } else if !app.status.is_empty() {
-        app.status.clone()
-    } else if let Some(form) = &app.upload.form {
-        if form.picker.editing {
-            "enter add to selection  esc cancel".to_string()
-        } else if form.focus == FormFocus::Options {
-            "tab files  h/l field  space toggle  enter upload  esc close".to_string()
-        } else {
-            "tab options  j/k  space select  enter upload  ← parent  / path  esc close".to_string()
-        }
-    } else if let Some(picker) = &app.env_picker {
-        if picker.editing {
-            "enter use or open  esc cancel".to_string()
-        } else {
-            "j/k  tab recent|files  enter open/use  ← parent  / path  esc close".to_string()
-        }
-    } else if app.info_expanded {
-        format!("j/k scroll  S-↓/↑ page  gg/G  i/esc close  v env ({env})  q quit")
-    } else if app.browse_level == BrowseLevel::Root {
-        format!("j/k  S-↓/↑ page  gg/G  / filter  → open  i info  u upload  v env ({env})  q quit")
-    } else {
-        format!(
-            "tab list|table  j/k  S-↓/↑ page  gg/G  / filter  → open  i info  u upload  ← back  v env ({env})  q quit"
-        )
-    };
-    frame.render_widget(Paragraph::new(help).style(body_style()), area);
+    frame.render_widget(Paragraph::new(app.help_text()).style(body_style()), area);
 }
 
 fn dataset_status_cell(app: &App, dataset: &marple_db::Dataset) -> String {

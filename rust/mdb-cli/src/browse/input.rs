@@ -1,9 +1,99 @@
 use super::picker::FilePicker;
 use super::upload::{FormFocus, OptionField};
-use super::{App, Motion, PAGE_SIZE};
+use super::{App, BrowseLevel, Motion, PAGE_SIZE, cycle_focus};
 use crate::table::{SearchAction, handle_search_key};
 use crossterm::event::{self, Event, KeyCode, KeyEvent, KeyEventKind, KeyModifiers};
 use std::time::Duration;
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(super) enum InputMode {
+    Browse,
+    Info,
+    Search,
+    Env {
+        editing: bool,
+    },
+    Upload {
+        editing: bool,
+        options: bool,
+        extension: bool,
+    },
+}
+
+impl App {
+    pub(super) fn input_mode(&self) -> InputMode {
+        if self
+            .env_picker
+            .as_ref()
+            .is_some_and(|picker| picker.editing)
+        {
+            InputMode::Env { editing: true }
+        } else if self
+            .upload
+            .form
+            .as_ref()
+            .is_some_and(|form| form.picker.editing)
+        {
+            InputMode::Upload {
+                editing: true,
+                options: false,
+                extension: false,
+            }
+        } else if self.search.editing {
+            InputMode::Search
+        } else if self.env_picker.is_some() {
+            InputMode::Env { editing: false }
+        } else if let Some(form) = &self.upload.form {
+            InputMode::Upload {
+                editing: false,
+                options: form.focus == FormFocus::Options,
+                extension: form.focus == FormFocus::Options
+                    && form.option == OptionField::Extension,
+            }
+        } else if self.info_expanded {
+            InputMode::Info
+        } else {
+            InputMode::Browse
+        }
+    }
+
+    pub(super) fn help_text(&self) -> String {
+        let env = self.env_label();
+        match self.input_mode() {
+            InputMode::Search => {
+                format!("filter  /{}_  enter keep  esc cancel", self.search.query)
+            }
+            _ if !self.status.is_empty() => self.status.clone(),
+            InputMode::Upload { editing: true, .. } => {
+                "enter add to selection  esc cancel".to_string()
+            }
+            InputMode::Upload { options: true, .. } => {
+                "tab files  h/l field  space toggle  enter upload  esc close".to_string()
+            }
+            InputMode::Upload { .. } => {
+                "tab options  j/k  space select  enter upload  ← parent  / path  esc close"
+                    .to_string()
+            }
+            InputMode::Env { editing: true } => "enter use or open  esc cancel".to_string(),
+            InputMode::Env { .. } => {
+                "j/k  tab recent|files  enter open/use  ← parent  / path  esc close".to_string()
+            }
+            InputMode::Info => {
+                format!("j/k scroll  S-↓/↑ page  gg/G  i/esc close  v env ({env})  q quit")
+            }
+            InputMode::Browse if self.browse_level == BrowseLevel::Root => {
+                format!(
+                    "j/k  S-↓/↑ page  gg/G  / filter  → open  i info  u upload  v env ({env})  q quit"
+                )
+            }
+            InputMode::Browse => {
+                format!(
+                    "tab list|table  j/k  S-↓/↑ page  gg/G  / filter  → open  i info  u upload  ← back  v env ({env})  q quit"
+                )
+            }
+        }
+    }
+}
 
 #[derive(Clone, Copy, Default, Debug, PartialEq, Eq)]
 pub(super) struct MotionState {
@@ -34,73 +124,74 @@ pub(super) async fn handle_key(app: &mut App, mut key: KeyEvent) -> bool {
             app.motion.clear();
             return false;
         }
-        if app.env_picker.as_ref().is_some_and(|picker| picker.editing) {
-            return handle_env_input(app, key).await;
-        }
-        if app
-            .upload
-            .form
-            .as_ref()
-            .is_some_and(|form| form.picker.editing)
-        {
-            return app.handle_upload_input(key).await;
-        }
-        if app.search.editing {
-            if handle_search_key(&mut app.search, key) != SearchAction::Ignored {
-                app.snap_search();
+        match app.input_mode() {
+            InputMode::Env { editing: true } => return handle_env_input(app, key).await,
+            InputMode::Upload { editing: true, .. } => return app.handle_upload_input(key).await,
+            InputMode::Search => {
+                if handle_search_key(&mut app.search, key) != SearchAction::Ignored {
+                    app.snap_search();
+                }
+                return false;
             }
-            return false;
-        }
-        let typing_extension = app.upload.form.as_ref().is_some_and(|form| {
-            form.focus == FormFocus::Options && form.option == OptionField::Extension
-        });
-        if !typing_extension {
-            match read_motion(&mut app.motion, key) {
-                MotionRead::Pending => return false,
-                MotionRead::Act(motion) => {
-                    let (motion, leftover) = coalesce_motion(motion);
-                    apply_motion(app, motion);
-                    match leftover {
-                        Some(next) => {
-                            key = next;
-                            continue;
+            mode => {
+                if !matches!(
+                    mode,
+                    InputMode::Upload {
+                        extension: true,
+                        ..
+                    }
+                ) {
+                    match read_motion(&mut app.motion, key) {
+                        MotionRead::Pending => return false,
+                        MotionRead::Act(motion) => {
+                            let (motion, leftover) = coalesce_motion(motion);
+                            apply_motion(app, motion);
+                            match leftover {
+                                Some(next) => {
+                                    key = next;
+                                    continue;
+                                }
+                                None => return false,
+                            }
                         }
-                        None => return false,
+                        MotionRead::None => {}
                     }
                 }
-                MotionRead::None => {}
+                return match mode {
+                    InputMode::Env { .. } => handle_env_key(app, key).await,
+                    InputMode::Upload { .. } => app.handle_upload_key(key),
+                    InputMode::Info | InputMode::Browse => handle_browse_key(app, key),
+                    InputMode::Search => unreachable!(),
+                };
             }
         }
-        if app.env_picker.is_some() {
-            return handle_env_key(app, key).await;
-        }
-        if app.upload.form.is_some() {
-            return app.handle_upload_key(key);
-        }
-        if matches!(key.code, KeyCode::Char('/')) && !app.info_expanded {
-            app.motion.clear();
-            app.search.start();
-            return false;
-        }
-        if matches!(key.code, KeyCode::Esc) && app.search.active() {
-            app.search.clear();
-            return false;
-        }
-        match key.code {
-            KeyCode::Char('q') => return true,
-            KeyCode::Tab | KeyCode::BackTab => {
-                app.focus = app.cycle_focus();
-                app.snap_search();
-            }
-            KeyCode::Esc | KeyCode::Char('h') | KeyCode::Left => app.go_back(),
-            KeyCode::Char('l') | KeyCode::Right | KeyCode::Enter => app.activate(),
-            KeyCode::Char('i') => app.toggle_info(),
-            KeyCode::Char('v') => app.open_env(),
-            KeyCode::Char('u') => app.open_upload(),
-            _ => {}
-        }
+    }
+}
+
+fn handle_browse_key(app: &mut App, key: KeyEvent) -> bool {
+    if matches!(key.code, KeyCode::Char('/')) && !app.info_expanded {
+        app.motion.clear();
+        app.search.start();
         return false;
     }
+    if matches!(key.code, KeyCode::Esc) && app.search.active() {
+        app.search.clear();
+        return false;
+    }
+    match key.code {
+        KeyCode::Char('q') => return true,
+        KeyCode::Tab | KeyCode::BackTab => {
+            app.focus = cycle_focus(app.browse_level, app.focus);
+            app.snap_search();
+        }
+        KeyCode::Esc | KeyCode::Char('h') | KeyCode::Left => app.go_back(),
+        KeyCode::Char('l') | KeyCode::Right | KeyCode::Enter => app.activate(),
+        KeyCode::Char('i') => app.toggle_info(),
+        KeyCode::Char('v') => app.open_env(),
+        KeyCode::Char('u') => app.open_upload(),
+        _ => {}
+    }
+    false
 }
 
 async fn handle_env_key(app: &mut App, key: KeyEvent) -> bool {
@@ -249,12 +340,12 @@ fn drain_arrow_delta(delta: &mut i32) -> Option<KeyEvent> {
 }
 
 fn apply_motion(app: &mut App, motion: Motion) {
-    if app.env_picker.is_some() {
-        apply_env_motion(app, motion);
-    } else if app.upload.form.is_some() {
-        app.apply_upload_motion(motion);
-    } else {
-        apply_browse_motion(app, motion);
+    match app.input_mode() {
+        InputMode::Env { .. } => apply_env_motion(app, motion),
+        InputMode::Upload { .. } => app.apply_upload_motion(motion),
+        InputMode::Info => apply_info_motion(app, motion),
+        InputMode::Browse => apply_browse_motion(app, motion),
+        InputMode::Search => {}
     }
 }
 
@@ -273,10 +364,6 @@ fn apply_env_motion(app: &mut App, motion: Motion) {
 }
 
 fn apply_browse_motion(app: &mut App, motion: Motion) {
-    if app.info_expanded {
-        apply_info_motion(app, motion);
-        return;
-    }
     match motion {
         Motion::Delta(delta) => app.move_sel(delta),
         Motion::Page(pages) => app.move_sel(pages * PAGE_SIZE),

@@ -1,10 +1,12 @@
 use super::style::body_style;
+use crate::table::row_matches;
 use marple_db::{
     Dataset, ImportStatus, LicenseType, Signal, StorageQuota, StorageStatus, Stream, StreamType,
 };
+use ratatui::layout::Constraint;
 use ratatui::style::{Color, Style};
 use ratatui::text::{Line, Span};
-use ratatui::widgets::Cell;
+use ratatui::widgets::{Cell, Row};
 use serde_json::Value;
 use std::time::{SystemTime, UNIX_EPOCH};
 
@@ -363,6 +365,156 @@ pub(super) fn shows_progress(status: ImportStatus) -> bool {
     )
 }
 
+pub(super) struct Col<T: 'static> {
+    pub header: &'static str,
+    pub width: Constraint,
+    pub field: fn(&T) -> String,
+}
+
+impl<T> Col<T> {
+    const fn new(header: &'static str, width: Constraint, field: fn(&T) -> String) -> Self {
+        Self {
+            header,
+            width,
+            field,
+        }
+    }
+}
+
+pub(super) const STREAM_COLS: &[Col<Stream>] = &[
+    Col::new("id", Constraint::Length(8), |stream| stream.id.to_string()),
+    Col::new("type", Constraint::Length(9), |stream| {
+        stream_kind(stream).to_string()
+    }),
+    Col::new("name", Constraint::Min(16), |stream| stream.name.clone()),
+    Col::new("plugin", Constraint::Length(12), |stream| {
+        opt_text(stream.plugin.as_deref())
+    }),
+    Col::new("args", Constraint::Length(40), |stream| {
+        clip_args(stream.plugin_args.as_deref(), 40)
+    }),
+    Col::new("datasets", Constraint::Length(9), |stream| {
+        opt_count(stream.n_datasets)
+    }),
+    Col::new("cold", Constraint::Length(12), |stream| {
+        opt_bytes(stream.cold_bytes)
+    }),
+    Col::new("hot", Constraint::Length(12), |stream| {
+        opt_bytes(stream.hot_bytes)
+    }),
+];
+
+pub(super) const DATASET_COLS: &[Col<Dataset>] = &[
+    Col::new("id", Constraint::Length(8), |dataset| {
+        dataset.id.to_string()
+    }),
+    Col::new("path", Constraint::Min(16), |dataset| dataset.path.clone()),
+    Col::new("signals", Constraint::Length(8), |dataset| {
+        opt_count(dataset.n_signals)
+    }),
+    Col::new("datapoints", Constraint::Length(10), |dataset| {
+        compact_count(dataset.n_datapoints)
+    }),
+    Col::new("archive", Constraint::Length(12), |dataset| {
+        opt_bytes(dataset.backup_size)
+    }),
+    Col::new("cold", Constraint::Length(12), |dataset| {
+        opt_bytes(dataset.cold_bytes)
+    }),
+    Col::new("hot", Constraint::Length(12), |dataset| {
+        opt_bytes(dataset.hot_bytes)
+    }),
+];
+
+pub(super) const DATASET_EXTRA: [(&str, Constraint); 2] = [
+    ("status", Constraint::Length(14)),
+    ("progress", Constraint::Length(10)),
+];
+
+pub(super) const SIGNAL_COLS: &[Col<Signal>] = &[
+    Col::new("type", Constraint::Length(5), |signal| {
+        signal_kind(signal).to_string()
+    }),
+    Col::new("id", Constraint::Length(8), |signal| signal.id.to_string()),
+    Col::new("name", Constraint::Min(16), |signal| signal.name.clone()),
+    Col::new("unit", Constraint::Length(8), |signal| {
+        signal.unit.clone().unwrap_or_default()
+    }),
+    Col::new("source", Constraint::Length(8), |signal| {
+        signal_source(signal).to_string()
+    }),
+    Col::new("datapoints", Constraint::Length(10), |signal| {
+        compact_count(signal.count)
+    }),
+    Col::new("cold", Constraint::Length(12), |signal| {
+        opt_bytes(signal.cold_bytes)
+    }),
+    Col::new("hot", Constraint::Length(12), |signal| {
+        opt_bytes(signal.hot_bytes)
+    }),
+];
+
+pub(super) fn col_headers<'a, T>(
+    cols: &'a [Col<T>],
+    extra: &'a [(&'a str, Constraint)],
+) -> Vec<&'a str> {
+    cols.iter()
+        .map(|col| col.header)
+        .chain(extra.iter().map(|(header, _)| *header))
+        .collect()
+}
+
+pub(super) fn col_widths<T>(cols: &[Col<T>], extra: &[(&str, Constraint)]) -> Vec<Constraint> {
+    cols.iter()
+        .map(|col| col.width)
+        .chain(extra.iter().map(|(_, width)| *width))
+        .collect()
+}
+
+pub(super) fn col_cells<T>(cols: &[Col<T>], row: &T) -> Vec<Cell<'static>> {
+    cols.iter()
+        .map(|col| Cell::from((col.field)(row)))
+        .collect()
+}
+
+pub(super) fn col_row<T>(cols: &[Col<T>], row: &T) -> Row<'static> {
+    Row::new(col_cells(cols, row))
+}
+
+pub(super) fn stream_matches(stream: &Stream, query: &str) -> bool {
+    col_matches(STREAM_COLS, &[stream.description.as_str()], stream, query)
+}
+
+pub(super) fn dataset_matches(dataset: &Dataset, query: &str) -> bool {
+    col_matches(
+        DATASET_COLS,
+        &[
+            dataset.import_status.as_str(),
+            dataset.import_message.as_deref().unwrap_or(""),
+        ],
+        dataset,
+        query,
+    )
+}
+
+pub(super) fn signal_matches(signal: &Signal, query: &str) -> bool {
+    col_matches(
+        SIGNAL_COLS,
+        &[signal.description.as_deref().unwrap_or("")],
+        signal,
+        query,
+    )
+}
+
+fn col_matches<T>(cols: &[Col<T>], extras: &[&str], row: &T, query: &str) -> bool {
+    let fields: Vec<String> = cols
+        .iter()
+        .map(|col| (col.field)(row))
+        .chain(extras.iter().map(|extra| extra.to_string()))
+        .collect();
+    row_matches(query, fields)
+}
+
 fn normalize_progress(value: Option<f64>) -> Option<f64> {
     value.map(|value| {
         let ratio = if value > 1.0 { value / 100.0 } else { value };
@@ -561,7 +713,7 @@ mod tests {
     use super::{
         ImportMix, bar_color, dataset_card, ellipsis, format_expiry, format_usage, host_from_url,
         license_color, license_type, progress_cell, shows_progress, storage_status, stream_card,
-        usage_bar, usage_ratio,
+        stream_matches, usage_bar, usage_ratio,
     };
     use marple_db::{Dataset, ImportStatus, LicenseType, StorageQuota, StorageStatus, Stream};
     use ratatui::style::Color;
@@ -642,6 +794,23 @@ mod tests {
     }
 
     #[test]
+    fn stream_search_uses_table_columns_and_description() {
+        let stream: Stream = serde_json::from_value(json!({
+            "id": 3,
+            "name": "IMC",
+            "type": "files",
+            "datapool": "default",
+            "plugin": "imc",
+            "description": "mallorca traffic"
+        }))
+        .expect("stream JSON");
+        assert!(stream_matches(&stream, "imc"));
+        assert!(stream_matches(&stream, "mallorca"));
+        assert!(stream_matches(&stream, "files"));
+        assert!(!stream_matches(&stream, "xyz"));
+    }
+
+    #[test]
     fn stream_card_uses_kind_when_plugin_missing() {
         let stream: Stream = serde_json::from_value(json!({
             "id": 1,
@@ -710,7 +879,7 @@ mod tests {
         .expect("dataset JSON");
         let (_, lines) = dataset_card(Some(&dataset), 40);
         let texts: Vec<String> = lines.iter().map(ToString::to_string).collect();
-        assert_eq!(texts[0], "FAILED");
+        assert_eq!(texts[0], "FAILED (IMPORT)");
         assert_eq!(texts[1], "Parsing signals");
         assert_eq!(texts[2], "1.2M pts  4.0 KiB archive");
         assert_eq!(texts[3], "cold 1.5 KiB  hot 0 B");
