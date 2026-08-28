@@ -1,5 +1,6 @@
 use super::picker::FilePicker;
 use super::{App, BrowseLevel, Focus, PAGE_SIZE, Pane};
+use crate::table::visible_span;
 use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
 use marple_db::{Dataset, ProgressReporter};
 use std::collections::{HashSet, VecDeque};
@@ -115,8 +116,34 @@ impl App {
         let Some(id) = self.selected_dataset().map(|dataset| dataset.id) else {
             return;
         };
+        self.selection_anchor = self
+            .loaded_datasets
+            .as_ref()
+            .and_then(|loaded| loaded.selected_index());
         if !self.selected_datasets.remove(&id) {
             self.selected_datasets.insert(id);
+        }
+    }
+
+    pub(super) fn select_dataset_range(&mut self) {
+        if !self.dataset_table_focused() {
+            return;
+        }
+        let Some(current) = self
+            .loaded_datasets
+            .as_ref()
+            .and_then(|loaded| loaded.selected_index())
+        else {
+            return;
+        };
+        let visible = self.dataset_indices(true);
+        for index in visible_span(&visible, self.selection_anchor, current) {
+            if let Some(id) = self.datasets().get(index).map(|dataset| dataset.id) {
+                self.selected_datasets.insert(id);
+            }
+        }
+        if self.selection_anchor.is_none() {
+            self.selection_anchor = Some(current);
         }
     }
 
@@ -212,13 +239,10 @@ impl App {
                 return;
             }
             KeyCode::Enter => {
-                let dest = self
-                    .download
-                    .picker
-                    .as_ref()
-                    .map(destination_from)
-                    .unwrap_or_else(|| PathBuf::from("."));
-                self.confirm_download(dest);
+                let dest = self.download.picker.as_mut().and_then(take_download_dest);
+                if let Some(dest) = dest {
+                    self.confirm_download(dest);
+                }
                 return;
             }
             _ => {}
@@ -457,6 +481,17 @@ pub(super) fn dataset_targets(
     }
 }
 
+fn take_download_dest(picker: &mut FilePicker) -> Option<PathBuf> {
+    if picker
+        .selected_entry()
+        .is_some_and(|entry| entry.name == "..")
+    {
+        picker.enter_selected();
+        return None;
+    }
+    Some(destination_from(picker))
+}
+
 fn destination_from(picker: &FilePicker) -> PathBuf {
     match picker.selected_entry() {
         Some(entry) if entry.is_dir && entry.name != ".." => entry.path.clone(),
@@ -488,8 +523,9 @@ impl ProgressReporter for AtomicProgress {
 mod tests {
     use super::{
         DatasetTargets, DownloadState, FilePicker, Pane, as_dir, dataset_count_label,
-        dataset_targets, destination_from,
+        dataset_targets, destination_from, take_download_dest,
     };
+    use crate::table::{Visible, visible_span};
     use marple_db::Dataset;
     use serde_json::json;
     use std::collections::HashSet;
@@ -583,6 +619,24 @@ mod tests {
     }
 
     #[test]
+    fn range_select_covers_visible_rows_between_anchor_and_cursor() {
+        let rows = vec![
+            dataset(1, "a.csv", None),
+            dataset(2, "b.csv", None),
+            dataset(3, "c.csv", None),
+            dataset(4, "d.csv", None),
+        ];
+        let visible = Visible::filtered(4, vec![0, 2, 3]);
+        let mut checked = HashSet::new();
+        for index in visible_span(&visible, Some(0), 3) {
+            checked.insert(rows[index].id);
+        }
+        let mut ids: Vec<_> = checked.into_iter().collect();
+        ids.sort();
+        assert_eq!(ids, vec![1, 3, 4]);
+    }
+
+    #[test]
     fn overlay_tracks_queued_and_running_ids() {
         let mut state = DownloadState::default();
         assert!(!state.is_active(1));
@@ -636,6 +690,22 @@ mod tests {
         assert_eq!(
             destination_from(&picker),
             fs::canonicalize(tmp.path()).unwrap()
+        );
+        let parent = fs::canonicalize(tmp.path().parent().unwrap()).unwrap();
+        assert!(take_download_dest(&mut picker).is_none());
+        assert_eq!(picker.dir, parent);
+
+        picker = FilePicker::open(Some(tmp.path()), &[]);
+        picker.goto(
+            picker
+                .entries
+                .iter()
+                .position(|entry| entry.name == "out")
+                .unwrap(),
+        );
+        assert_eq!(
+            take_download_dest(&mut picker),
+            Some(fs::canonicalize(tmp.path().join("out")).unwrap())
         );
         assert!(as_dir(tmp.path().join("notes.txt")).is_err());
         assert_eq!(as_dir(tmp.path().to_path_buf()).unwrap(), tmp.path());

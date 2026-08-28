@@ -39,7 +39,7 @@ impl App {
             }
         } else if self.download_typing() {
             InputMode::Download { editing: true }
-        } else if self.search.editing {
+        } else if self.debug.search.editing || self.search.editing {
             InputMode::Search
         } else if self.env_picker.is_some() {
             InputMode::Env { editing: false }
@@ -51,7 +51,7 @@ impl App {
             }
         } else if self.download.picker.is_some() {
             InputMode::Download { editing: false }
-        } else if self.info_expanded {
+        } else if self.info_expanded || self.view_scrolls() {
             InputMode::Info
         } else {
             InputMode::Browse
@@ -61,6 +61,12 @@ impl App {
     pub(super) fn help_text(&self) -> String {
         let env = self.env_label();
         match self.input_mode() {
+            InputMode::Search if self.debug.search.editing => {
+                format!(
+                    "filter  /{}_  enter keep  esc cancel",
+                    self.debug.search.query
+                )
+            }
             InputMode::Search => {
                 format!("filter  /{}_  enter keep  esc cancel", self.search.query)
             }
@@ -73,28 +79,39 @@ impl App {
                 "tab files  h/l field  enter toggle/edit  esc close".to_string()
             }
             InputMode::Upload { .. } => {
-                "tab footer  j/k  enter select  a all  → open  ← parent  / path  esc close"
+                "tab footer  j/k  enter select  S-enter range  a all  → open  ← parent  / path  esc close"
                     .to_string()
             }
             InputMode::Download { editing: true } => "enter download here  esc cancel".to_string(),
             InputMode::Download { .. } => {
-                "j/k  enter this folder  → open  ← parent  / path  esc close".to_string()
+                "j/k  enter this folder  enter ../ up  → open  ← parent  / path  esc close"
+                    .to_string()
             }
             InputMode::Env { editing: true } => "enter use or open  esc cancel".to_string(),
             InputMode::Env { .. } => {
                 "j/k  tab recent|files  enter open/use  ← parent  / path  esc close".to_string()
             }
-            InputMode::Info => {
+            InputMode::Info if self.info_expanded => {
                 format!("j/k scroll  S-↓/↑ page  gg/G  i/esc close  v env ({env})  q quit")
+            }
+            InputMode::Info => {
+                format!(
+                    "j/k scroll  S-↓/↑ page  gg/G  → view  ← back  / filter  i info  v env ({env})  q quit"
+                )
             }
             InputMode::Browse if self.browse_level == BrowseLevel::Root => {
                 format!(
                     "j/k  S-↓/↑ page  gg/G  / filter  → open  i info  u upload  d download  x delete  r reingest  v env ({env})  q quit"
                 )
             }
+            InputMode::Browse if self.browse_level == BrowseLevel::Datasets => {
+                format!(
+                    "tab list|table  j/k  S-↓/↑ page  gg/G  / filter  → view  ← back  i info  u upload  d download  x delete  r reingest  v env ({env})  q quit"
+                )
+            }
             InputMode::Browse => {
                 format!(
-                    "tab list|table  j/k  S-↓/↑ page  gg/G  / filter  enter select  a all  → open  i info  u upload  d download  x delete  r reingest  ← back  v env ({env})  q quit"
+                    "tab list|table  j/k  S-↓/↑ page  gg/G  / filter  enter select  S-enter range  a all  → open  i info  u upload  d download  x delete  r reingest  ← back  v env ({env})  q quit"
                 )
             }
         }
@@ -144,7 +161,10 @@ pub(super) async fn handle_key(app: &mut App, mut key: KeyEvent) -> bool {
                 return false;
             }
             InputMode::Search => {
-                if handle_search_key(&mut app.search, key) != SearchAction::Ignored {
+                if app.debug.search.editing {
+                    handle_search_key(&mut app.debug.search, key);
+                    app.debug.scroll = 0;
+                } else if handle_search_key(&mut app.search, key) != SearchAction::Ignored {
                     app.snap_search();
                 }
                 return false;
@@ -192,9 +212,20 @@ fn handle_browse_key(app: &mut App, key: KeyEvent) -> bool {
     if app.handle_confirm_key(key) {
         return false;
     }
-    if matches!(key.code, KeyCode::Char('/')) && !app.info_expanded {
-        app.motion.clear();
-        app.search.start();
+    if matches!(key.code, KeyCode::Char('/')) {
+        if app.debug_filter_enabled() {
+            app.motion.clear();
+            app.debug.search.start();
+            return false;
+        }
+        if !app.info_expanded && !app.view_scrolls() {
+            app.motion.clear();
+            app.search.start();
+            return false;
+        }
+    }
+    if matches!(key.code, KeyCode::Esc) && app.debug.search.active() && app.debug_filter_enabled() {
+        app.debug.search.clear();
         return false;
     }
     if matches!(key.code, KeyCode::Esc) && app.search.active() {
@@ -209,7 +240,11 @@ fn handle_browse_key(app: &mut App, key: KeyEvent) -> bool {
         }
         KeyCode::Esc | KeyCode::Char('h') | KeyCode::Left => app.go_back(),
         KeyCode::Enter if app.dataset_table_focused() && !app.info_expanded => {
-            app.toggle_dataset_selection();
+            if key.modifiers.contains(KeyModifiers::SHIFT) {
+                app.select_dataset_range();
+            } else {
+                app.toggle_dataset_selection();
+            }
         }
         KeyCode::Char('l') | KeyCode::Right | KeyCode::Enter => app.activate(),
         KeyCode::Char('i') => app.toggle_info(),
@@ -407,10 +442,10 @@ fn apply_info_motion(app: &mut App, motion: Motion) {
     match motion {
         Motion::Delta(delta) => app.scroll_info(delta),
         Motion::Page(pages) => app.scroll_info(pages * PAGE_SIZE),
-        Motion::First => app.info_scroll = 0,
+        Motion::First => app.reset_view_scroll(),
         Motion::Last => app.scroll_info(i32::MAX),
         Motion::Goto(index) => {
-            app.info_scroll = 0;
+            app.reset_view_scroll();
             app.scroll_info(index as i32);
         }
     }

@@ -53,6 +53,7 @@ pub(super) struct UploadForm {
     pub picker: FilePicker,
     pub stream_name: String,
     pub selected: HashSet<PathBuf>,
+    selection_anchor: Option<usize>,
     stream_id: i64,
 }
 
@@ -112,18 +113,6 @@ impl UploadState {
             stream_id,
             dataset_id,
         });
-    }
-
-    pub(super) fn seed_watch(&mut self, stream_id: i64, datasets: &[Dataset]) {
-        self.watch.retain(|watch| watch.stream_id != stream_id);
-        for dataset in datasets {
-            if !dataset.import_status.is_terminal() {
-                self.watch.push(Watch {
-                    stream_id,
-                    dataset_id: dataset.id,
-                });
-            }
-        }
     }
 
     pub(super) fn byte_ratio(&self, dataset_id: i64) -> Option<f64> {
@@ -241,6 +230,13 @@ impl App {
                         FormFocus::Files
                     };
                 }
+                KeyCode::Enter
+                    if !confirm
+                        && form.focus.is_files()
+                        && key.modifiers.contains(KeyModifiers::SHIFT) =>
+                {
+                    form.toggle_range();
+                }
                 KeyCode::Enter if !confirm => form.activate(),
                 KeyCode::Char(' ') if form.focus.is_files() || form.is_checkbox() => {
                     form.activate()
@@ -257,6 +253,7 @@ impl App {
                     if form.focus.is_files() =>
                 {
                     form.picker.go_parent();
+                    form.selection_anchor = None;
                 }
                 KeyCode::Char('l') | KeyCode::Right
                     if form.focus.is_files()
@@ -266,6 +263,7 @@ impl App {
                             .is_some_and(|entry| entry.is_dir) =>
                 {
                     form.picker.enter_selected();
+                    form.selection_anchor = None;
                 }
                 KeyCode::Backspace if form.focus == FormFocus::Metadata && !form.meta_editing => {
                     form.metadata.pop();
@@ -656,6 +654,7 @@ impl UploadForm {
             picker: FilePicker::open(start, &[]),
             stream_name,
             selected: HashSet::new(),
+            selection_anchor: None,
             stream_id,
         }
     }
@@ -702,15 +701,44 @@ impl UploadForm {
     }
 
     fn toggle_pick(&mut self) {
+        if self
+            .picker
+            .selected_entry()
+            .is_some_and(|entry| entry.name == "..")
+        {
+            self.picker.enter_selected();
+            self.selection_anchor = None;
+            return;
+        }
         let Some(entry) = self.picker.selected_entry() else {
             return;
         };
-        if entry.name == ".." {
-            return;
-        }
         let key = super::picker::path_key(&entry.path);
         if !self.selected.remove(&key) {
             self.selected.insert(key);
+        }
+        self.selection_anchor = Some(self.picker.selected);
+    }
+
+    fn toggle_range(&mut self) {
+        let current = self.picker.selected;
+        let start = self.selection_anchor.unwrap_or(current);
+        let (lo, hi) = if start <= current {
+            (start, current)
+        } else {
+            (current, start)
+        };
+        for index in lo..=hi {
+            let Some(entry) = self.picker.item(index) else {
+                continue;
+            };
+            if entry.name == ".." {
+                continue;
+            }
+            self.selected.insert(super::picker::path_key(&entry.path));
+        }
+        if self.selection_anchor.is_none() {
+            self.selection_anchor = Some(current);
         }
     }
 
@@ -817,8 +845,7 @@ fn collect_files(path: &Path, extension: Option<&str>) -> Result<Vec<PathBuf>, S
 
 #[cfg(test)]
 mod tests {
-    use super::{FormFocus, UploadForm, UploadState, collect_files, parse_meta, selected_summary};
-    use marple_db::Dataset;
+    use super::{FormFocus, UploadForm, collect_files, parse_meta, selected_summary};
     use serde_json::json;
     use std::collections::HashSet;
     use std::fs;
@@ -839,29 +866,47 @@ mod tests {
         );
     }
 
+    fn goto_named(form: &mut UploadForm, name: &str) {
+        let index = form
+            .picker
+            .entries
+            .iter()
+            .position(|entry| entry.name == name)
+            .map(|pos| form.picker.recents.len() + pos)
+            .unwrap();
+        form.picker.goto(index);
+    }
+
     #[test]
-    fn seed_watch_follows_non_terminal_datasets() {
-        let waiting: Dataset = serde_json::from_value(json!({
-            "id": 1,
-            "datastream_id": 7,
-            "path": "a.csv",
-            "import_status": "WAITING"
-        }))
-        .unwrap();
-        let finished: Dataset = serde_json::from_value(json!({
-            "id": 2,
-            "datastream_id": 7,
-            "path": "b.csv",
-            "import_status": "FINISHED"
-        }))
-        .unwrap();
-        let mut state = UploadState::default();
-        state.seed_watch(7, &[waiting, finished]);
-        assert!(state.is_active(1));
-        assert!(!state.is_active(2));
-        assert!(state.needs_tick());
-        state.clear();
-        assert!(!state.needs_tick());
+    fn enter_on_parent_row_navigates_up() {
+        let tmp = tempfile::tempdir().unwrap();
+        fs::create_dir(tmp.path().join("nested")).unwrap();
+        let nested = tmp.path().join("nested");
+        let mut form = UploadForm::new(1, "demo".into(), Some(&nested));
+        goto_named(&mut form, "..");
+        form.activate();
+        assert_eq!(form.picker.dir, fs::canonicalize(tmp.path()).unwrap());
+        assert!(form.selected.is_empty());
+    }
+
+    #[test]
+    fn shift_enter_selects_span_from_anchor() {
+        let tmp = tempfile::tempdir().unwrap();
+        fs::write(tmp.path().join("a.csv"), "x").unwrap();
+        fs::write(tmp.path().join("b.csv"), "x").unwrap();
+        fs::write(tmp.path().join("c.csv"), "x").unwrap();
+        let mut form = UploadForm::new(1, "demo".into(), Some(tmp.path()));
+        goto_named(&mut form, "a.csv");
+        form.activate();
+        goto_named(&mut form, "c.csv");
+        form.toggle_range();
+        let mut names: Vec<_> = form
+            .selected
+            .iter()
+            .map(|path| path.file_name().unwrap().to_string_lossy().into_owned())
+            .collect();
+        names.sort();
+        assert_eq!(names, ["a.csv", "b.csv", "c.csv"]);
     }
 
     #[test]
@@ -887,9 +932,6 @@ mod tests {
         form.activate();
         assert!(form.skip_existing);
         assert!(!form.overwrite);
-        form.focus = FormFocus::Files;
-        form.activate();
-        assert!(form.selected.is_empty());
     }
 
     #[test]

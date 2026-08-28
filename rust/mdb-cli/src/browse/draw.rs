@@ -1,14 +1,14 @@
 use super::format::{
     DATASET_COLS, DATASET_EXTRA, SIGNAL_COLS, STREAM_COLS, col_cells, col_headers, col_widths,
-    count_cell, dataset_card, ellipsis, format_expiry, format_usage, host_from_url, kv, kv_styled,
-    license_color, license_type, now_epoch, progress_cell, shows_progress, stream_card, sum_bytes,
-    usage_bar,
+    count_cell, dataset_card, dataset_info, ellipsis, format_expiry, format_usage, host_from_url,
+    kv, kv_styled, license_color, license_type, now_epoch, progress_cell, shows_progress,
+    stream_card, sum_bytes, usage_bar,
 };
 use super::picker::FilePicker;
 use super::session::settings_path;
 use super::style::{accent, accent_bold, block, body_style, highlight};
 use super::upload::{FormFocus, UploadForm, selected_summary};
-use super::{AUTO_LOAD_LIMIT, App, BrowseLevel, Focus};
+use super::{AUTO_LOAD_LIMIT, App, BrowseLevel, DatasetView, Focus};
 use crate::table::{render_table, search_title, text_col};
 use marple_db::{CurrentWorkspace, StorageQuota};
 use ratatui::Frame;
@@ -62,7 +62,11 @@ pub(super) fn draw(frame: &mut Frame, app: &App) -> u16 {
                 .split(body[0]);
             draw_list(frame, app, left[0]);
             draw_card(frame, app, left[1]);
-            draw_table(frame, app, body[1]);
+            if app.browse_level == BrowseLevel::Datasets {
+                info_view = draw_dataset_page(frame, app, body[1]);
+            } else {
+                draw_table(frame, app, body[1]);
+            }
         }
     }
     draw_help(frame, app, root[2]);
@@ -320,9 +324,7 @@ fn draw_table(frame: &mut Frame, app: &App, area: Rect) {
             let dataset = app.selected_dataset();
             let dataset_id = dataset.map(|dataset| dataset.id);
             let loaded = dataset_id.is_some() && app.signals_dataset_id() == dataset_id;
-            let title = dataset
-                .map(|dataset| format!("signals  /{}", dataset.path))
-                .unwrap_or_else(|| "signals".to_string());
+            let title = app.dataset_tabs();
             if !loaded_or_hint(
                 frame,
                 area,
@@ -357,6 +359,45 @@ fn draw_table(frame: &mut Frame, app: &App, area: Rect) {
             );
         }
     }
+}
+
+fn draw_dataset_page(frame: &mut Frame, app: &App, area: Rect) -> u16 {
+    match app.dataset_view {
+        DatasetView::Info => draw_dataset_info(frame, app, area),
+        DatasetView::Debug => draw_debug(frame, app, area),
+        DatasetView::Signals => {
+            draw_table(frame, app, area);
+            area.height
+        }
+    }
+}
+
+fn draw_dataset_info(frame: &mut Frame, app: &App, area: Rect) -> u16 {
+    let lines = dataset_info(app.selected_dataset()).1;
+    frame.render_widget(
+        Paragraph::new(Text::from(lines))
+            .block(block(&app.dataset_tabs(), app.focus == Focus::Table))
+            .wrap(Wrap { trim: false })
+            .scroll((app.info_scroll, 0)),
+        area,
+    );
+    area.height
+}
+
+fn draw_debug(frame: &mut Frame, app: &App, area: Rect) -> u16 {
+    let title = if app.debug.search.active() {
+        search_title(&app.dataset_tabs(), &app.debug.search)
+    } else {
+        app.dataset_tabs()
+    };
+    frame.render_widget(
+        Paragraph::new(Text::from(app.debug_lines()))
+            .block(block(&title, app.focus == Focus::Table))
+            .wrap(Wrap { trim: false })
+            .scroll((app.debug.scroll, 0)),
+        area,
+    );
+    area.height
 }
 
 fn draw_card(frame: &mut Frame, app: &App, area: Rect) {

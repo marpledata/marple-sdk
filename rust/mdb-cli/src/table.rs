@@ -98,21 +98,31 @@ pub(crate) fn row_matches(query: &str, fields: impl IntoIterator<Item = impl AsR
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub(crate) enum Visible {
     All(usize),
-    Filtered(Vec<usize>),
+    Filtered { indices: Vec<usize>, at: Vec<u32> },
 }
 
 impl Visible {
+    pub fn filtered(source_len: usize, indices: Vec<usize>) -> Self {
+        let mut at = vec![u32::MAX; source_len];
+        for (pos, &index) in indices.iter().enumerate() {
+            if let Some(slot) = at.get_mut(index) {
+                *slot = pos as u32;
+            }
+        }
+        Self::Filtered { indices, at }
+    }
+
     pub fn len(&self) -> usize {
         match self {
             Self::All(len) => *len,
-            Self::Filtered(indices) => indices.len(),
+            Self::Filtered { indices, .. } => indices.len(),
         }
     }
 
     pub fn get(&self, pos: usize) -> Option<usize> {
         match self {
             Self::All(len) if pos < *len => Some(pos),
-            Self::Filtered(indices) => indices.get(pos).copied(),
+            Self::Filtered { indices, .. } => indices.get(pos).copied(),
             _ => None,
         }
     }
@@ -120,7 +130,11 @@ impl Visible {
     pub fn position(&self, index: usize) -> Option<usize> {
         match self {
             Self::All(len) if index < *len => Some(index),
-            Self::Filtered(indices) => indices.iter().position(|&item| item == index),
+            Self::Filtered { at, .. } => at
+                .get(index)
+                .copied()
+                .filter(|&pos| pos != u32::MAX)
+                .map(|pos| pos as usize),
             _ => None,
         }
     }
@@ -161,6 +175,21 @@ pub(crate) fn snap_visible(visible: &Visible, selected: Option<usize>) -> Option
         Some(selected) if visible.position(selected).is_some() => Some(selected),
         _ => visible.get(0),
     }
+}
+
+pub(crate) fn visible_span(visible: &Visible, anchor: Option<usize>, current: usize) -> Vec<usize> {
+    let Some(cur) = visible.position(current) else {
+        return Vec::new();
+    };
+    let start = anchor
+        .and_then(|index| visible.position(index))
+        .unwrap_or(cur);
+    let (lo, hi) = if start <= cur {
+        (start, cur)
+    } else {
+        (cur, start)
+    };
+    (lo..=hi).filter_map(|pos| visible.get(pos)).collect()
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -242,7 +271,7 @@ fn visible_range(len: usize, selected: Option<usize>, view: usize) -> (usize, us
 mod tests {
     use super::{
         TableSearch, Visible, goto_visible, handle_search_key, row_matches, search_title,
-        snap_visible, step_visible, visible_range, window_title, wrap_index,
+        snap_visible, step_visible, visible_range, visible_span, window_title, wrap_index,
     };
     use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
 
@@ -308,7 +337,7 @@ mod tests {
 
     #[test]
     fn visible_motion_steps_filtered_rows() {
-        let visible = Visible::Filtered(vec![2, 5, 9]);
+        let visible = Visible::filtered(10, vec![2, 5, 9]);
         assert_eq!(step_visible(&visible, Some(5), 1), Some(9));
         assert_eq!(step_visible(&visible, Some(5), -1), Some(2));
         assert_eq!(step_visible(&visible, Some(2), -1), Some(9));
@@ -350,5 +379,15 @@ mod tests {
         assert_eq!(visible_range(20, Some(0), 5), (0, 5));
         assert_eq!(visible_range(20, Some(19), 5), (15, 20));
         assert_eq!(visible_range(20, Some(10), 5), (8, 13));
+    }
+
+    #[test]
+    fn visible_span_selects_inclusive_range() {
+        let visible = Visible::filtered(10, vec![1, 3, 5, 7, 9]);
+        assert_eq!(visible_span(&visible, Some(3), 7), vec![3, 5, 7]);
+        assert_eq!(visible_span(&visible, Some(7), 3), vec![3, 5, 7]);
+        assert_eq!(visible_span(&visible, None, 5), vec![5]);
+        assert_eq!(visible_span(&Visible::All(5), Some(1), 3), vec![1, 2, 3]);
+        assert_eq!(visible_span(&visible, Some(0), 5), vec![5]);
     }
 }

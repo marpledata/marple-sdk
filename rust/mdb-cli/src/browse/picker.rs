@@ -91,7 +91,7 @@ impl FilePicker {
         self.recents.iter().chain(self.entries.iter())
     }
 
-    fn item(&self, index: usize) -> Option<&PickerEntry> {
+    pub(crate) fn item(&self, index: usize) -> Option<&PickerEntry> {
         self.recents
             .get(index)
             .or_else(|| self.entries.get(index.checked_sub(self.recents.len())?))
@@ -378,6 +378,17 @@ mod tests {
                 .iter()
                 .any(|entry| entry.name == ".env.staging")
         );
+
+        picker = FilePicker::open(Some(&tmp.path().join("python")), &[]);
+        picker.goto(
+            picker
+                .entries
+                .iter()
+                .position(|entry| entry.name == "..")
+                .unwrap(),
+        );
+        assert!(picker.enter_selected().is_none());
+        assert!(picker.entries.iter().any(|entry| entry.name == ".env"));
     }
 
     #[test]

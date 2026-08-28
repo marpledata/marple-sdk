@@ -36,6 +36,26 @@ pub(super) struct ImportMix {
     pub total: usize,
 }
 
+pub(super) fn import_mix_of(datasets: &[Dataset]) -> ImportMix {
+    let mut finished = 0;
+    let mut live = 0;
+    let mut failed = 0;
+    for dataset in datasets {
+        match dataset.import_status {
+            ImportStatus::Finished => finished += 1,
+            ImportStatus::Live => live += 1,
+            status if status.is_failure() => failed += 1,
+            _ => {}
+        }
+    }
+    ImportMix {
+        finished,
+        live,
+        failed,
+        total: datasets.len(),
+    }
+}
+
 pub(super) fn stream_info(
     stream: Option<&Stream>,
     expanded: bool,
@@ -97,47 +117,37 @@ pub(super) fn stream_card(
     (title, lines)
 }
 
-pub(super) fn dataset_info(
-    dataset: Option<&Dataset>,
-    expanded: bool,
-) -> (String, Vec<Line<'static>>) {
+pub(super) fn dataset_info(dataset: Option<&Dataset>) -> (String, Vec<Line<'static>>) {
     let Some(dataset) = dataset else {
         return ("info".to_string(), vec![Line::from("no dataset selected")]);
     };
     let mut lines = vec![
         kv("id", dataset.id),
+        kv("stream", dataset.datastream_id),
+        kv("version", opt_num(dataset.datastream_version)),
+        kv("import id", opt_num(dataset.import_id)),
         kv("status", dataset.import_status.as_str()),
+        kv("progress", opt_percent(dataset.import_progress)),
+        kv("message", opt_text(dataset.import_message.as_deref())),
         kv("signals", opt_count(dataset.n_signals)),
         kv("points", compact_count(dataset.n_datapoints)),
+        kv("start", opt_epoch(dataset.timestamp_start)),
+        kv("stop", opt_epoch(dataset.timestamp_stop)),
         kv("plugin", opt_text(dataset.plugin.as_deref())),
         kv("args", opt_text(dataset.plugin_args.as_deref())),
+        kv("parquet", opt_num(dataset.parquet_version)),
         kv("cold", opt_bytes(dataset.cold_bytes)),
         kv("hot", opt_bytes(dataset.hot_bytes)),
         kv("archive", opt_bytes(dataset.backup_size)),
+        kv("cold path", opt_text(dataset.cold_path.as_deref())),
+        kv("backup path", opt_text(dataset.backup_path.as_deref())),
+        kv("import time", opt_seconds(dataset.import_time)),
+        kv("import speed", opt_speed(dataset.import_speed)),
+        kv("created by", opt_text(dataset.created_by.as_deref())),
+        kv("created at", opt_epoch(Some(dataset.created_at))),
     ];
-    if expanded {
-        lines.push(kv("progress", opt_percent(dataset.import_progress)));
-        lines.push(kv("import time", opt_seconds(dataset.import_time)));
-        lines.push(kv("import speed", opt_speed(dataset.import_speed)));
-        lines.push(kv(
-            "message",
-            dataset
-                .import_message
-                .as_deref()
-                .filter(|message| !message.is_empty())
-                .unwrap_or(MISSING),
-        ));
-        if let Some(created_by) = &dataset.created_by {
-            lines.push(kv("created by", created_by.clone()));
-        }
-        if dataset.created_at > 0.0 {
-            lines.push(kv(
-                "created at",
-                crate::format_epoch_utc(dataset.created_at),
-            ));
-        }
-    }
     push_metadata(&mut lines, &dataset.metadata, false);
+    push_extra(&mut lines, &dataset.extra);
     (format!("dataset  {}", dataset.path), lines)
 }
 
@@ -478,37 +488,48 @@ pub(super) fn col_cells<T>(cols: &[Col<T>], row: &T) -> Vec<Cell<'static>> {
 }
 
 pub(super) fn stream_matches(stream: &Stream, query: &str) -> bool {
-    col_matches(STREAM_COLS, &[stream.description.as_str()], stream, query)
+    let id = stream.id.to_string();
+    row_matches(
+        query,
+        [
+            id.as_str(),
+            stream.name.as_str(),
+            stream_kind(stream),
+            stream.plugin.as_deref().unwrap_or(""),
+            stream.plugin_args.as_deref().unwrap_or(""),
+            stream.description.as_str(),
+        ],
+    )
 }
 
 pub(super) fn dataset_matches(dataset: &Dataset, query: &str) -> bool {
-    col_matches(
-        DATASET_COLS,
-        &[
+    let id = dataset.id.to_string();
+    row_matches(
+        query,
+        [
+            id.as_str(),
+            dataset.path.as_str(),
             dataset.import_status.as_str(),
             dataset.import_message.as_deref().unwrap_or(""),
+            dataset.plugin.as_deref().unwrap_or(""),
+            dataset.plugin_args.as_deref().unwrap_or(""),
         ],
-        dataset,
-        query,
     )
 }
 
 pub(super) fn signal_matches(signal: &Signal, query: &str) -> bool {
-    col_matches(
-        SIGNAL_COLS,
-        &[signal.description.as_deref().unwrap_or("")],
-        signal,
+    let id = signal.id.to_string();
+    row_matches(
         query,
+        [
+            signal_kind(signal),
+            id.as_str(),
+            signal.name.as_str(),
+            signal.unit.as_deref().unwrap_or(""),
+            signal_source(signal),
+            signal.description.as_deref().unwrap_or(""),
+        ],
     )
-}
-
-fn col_matches<T>(cols: &[Col<T>], extras: &[&str], row: &T, query: &str) -> bool {
-    let fields: Vec<String> = cols
-        .iter()
-        .map(|col| (col.field)(row))
-        .chain(extras.iter().map(|extra| extra.to_string()))
-        .collect();
-    row_matches(query, fields)
 }
 
 fn normalize_progress(value: Option<f64>) -> Option<f64> {
@@ -642,6 +663,33 @@ fn format_meta_value(value: &Value) -> String {
     }
 }
 
+fn opt_num(value: Option<i64>) -> String {
+    value
+        .map(|value| value.to_string())
+        .unwrap_or_else(|| MISSING.to_string())
+}
+
+fn opt_epoch(value: Option<f64>) -> String {
+    value
+        .filter(|value| *value > 0.0)
+        .map(crate::format_epoch_utc)
+        .unwrap_or_else(|| MISSING.to_string())
+}
+
+fn push_extra(lines: &mut Vec<Line<'static>>, extra: &Value) {
+    let Value::Object(map) = extra else {
+        return;
+    };
+    let mut entries: Vec<_> = map.iter().collect();
+    if entries.is_empty() {
+        return;
+    }
+    entries.sort_by_key(|(key, _)| *key);
+    for (key, value) in entries {
+        lines.push(kv(key, format_meta_value(value)));
+    }
+}
+
 fn push_metadata(
     lines: &mut Vec<Line<'static>>,
     metadata: &marple_db::Metadata,
@@ -707,9 +755,9 @@ fn dataset_points_archive(dataset: &Dataset) -> String {
 #[cfg(test)]
 mod tests {
     use super::{
-        ImportMix, bar_color, dataset_card, ellipsis, format_expiry, format_usage, host_from_url,
-        license_color, license_type, progress_cell, shows_progress, storage_status, stream_card,
-        stream_matches, usage_bar, usage_ratio,
+        ImportMix, bar_color, dataset_card, dataset_info, dataset_matches, ellipsis, format_expiry,
+        format_usage, host_from_url, import_mix_of, license_color, license_type, progress_cell,
+        shows_progress, storage_status, stream_card, stream_matches, usage_bar, usage_ratio,
     };
     use marple_db::{Dataset, ImportStatus, LicenseType, StorageQuota, StorageStatus, Stream};
     use ratatui::style::Color;
@@ -807,6 +855,47 @@ mod tests {
     }
 
     #[test]
+    fn dataset_search_uses_path_status_and_id() {
+        let dataset: Dataset = serde_json::from_value(json!({
+            "id": 42,
+            "datastream_id": 3,
+            "path": "race-001.mf4",
+            "import_status": "FAILED",
+            "import_message": "bad header",
+            "plugin": "mf4"
+        }))
+        .expect("dataset JSON");
+        assert!(dataset_matches(&dataset, "race"));
+        assert!(dataset_matches(&dataset, "42"));
+        assert!(dataset_matches(&dataset, "failed"));
+        assert!(dataset_matches(&dataset, "header"));
+        assert!(dataset_matches(&dataset, "mf4"));
+        assert!(!dataset_matches(&dataset, "xyz"));
+    }
+
+    #[test]
+    fn import_mix_counts_finished_live_and_failed() {
+        let rows: Vec<Dataset> = ["FINISHED", "LIVE", "FAILED", "WAITING"]
+            .into_iter()
+            .enumerate()
+            .map(|(index, status)| {
+                serde_json::from_value(json!({
+                    "id": index + 1,
+                    "datastream_id": 3,
+                    "path": format!("{status}.csv"),
+                    "import_status": status
+                }))
+                .expect("dataset JSON")
+            })
+            .collect();
+        let mix = import_mix_of(&rows);
+        assert_eq!(mix.finished, 1);
+        assert_eq!(mix.live, 1);
+        assert_eq!(mix.failed, 1);
+        assert_eq!(mix.total, 4);
+    }
+
+    #[test]
     fn stream_card_uses_kind_when_plugin_missing() {
         let stream: Stream = serde_json::from_value(json!({
             "id": 1,
@@ -882,6 +971,37 @@ mod tests {
     }
 
     #[test]
+    fn dataset_info_includes_ids_range_and_paths() {
+        let dataset: Dataset = serde_json::from_value(json!({
+            "id": 42,
+            "datastream_id": 3,
+            "datastream_version": 2,
+            "import_id": 9,
+            "path": "race-001.mf4",
+            "import_status": "FINISHED",
+            "timestamp_start": 1_800_000_000.0,
+            "timestamp_stop": 1_800_000_100.0,
+            "parquet_version": 2,
+            "cold_path": "s3://cold/race-001",
+            "backup_path": "s3://backup/race-001.mf4",
+            "unexpected": true
+        }))
+        .expect("dataset JSON");
+        let (title, lines) = dataset_info(Some(&dataset));
+        let texts: Vec<String> = lines.iter().map(ToString::to_string).collect();
+        let blob = texts.join("\n");
+        assert_eq!(title, "dataset  race-001.mf4");
+        assert!(blob.contains("42"), "{blob}");
+        assert!(blob.contains("stream"), "{blob}");
+        assert!(blob.contains("import id"), "{blob}");
+        assert!(blob.contains("parquet"), "{blob}");
+        assert!(blob.contains("s3://cold/race-001"), "{blob}");
+        assert!(blob.contains("s3://backup/race-001.mf4"), "{blob}");
+        assert!(blob.contains("unexpected"), "{blob}");
+        assert!(blob.contains("2027-01-15"), "{blob}");
+    }
+
+    #[test]
     fn usage_shows_quota_when_present() {
         assert_eq!(format_usage(Some(1024), None), "1.0 KiB");
         assert_eq!(
@@ -922,7 +1042,7 @@ mod tests {
             Some(0.5)
         );
         assert_eq!(usage_ratio(Some(10), Some(StorageQuota::Unlimited)), None);
-        assert_eq!(bar_color(0.5), Color::Cyan);
+        assert_eq!(bar_color(0.5), Color::Blue);
         assert_eq!(bar_color(0.7), Color::Yellow);
         assert_eq!(bar_color(0.9), Color::Red);
         assert_eq!(

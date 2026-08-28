@@ -9,19 +9,19 @@ pub(crate) mod style;
 mod upload;
 
 use crate::connect;
-use crate::table::{TableSearch, Visible, goto_visible, snap_visible, step_visible};
+use crate::table::{TableSearch, Visible, goto_visible, row_matches, snap_visible, step_visible};
 use anyhow::Result;
 use batch::BatchState;
 use crossterm::event::{Event, EventStream, KeyEventKind};
 use download::DownloadState;
 use draw::draw;
 use format::{
-    ImportMix, dataset_info, dataset_matches, signal_info, signal_matches, stream_info,
-    stream_matches,
+    ImportMix, dataset_info, dataset_matches, import_mix_of, signal_info, signal_matches,
+    stream_info, stream_matches,
 };
 use futures_util::StreamExt;
 use input::{MotionState, handle_key};
-use marple_db::{CurrentWorkspace, Dataset, ImportStatus, MarpleDB, Signal, Stream};
+use marple_db::{CurrentWorkspace, Dataset, MarpleDB, Signal, Stream};
 use picker::FilePicker;
 use ratatui::text::Line;
 use ratatui::widgets::TableState;
@@ -60,6 +60,55 @@ pub(super) enum BrowseLevel {
 pub(super) enum Focus {
     List,
     Table,
+}
+
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub(super) enum DatasetView {
+    #[default]
+    Info,
+    Debug,
+    Signals,
+}
+
+impl DatasetView {
+    const ALL: [Self; 3] = [Self::Info, Self::Debug, Self::Signals];
+
+    fn next(self) -> Self {
+        match self {
+            Self::Info => Self::Debug,
+            Self::Debug => Self::Signals,
+            Self::Signals => Self::Info,
+        }
+    }
+
+    fn label(self) -> &'static str {
+        match self {
+            Self::Info => "info",
+            Self::Debug => "debug",
+            Self::Signals => "signals",
+        }
+    }
+}
+
+#[derive(Default)]
+struct DebugState {
+    load_gen: u64,
+    dataset_id: Option<i64>,
+    pending: bool,
+    messages: Option<Result<Vec<String>, String>>,
+    scroll: u16,
+    search: TableSearch,
+}
+
+impl DebugState {
+    fn invalidate(&mut self) {
+        self.load_gen = self.load_gen.wrapping_add(1);
+        self.dataset_id = None;
+        self.pending = false;
+        self.messages = None;
+        self.scroll = 0;
+        self.search.clear();
+    }
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -136,6 +185,7 @@ impl PendingLoad {
 enum Message {
     Input(Event),
     Loaded(u64, PendingLoad, Box<Result<LoadResult, String>>),
+    DebugLoaded(u64, i64, Result<Vec<String>, String>),
     Tick,
 }
 
@@ -195,6 +245,8 @@ pub(super) struct App {
     info_expanded: bool,
     info_scroll: u16,
     info_view: u16,
+    dataset_view: DatasetView,
+    debug: DebugState,
     motion: MotionState,
     load_tick: u8,
     search: TableSearch,
@@ -202,6 +254,8 @@ pub(super) struct App {
     download: DownloadState,
     batch: BatchState,
     selected_datasets: HashSet<i64>,
+    selection_anchor: Option<usize>,
+    dataset_mix: Option<ImportMix>,
     upload_dir: Option<PathBuf>,
 }
 
@@ -284,6 +338,10 @@ async fn apply_message(app: &mut App, message: Message) -> bool {
             app.apply_load_result(load_gen, pending, *result);
             false
         }
+        Message::DebugLoaded(load_gen, dataset_id, result) => {
+            app.apply_debug_result(load_gen, dataset_id, result);
+            false
+        }
         Message::Tick => {
             app.load_tick = app.load_tick.wrapping_add(1);
             app.on_upload_tick().await;
@@ -346,6 +404,8 @@ impl App {
             info_expanded: false,
             info_scroll: 0,
             info_view: 8,
+            dataset_view: DatasetView::Info,
+            debug: DebugState::default(),
             motion: MotionState::default(),
             load_tick: 0,
             search: TableSearch::default(),
@@ -353,6 +413,8 @@ impl App {
             download: DownloadState::default(),
             batch: BatchState::default(),
             selected_datasets: HashSet::new(),
+            selection_anchor: None,
+            dataset_mix: None,
             upload_dir: None,
         }
     }
@@ -374,6 +436,8 @@ impl App {
                 self.focus = Focus::Table;
                 self.info_expanded = false;
                 self.info_scroll = 0;
+                self.dataset_view = DatasetView::Info;
+                self.debug.invalidate();
                 self.persist_settings();
                 self.env_picker = None;
                 self.request_streams();
@@ -438,28 +502,89 @@ impl App {
     }
 
     fn activate(&mut self) {
-        self.search.clear();
         match self.focused_pane() {
-            Pane::Streams => self.open_stream_table(),
+            Pane::Streams => {
+                self.search.clear();
+                self.open_stream_table();
+            }
             Pane::Datasets => {
                 if self.browse_level == BrowseLevel::Streams && !self.table_shows_current_stream() {
+                    self.search.clear();
                     self.open_stream_table();
+                } else if self.browse_level == BrowseLevel::Streams {
+                    self.search.clear();
+                    self.open_dataset();
                 } else {
-                    self.open_signals();
+                    self.cycle_dataset_view();
                 }
             }
-            Pane::Signals => self.toggle_info(),
+            Pane::Signals => self.cycle_dataset_view(),
+        }
+    }
+
+    fn cycle_dataset_view(&mut self) {
+        self.dataset_view = self.dataset_view.next();
+        self.info_scroll = 0;
+        self.debug.scroll = 0;
+        self.debug.search.editing = false;
+        self.on_dataset_view();
+    }
+
+    fn on_dataset_view(&mut self) {
+        match self.dataset_view {
+            DatasetView::Info => {}
+            DatasetView::Debug => self.request_debug(),
+            DatasetView::Signals => {
+                if let Some(dataset) = self.selected_dataset() {
+                    self.request_signals(dataset.datastream_id, dataset.id);
+                }
+            }
         }
     }
 
     fn toggle_info(&mut self) {
+        if self.browse_level == BrowseLevel::Datasets {
+            self.dataset_view = DatasetView::Info;
+            self.info_scroll = 0;
+            return;
+        }
         self.info_expanded = !self.info_expanded;
         self.info_scroll = 0;
     }
 
+    fn view_scrolls(&self) -> bool {
+        self.browse_level == BrowseLevel::Datasets
+            && self.focus == Focus::Table
+            && matches!(self.dataset_view, DatasetView::Info | DatasetView::Debug)
+    }
+
+    fn debug_filter_enabled(&self) -> bool {
+        self.browse_level == BrowseLevel::Datasets
+            && self.dataset_view == DatasetView::Debug
+            && self.focus == Focus::Table
+    }
+
     fn scroll_info(&mut self, delta: i32) {
-        let lines = self.info_for_inspect().1.len() as u16;
+        if self.info_expanded {
+            let lines = self.info_for_inspect().1.len() as u16;
+            self.info_scroll = clamp_scroll(self.info_scroll, delta, lines, self.info_view);
+            return;
+        }
+        if self.dataset_view == DatasetView::Debug {
+            let lines = self.debug_line_count();
+            self.debug.scroll = clamp_scroll(self.debug.scroll, delta, lines, self.info_view);
+            return;
+        }
+        let lines = dataset_info(self.selected_dataset()).1.len() as u16;
         self.info_scroll = clamp_scroll(self.info_scroll, delta, lines, self.info_view);
+    }
+
+    fn reset_view_scroll(&mut self) {
+        if !self.info_expanded && self.dataset_view == DatasetView::Debug {
+            self.debug.scroll = 0;
+        } else {
+            self.info_scroll = 0;
+        }
     }
 
     fn open_stream_table(&mut self) {
@@ -472,7 +597,7 @@ impl App {
         self.request_datasets(id);
     }
 
-    fn open_signals(&mut self) {
+    fn open_dataset(&mut self) {
         let Some((stream_id, dataset_id)) = self
             .selected_dataset()
             .map(|dataset| (dataset.datastream_id, dataset.id))
@@ -481,6 +606,9 @@ impl App {
         };
         self.browse_level = BrowseLevel::Datasets;
         self.focus = Focus::List;
+        self.dataset_view = DatasetView::Info;
+        self.info_scroll = 0;
+        self.debug.scroll = 0;
         self.status.clear();
         self.request_signals(stream_id, dataset_id);
     }
@@ -524,6 +652,47 @@ impl App {
         });
     }
 
+    fn request_debug(&mut self) {
+        let Some(dataset) = self.selected_dataset() else {
+            return;
+        };
+        let stream_id = dataset.datastream_id;
+        let dataset_id = dataset.id;
+        if self.debug.dataset_id == Some(dataset_id)
+            && (self.debug.pending || self.debug.messages.is_some())
+        {
+            return;
+        }
+        self.debug.load_gen = self.debug.load_gen.wrapping_add(1);
+        let load_gen = self.debug.load_gen;
+        self.debug.dataset_id = Some(dataset_id);
+        self.debug.pending = true;
+        self.debug.messages = None;
+        self.debug.scroll = 0;
+        let db = self.db.clone();
+        let tx = self.events.clone();
+        tokio::spawn(async move {
+            let result = db
+                .get_debug_messages(stream_id, dataset_id)
+                .await
+                .map_err(|error| error.to_string());
+            let _ = tx.send(Message::DebugLoaded(load_gen, dataset_id, result));
+        });
+    }
+
+    fn apply_debug_result(
+        &mut self,
+        load_gen: u64,
+        dataset_id: i64,
+        result: Result<Vec<String>, String>,
+    ) {
+        if load_gen != self.debug.load_gen || self.debug.dataset_id != Some(dataset_id) {
+            return;
+        }
+        self.debug.pending = false;
+        self.debug.messages = Some(result);
+    }
+
     fn request(&mut self, load: PendingLoad) {
         if !self.connected {
             self.prompt_for_env();
@@ -554,6 +723,7 @@ impl App {
 
     fn needs_tick(&self) -> bool {
         self.pending.is_some()
+            || self.debug.pending
             || self.upload.needs_tick()
             || self.download.needs_tick()
             || self.batch.needs_tick()
@@ -646,9 +816,11 @@ impl App {
     fn apply_datasets(&mut self, stream_id: i64, mut datasets: Vec<Dataset>) {
         datasets.sort_by_key(|dataset| std::cmp::Reverse(dataset.id));
         self.selected_datasets.clear();
-        self.upload.seed_watch(stream_id, &datasets);
+        self.selection_anchor = None;
         self.loaded_datasets = Some(Loaded::new(stream_id, datasets));
         self.loaded_signals = None;
+        self.debug.invalidate();
+        self.sync_dataset_mix();
         self.on_datasets_loaded(stream_id);
         self.on_batch_datasets_loaded(stream_id);
     }
@@ -664,14 +836,15 @@ impl App {
             Some(loaded) if loaded.parent_id == stream_id => {
                 if let Some(index) = loaded.rows.iter().position(|row| row.id == dataset.id) {
                     loaded.rows[index] = dataset;
-                    return;
+                } else {
+                    loaded.rows.insert(0, dataset);
+                    loaded.state.select(Some(0));
                 }
-                loaded.rows.insert(0, dataset);
-                loaded.state.select(Some(0));
             }
             None => self.loaded_datasets = Some(Loaded::new(stream_id, vec![dataset])),
-            Some(_) => {}
+            Some(_) => return,
         }
+        self.sync_dataset_mix();
     }
 
     fn patch_dataset(&mut self, id: i64, patch: impl FnOnce(&mut Dataset)) {
@@ -681,7 +854,17 @@ impl App {
             .and_then(|loaded| loaded.rows.iter_mut().find(|dataset| dataset.id == id))
         {
             patch(dataset);
+        } else {
+            return;
         }
+        self.sync_dataset_mix();
+    }
+
+    fn sync_dataset_mix(&mut self) {
+        self.dataset_mix = self
+            .loaded_datasets
+            .as_ref()
+            .map(|loaded| import_mix_of(&loaded.rows));
     }
 
     fn clear_loaded(&mut self) {
@@ -690,6 +873,10 @@ impl App {
         self.pending = None;
         self.load_gen = self.load_gen.wrapping_add(1);
         self.selected_datasets.clear();
+        self.selection_anchor = None;
+        self.dataset_mix = None;
+        self.debug.invalidate();
+        self.dataset_view = DatasetView::Info;
         self.upload.clear();
         self.download.clear();
         self.batch.clear();
@@ -760,7 +947,8 @@ impl App {
     ) -> Visible {
         let query = self.search.query.trim();
         if filtered && self.search.active() && !query.is_empty() {
-            Visible::Filtered(
+            Visible::filtered(
+                items.len(),
                 (0..items.len())
                     .filter(|&index| matches(&items[index], query))
                     .collect(),
@@ -813,7 +1001,12 @@ impl App {
                     select(&mut loaded.state);
                 }
                 if self.focus == Focus::List {
+                    self.info_scroll = 0;
+                    self.debug.scroll = 0;
                     self.maybe_autoload_signals();
+                    if self.dataset_view == DatasetView::Debug {
+                        self.request_debug();
+                    }
                 }
             }
             Pane::Signals => {
@@ -847,25 +1040,56 @@ impl App {
 
     fn loaded_import_mix(&self) -> Option<ImportMix> {
         let id = self.selected_stream()?.id;
-        (self.loaded_stream_id() == Some(id)).then(|| {
-            let mut finished = 0;
-            let mut live = 0;
-            let mut failed = 0;
-            for dataset in self.datasets() {
-                match dataset.import_status {
-                    ImportStatus::Finished => finished += 1,
-                    ImportStatus::Live => live += 1,
-                    status if status.is_failure() => failed += 1,
-                    _ => {}
+        (self.loaded_stream_id() == Some(id))
+            .then_some(self.dataset_mix)
+            .flatten()
+    }
+
+    pub(super) fn dataset_tabs(&self) -> String {
+        DatasetView::ALL
+            .into_iter()
+            .map(|view| {
+                if view == self.dataset_view {
+                    format!("[{}]", view.label())
+                } else {
+                    view.label().to_string()
+                }
+            })
+            .collect::<Vec<_>>()
+            .join("  ")
+    }
+
+    pub(super) fn debug_lines(&self) -> Vec<Line<'static>> {
+        if self.debug.pending {
+            return vec![Line::from(format!(
+                "loading debug messages {}",
+                self.loading_dots()
+            ))];
+        }
+        match &self.debug.messages {
+            None => vec![Line::from("no debug messages")],
+            Some(Err(error)) => vec![Line::from(error.clone())],
+            Some(Ok(messages)) if messages.is_empty() => {
+                vec![Line::from("no debug messages")]
+            }
+            Some(Ok(messages)) => {
+                let query = self.debug.search.query.trim();
+                let lines: Vec<Line<'static>> = messages
+                    .iter()
+                    .filter(|message| row_matches(query, [message.as_str()]))
+                    .map(|message| Line::from(message.clone()))
+                    .collect();
+                if lines.is_empty() {
+                    vec![Line::from("no matches")]
+                } else {
+                    lines
                 }
             }
-            ImportMix {
-                finished,
-                live,
-                failed,
-                total: self.datasets().len(),
-            }
-        })
+        }
+    }
+
+    fn debug_line_count(&self) -> u16 {
+        self.debug_lines().len() as u16
     }
 
     fn info_for_inspect(&self) -> (String, Vec<Line<'static>>) {
@@ -875,7 +1099,7 @@ impl App {
                 true,
                 self.loaded_import_mix().map(|mix| (mix.finished, mix.live)),
             ),
-            Pane::Datasets => dataset_info(self.selected_dataset(), true),
+            Pane::Datasets => dataset_info(self.selected_dataset()),
             Pane::Signals => signal_info(self.selected_signal()),
         }
     }
@@ -889,8 +1113,16 @@ fn clamp_scroll(scroll: u16, delta: i32, lines: u16, view: u16) -> u16 {
 #[cfg(test)]
 mod tests {
     use super::{
-        BrowseLevel, Focus, Pane, PendingLoad, clamp_scroll, cycle_focus, pane_at, step_back,
+        BrowseLevel, DatasetView, Focus, Pane, PendingLoad, clamp_scroll, cycle_focus, pane_at,
+        step_back,
     };
+
+    #[test]
+    fn dataset_view_cycles_info_debug_signals() {
+        assert_eq!(DatasetView::Info.next(), DatasetView::Debug);
+        assert_eq!(DatasetView::Debug.next(), DatasetView::Signals);
+        assert_eq!(DatasetView::Signals.next(), DatasetView::Info);
+    }
 
     #[test]
     fn pending_streams_match_only_streams() {

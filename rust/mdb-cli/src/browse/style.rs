@@ -15,7 +15,7 @@ pub(crate) fn accent_bold() -> Style {
     accent().add_modifier(Modifier::BOLD)
 }
 
-/// Cyan row highlight paints both fg and bg so it does not depend on the terminal theme.
+/// Blue row highlight paints both fg and bg so it does not depend on the terminal theme.
 pub(crate) fn highlight() -> Style {
     Style::default()
         .fg(Color::White)
@@ -43,10 +43,10 @@ mod tests {
     #[test]
     fn palette_inherits_terminal_foreground() {
         assert_eq!(body_style(), Style::default());
-        assert_eq!(accent().fg, Some(Color::Cyan));
-        assert_eq!(highlight().fg, Some(Color::Black));
-        assert_eq!(highlight().bg, Some(Color::Cyan));
-        assert_eq!(idle_highlight().fg, Some(Color::Black));
-        assert_eq!(idle_highlight().bg, Some(Color::Blue));
+        assert_eq!(accent().fg, Some(Color::Blue));
+        assert_eq!(highlight().fg, Some(Color::White));
+        assert_eq!(highlight().bg, Some(Color::Blue));
+        assert_eq!(idle_highlight().fg, Some(Color::White));
+        assert_eq!(idle_highlight().bg, Some(Color::Gray));
     }
 }
