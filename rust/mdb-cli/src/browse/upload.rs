@@ -173,11 +173,11 @@ impl App {
         self.poll_import_statuses().await;
     }
 
-    pub(super) fn handle_upload_key(&mut self, key: KeyEvent) -> bool {
+    pub(super) fn handle_upload_key(&mut self, key: KeyEvent) {
         match key.code {
             KeyCode::Esc => {
                 self.upload.form = None;
-                return false;
+                return;
             }
             KeyCode::Char('q')
                 if !self.upload.form.as_ref().is_some_and(|form| {
@@ -185,7 +185,7 @@ impl App {
                 }) =>
             {
                 self.upload.form = None;
-                return false;
+                return;
             }
             KeyCode::Enter
                 if self
@@ -195,12 +195,12 @@ impl App {
                     .is_some_and(|form| form.focus == FormFocus::Files) =>
             {
                 self.confirm_upload();
-                return false;
+                return;
             }
             _ => {}
         }
         let Some(form) = self.upload.form.as_mut() else {
-            return false;
+            return;
         };
         match key.code {
             KeyCode::Tab | KeyCode::BackTab => {
@@ -251,10 +251,9 @@ impl App {
             }
             _ => {}
         }
-        false
     }
 
-    pub(super) async fn handle_upload_input(&mut self, key: KeyEvent) -> bool {
+    pub(super) async fn handle_upload_input(&mut self, key: KeyEvent) {
         match key.code {
             KeyCode::Enter => {
                 let result = self
@@ -275,7 +274,7 @@ impl App {
             }
             other => {
                 let Some(form) = self.upload.form.as_mut() else {
-                    return false;
+                    return;
                 };
                 match other {
                     KeyCode::Esc => form.picker.cancel_editing(),
@@ -287,7 +286,6 @@ impl App {
                 }
             }
         }
-        false
     }
 
     pub(super) fn apply_upload_motion(&mut self, motion: super::Motion) {

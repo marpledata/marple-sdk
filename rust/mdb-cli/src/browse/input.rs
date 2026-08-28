@@ -125,8 +125,14 @@ pub(super) async fn handle_key(app: &mut App, mut key: KeyEvent) -> bool {
             return false;
         }
         match app.input_mode() {
-            InputMode::Env { editing: true } => return handle_env_input(app, key).await,
-            InputMode::Upload { editing: true, .. } => return app.handle_upload_input(key).await,
+            InputMode::Env { editing: true } => {
+                handle_env_input(app, key).await;
+                return false;
+            }
+            InputMode::Upload { editing: true, .. } => {
+                app.handle_upload_input(key).await;
+                return false;
+            }
             InputMode::Search => {
                 if handle_search_key(&mut app.search, key) != SearchAction::Ignored {
                     app.snap_search();
@@ -158,8 +164,14 @@ pub(super) async fn handle_key(app: &mut App, mut key: KeyEvent) -> bool {
                     }
                 }
                 return match mode {
-                    InputMode::Env { .. } => handle_env_key(app, key).await,
-                    InputMode::Upload { .. } => app.handle_upload_key(key),
+                    InputMode::Env { .. } => {
+                        handle_env_key(app, key).await;
+                        false
+                    }
+                    InputMode::Upload { .. } => {
+                        app.handle_upload_key(key);
+                        false
+                    }
                     InputMode::Info | InputMode::Browse => handle_browse_key(app, key),
                     InputMode::Search => unreachable!(),
                 };
@@ -194,7 +206,7 @@ fn handle_browse_key(app: &mut App, key: KeyEvent) -> bool {
     false
 }
 
-async fn handle_env_key(app: &mut App, key: KeyEvent) -> bool {
+async fn handle_env_key(app: &mut App, key: KeyEvent) {
     match key.code {
         KeyCode::Esc | KeyCode::Char('q') => app.env_picker = None,
         KeyCode::Enter => {
@@ -204,7 +216,7 @@ async fn handle_env_key(app: &mut App, key: KeyEvent) -> bool {
         }
         other => {
             let Some(picker) = app.env_picker.as_mut() else {
-                return false;
+                return;
             };
             match other {
                 KeyCode::Char('h') | KeyCode::Left | KeyCode::Backspace => picker.go_parent(),
@@ -219,10 +231,9 @@ async fn handle_env_key(app: &mut App, key: KeyEvent) -> bool {
             }
         }
     }
-    false
 }
 
-async fn handle_env_input(app: &mut App, key: KeyEvent) -> bool {
+async fn handle_env_input(app: &mut App, key: KeyEvent) {
     match key.code {
         KeyCode::Enter => {
             let result = app
@@ -238,7 +249,7 @@ async fn handle_env_input(app: &mut App, key: KeyEvent) -> bool {
         }
         other => {
             let Some(picker) = app.env_picker.as_mut() else {
-                return false;
+                return;
             };
             match other {
                 KeyCode::Esc => picker.cancel_editing(),
@@ -250,7 +261,6 @@ async fn handle_env_input(app: &mut App, key: KeyEvent) -> bool {
             }
         }
     }
-    false
 }
 
 fn read_motion(state: &mut MotionState, key: KeyEvent) -> MotionRead {
@@ -345,7 +355,7 @@ fn apply_motion(app: &mut App, motion: Motion) {
         InputMode::Upload { .. } => app.apply_upload_motion(motion),
         InputMode::Info => apply_info_motion(app, motion),
         InputMode::Browse => apply_browse_motion(app, motion),
-        InputMode::Search => {}
+        _ => {}
     }
 }
 

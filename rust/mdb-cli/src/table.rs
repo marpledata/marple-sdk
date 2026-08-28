@@ -95,10 +95,6 @@ pub(crate) fn row_matches(query: &str, fields: impl IntoIterator<Item = impl AsR
     })
 }
 
-pub(crate) fn filter_indices(len: usize, mut keep: impl FnMut(usize) -> bool) -> Vec<usize> {
-    (0..len).filter(|&index| keep(index)).collect()
-}
-
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub(crate) enum Visible {
     All(usize),
@@ -205,7 +201,7 @@ pub(crate) fn search_title(base: &str, search: &TableSearch) -> String {
     format!("{base}  /{}{caret}", search.query)
 }
 
-pub(crate) fn header_row<'a>(cells: &'a [&str]) -> Row<'a> {
+fn header_row<'a>(cells: &'a [&str]) -> Row<'a> {
     Row::new(cells.iter().copied().map(Cell::from).collect::<Vec<_>>())
         .style(Style::default().add_modifier(Modifier::BOLD))
 }
@@ -219,7 +215,7 @@ fn table_view_rows(height: u16) -> usize {
     height.saturating_sub(3).max(1) as usize
 }
 
-pub(crate) fn window_title(title: &str, start: usize, end: usize, len: usize) -> String {
+fn window_title(title: &str, start: usize, end: usize, len: usize) -> String {
     if len == 0 {
         title.to_string()
     } else {
@@ -227,7 +223,7 @@ pub(crate) fn window_title(title: &str, start: usize, end: usize, len: usize) ->
     }
 }
 
-pub(crate) fn visible_range(len: usize, selected: Option<usize>, view: usize) -> (usize, usize) {
+fn visible_range(len: usize, selected: Option<usize>, view: usize) -> (usize, usize) {
     if len == 0 {
         return (0, 0);
     }
@@ -241,8 +237,8 @@ pub(crate) fn visible_range(len: usize, selected: Option<usize>, view: usize) ->
 #[cfg(test)]
 mod tests {
     use super::{
-        TableSearch, Visible, filter_indices, goto_visible, handle_search_key, row_matches,
-        search_title, snap_visible, step_visible, visible_range, window_title, wrap_index,
+        TableSearch, Visible, goto_visible, handle_search_key, row_matches, search_title,
+        snap_visible, step_visible, visible_range, window_title, wrap_index,
     };
     use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
 
@@ -256,19 +252,6 @@ mod tests {
         assert!(!row_matches("mbr", ["MB Racing"]));
         assert!(!row_matches("failed", ["traffic.csv", "succeeded"]));
         assert!(!row_matches("xyz", ["MB Racing"]));
-    }
-
-    #[test]
-    fn filter_indices_keeps_matching_rows() {
-        let rows = [["alpha"], ["beta traffic"], ["gamma"]];
-        assert_eq!(
-            filter_indices(rows.len(), |index| row_matches("tra", rows[index])),
-            vec![1]
-        );
-        assert_eq!(
-            filter_indices(rows.len(), |index| row_matches("", rows[index])),
-            vec![0, 1, 2]
-        );
     }
 
     #[test]
@@ -336,6 +319,10 @@ mod tests {
         assert_eq!(step_visible(&all, Some(1), 1), Some(2));
         assert_eq!(snap_visible(&all, Some(1)), Some(1));
         assert_eq!(goto_visible(&all, 99), Some(2));
+    }
+
+    #[test]
+    fn wrap_index_wraps_and_handles_empty() {
         assert_eq!(wrap_index(3, 0, -1), 2);
         assert_eq!(wrap_index(3, 2, 1), 0);
         assert_eq!(wrap_index(3, 1, -4), 0);

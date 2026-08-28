@@ -7,9 +7,7 @@ pub(crate) mod style;
 mod upload;
 
 use crate::connect;
-use crate::table::{
-    TableSearch, Visible, filter_indices, goto_visible, snap_visible, step_visible,
-};
+use crate::table::{TableSearch, Visible, goto_visible, snap_visible, step_visible};
 use anyhow::Result;
 use draw::draw;
 use format::{
@@ -34,10 +32,6 @@ const NOT_CONNECTED: &str = "not connected — pick an env file (v)";
 const SPINNER: [&str; 3] = [".", "..", "..."];
 const SPINNER_TICK: std::time::Duration = std::time::Duration::from_millis(200);
 
-fn is_cheap(count: Option<u64>) -> bool {
-    count.is_some_and(|count| count < AUTO_LOAD_LIMIT)
-}
-
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(super) enum Motion {
     Delta(i32),
@@ -58,15 +52,6 @@ pub(super) enum BrowseLevel {
 pub(super) enum Focus {
     List,
     Table,
-}
-
-impl Focus {
-    fn other(self) -> Self {
-        match self {
-            Self::List => Self::Table,
-            Self::Table => Self::List,
-        }
-    }
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -90,7 +75,10 @@ fn cycle_focus(level: BrowseLevel, focus: Focus) -> Focus {
     if level == BrowseLevel::Root {
         Focus::Table
     } else {
-        focus.other()
+        match focus {
+            Focus::List => Focus::Table,
+            Focus::Table => Focus::List,
+        }
     }
 }
 
@@ -158,6 +146,10 @@ impl<T> Loaded<T> {
 
     fn selected(&self) -> Option<&T> {
         self.state.selected().and_then(|index| self.rows.get(index))
+    }
+
+    fn selected_index(&self) -> Option<usize> {
+        self.state.selected()
     }
 }
 
@@ -514,7 +506,9 @@ impl App {
 
     fn maybe_autoload_datasets(&mut self) {
         if let Some(stream) = self.selected_stream()
-            && is_cheap(stream.n_datasets)
+            && stream
+                .n_datasets
+                .is_some_and(|count| count < AUTO_LOAD_LIMIT)
         {
             self.request_datasets(stream.id);
         }
@@ -522,7 +516,9 @@ impl App {
 
     fn maybe_autoload_signals(&mut self) {
         if let Some(dataset) = self.selected_dataset()
-            && is_cheap(dataset.n_signals)
+            && dataset
+                .n_signals
+                .is_some_and(|count| count < AUTO_LOAD_LIMIT)
         {
             self.request_signals(dataset.datastream_id, dataset.id);
         }
@@ -556,7 +552,7 @@ impl App {
     }
 
     pub(super) fn loading_dots(&self) -> &'static str {
-        spinner_frame(self.load_tick)
+        SPINNER[(self.load_tick as usize) % SPINNER.len()]
     }
 
     fn is_loading_datasets(&self) -> bool {
@@ -686,18 +682,6 @@ impl App {
         self.loaded_signals.as_ref().and_then(Loaded::selected)
     }
 
-    fn dataset_selected_index(&self) -> Option<usize> {
-        self.loaded_datasets
-            .as_ref()
-            .and_then(|loaded| loaded.state.selected())
-    }
-
-    fn signal_selected_index(&self) -> Option<usize> {
-        self.loaded_signals
-            .as_ref()
-            .and_then(|loaded| loaded.state.selected())
-    }
-
     pub(super) fn stream_indices(&self, filtered: bool) -> Visible {
         self.indices(filtered, &self.streams, stream_matches)
     }
@@ -718,9 +702,11 @@ impl App {
     ) -> Visible {
         let query = self.search.query.trim();
         if filtered && self.search.active() && !query.is_empty() {
-            Visible::Filtered(filter_indices(items.len(), |index| {
-                matches(&items[index], query)
-            }))
+            Visible::Filtered(
+                (0..items.len())
+                    .filter(|&index| matches(&items[index], query))
+                    .collect(),
+            )
         } else {
             Visible::All(items.len())
         }
@@ -842,23 +828,9 @@ fn clamp_scroll(scroll: u16, delta: i32, lines: u16, view: u16) -> u16 {
     (scroll as i32).saturating_add(delta).clamp(0, max as i32) as u16
 }
 
-fn spinner_frame(tick: u8) -> &'static str {
-    SPINNER[(tick as usize) % SPINNER.len()]
-}
-
 #[cfg(test)]
 mod tests {
-    use super::{
-        BrowseLevel, Focus, Pane, clamp_scroll, cycle_focus, pane_at, spinner_frame, step_back,
-    };
-
-    #[test]
-    fn spinner_cycles_dots() {
-        assert_eq!(spinner_frame(0), ".");
-        assert_eq!(spinner_frame(1), "..");
-        assert_eq!(spinner_frame(2), "...");
-        assert_eq!(spinner_frame(3), ".");
-    }
+    use super::{BrowseLevel, Focus, Pane, clamp_scroll, cycle_focus, pane_at, step_back};
 
     #[test]
     fn pane_follows_level_and_focus() {

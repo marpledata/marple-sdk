@@ -6,7 +6,7 @@ use marple_db::{
 use ratatui::layout::Constraint;
 use ratatui::style::{Color, Style};
 use ratatui::text::{Line, Span};
-use ratatui::widgets::{Cell, Row};
+use ratatui::widgets::Cell;
 use serde_json::Value;
 use std::time::{SystemTime, UNIX_EPOCH};
 
@@ -230,7 +230,7 @@ pub(super) fn signal_info(signal: Option<&Signal>) -> (String, Vec<Line<'static>
     (format!("signal  {}", signal.name), lines)
 }
 
-pub(super) fn stream_kind(stream: &Stream) -> &'static str {
+fn stream_kind(stream: &Stream) -> &'static str {
     match stream.stream_type {
         StreamType::Files => "files",
         StreamType::Realtime => "realtime",
@@ -238,7 +238,7 @@ pub(super) fn stream_kind(stream: &Stream) -> &'static str {
     }
 }
 
-pub(super) fn signal_kind(signal: &Signal) -> &'static str {
+fn signal_kind(signal: &Signal) -> &'static str {
     let numeric = signal.count_value.unwrap_or(0);
     let text = signal.count_text.unwrap_or(0);
     match (numeric > 0, text > 0) {
@@ -249,7 +249,7 @@ pub(super) fn signal_kind(signal: &Signal) -> &'static str {
     }
 }
 
-pub(super) fn signal_source(signal: &Signal) -> &'static str {
+fn signal_source(signal: &Signal) -> &'static str {
     if signal.metadata.contains_key(META_REFERENCE) {
         "Alias"
     } else if signal.metadata.contains_key(META_UPLOADED_AT) {
@@ -259,14 +259,14 @@ pub(super) fn signal_source(signal: &Signal) -> &'static str {
     }
 }
 
-pub(super) fn opt_text(value: Option<&str>) -> String {
+fn opt_text(value: Option<&str>) -> String {
     value
         .filter(|value| !value.is_empty())
         .unwrap_or(MISSING)
         .to_string()
 }
 
-pub(super) fn clip_args(value: Option<&str>, width: usize) -> String {
+fn clip_args(value: Option<&str>, width: usize) -> String {
     match value.filter(|value| !value.is_empty()) {
         Some(value) => ellipsis(value, width),
         None => MISSING.to_string(),
@@ -292,15 +292,15 @@ pub(super) fn count_cell(count: Option<u64>, unit: &str) -> Cell<'static> {
     Cell::from(Line::from(count_label(count, unit)).right_aligned())
 }
 
-pub(super) fn compact_count(value: Option<u64>) -> String {
+fn compact_count(value: Option<u64>) -> String {
     crate::format_compact_count_with(value, MISSING, "G")
 }
 
-pub(super) fn opt_count(value: Option<u64>) -> String {
+fn opt_count(value: Option<u64>) -> String {
     crate::format_count_with(value, MISSING)
 }
 
-pub(super) fn opt_bytes(value: Option<u64>) -> String {
+fn opt_bytes(value: Option<u64>) -> String {
     crate::format_bytes_with(value, MISSING)
 }
 
@@ -313,7 +313,7 @@ pub(super) fn format_usage(used: Option<u64>, quota: Option<StorageQuota>) -> St
     }
 }
 
-pub(super) fn usage_ratio(used: Option<u64>, quota: Option<StorageQuota>) -> Option<f64> {
+fn usage_ratio(used: Option<u64>, quota: Option<StorageQuota>) -> Option<f64> {
     match (used, quota) {
         (Some(used), Some(StorageQuota::Bytes(limit))) if limit > 0 => {
             Some(used as f64 / limit as f64)
@@ -322,7 +322,7 @@ pub(super) fn usage_ratio(used: Option<u64>, quota: Option<StorageQuota>) -> Opt
     }
 }
 
-pub(super) fn bar_color(ratio: f64) -> Color {
+fn bar_color(ratio: f64) -> Color {
     if ratio >= 0.9 {
         Color::Red
     } else if ratio >= 0.7 {
@@ -477,10 +477,6 @@ pub(super) fn col_cells<T>(cols: &[Col<T>], row: &T) -> Vec<Cell<'static>> {
         .collect()
 }
 
-pub(super) fn col_row<T>(cols: &[Col<T>], row: &T) -> Row<'static> {
-    Row::new(col_cells(cols, row))
-}
-
 pub(super) fn stream_matches(stream: &Stream, query: &str) -> bool {
     col_matches(STREAM_COLS, &[stream.description.as_str()], stream, query)
 }
@@ -553,7 +549,7 @@ pub(super) fn license_type(license_type: LicenseType) -> &'static str {
     }
 }
 
-pub(super) fn storage_status(status: StorageStatus) -> &'static str {
+fn storage_status(status: StorageStatus) -> &'static str {
     match status {
         StorageStatus::FrozenToCold => "FROZEN_TO_COLD",
         StorageStatus::Cold => "COLD",
@@ -936,7 +932,7 @@ mod tests {
     }
 
     #[test]
-    fn host_and_env_are_compact() {
+    fn host_from_url_strips_scheme_and_path() {
         assert_eq!(
             host_from_url("https://db.marpledata.com/api/v1"),
             "db.marpledata.com"

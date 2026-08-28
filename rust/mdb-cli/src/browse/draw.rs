@@ -1,8 +1,8 @@
 use super::format::{
-    DATASET_COLS, DATASET_EXTRA, SIGNAL_COLS, STREAM_COLS, col_cells, col_headers, col_row,
-    col_widths, count_cell, dataset_card, ellipsis, format_expiry, format_usage, host_from_url, kv,
-    kv_styled, license_color, license_type, now_epoch, progress_cell, shows_progress, stream_card,
-    sum_bytes, usage_bar,
+    DATASET_COLS, DATASET_EXTRA, SIGNAL_COLS, STREAM_COLS, col_cells, col_headers, col_widths,
+    count_cell, dataset_card, ellipsis, format_expiry, format_usage, host_from_url, kv, kv_styled,
+    license_color, license_type, now_epoch, progress_cell, shows_progress, stream_card, sum_bytes,
+    usage_bar,
 };
 use super::picker::FilePicker;
 use super::session::settings_path;
@@ -145,7 +145,9 @@ fn draw_list(frame: &mut Frame, app: &App, area: Rect) {
                 &[],
                 [Constraint::Min(4), Constraint::Length(COUNT_COL)],
                 &indices,
-                app.dataset_selected_index(),
+                app.loaded_datasets
+                    .as_ref()
+                    .and_then(|loaded| loaded.selected_index()),
                 |index| {
                     let dataset = &app.datasets()[index];
                     Row::new([
@@ -227,7 +229,7 @@ fn draw_table(frame: &mut Frame, app: &App, area: Rect) {
                 col_widths(STREAM_COLS, &[]),
                 &indices,
                 app.stream_state.selected(),
-                |index| col_row(STREAM_COLS, &app.streams[index]),
+                |index| Row::new(col_cells(STREAM_COLS, &app.streams[index])),
             );
         }
         BrowseLevel::Streams => {
@@ -264,7 +266,9 @@ fn draw_table(frame: &mut Frame, app: &App, area: Rect) {
                 &col_headers(DATASET_COLS, &DATASET_EXTRA),
                 col_widths(DATASET_COLS, &DATASET_EXTRA),
                 &indices,
-                app.dataset_selected_index(),
+                app.loaded_datasets
+                    .as_ref()
+                    .and_then(|loaded| loaded.selected_index()),
                 |index| {
                     let dataset = &app.datasets()[index];
                     let mut cells = col_cells(DATASET_COLS, dataset);
@@ -314,8 +318,10 @@ fn draw_table(frame: &mut Frame, app: &App, area: Rect) {
                 &col_headers(SIGNAL_COLS, &[]),
                 col_widths(SIGNAL_COLS, &[]),
                 &indices,
-                app.signal_selected_index(),
-                |index| col_row(SIGNAL_COLS, &app.signals()[index]),
+                app.loaded_signals
+                    .as_ref()
+                    .and_then(|loaded| loaded.selected_index()),
+                |index| Row::new(col_cells(SIGNAL_COLS, &app.signals()[index])),
             );
         }
     }
