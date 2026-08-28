@@ -578,6 +578,8 @@ fn dataset_status_cell(app: &App, dataset: &marple_db::Dataset) -> String {
         format!("DOWNLOADING {}", app.loading_dots())
     } else if app.batch.is_deleting(dataset.id) {
         format!("DELETING {}", app.loading_dots())
+    } else if app.batch.is_processing(dataset.id) {
+        format!("PROCESSING {}", app.loading_dots())
     } else if app.upload.is_active(dataset.id) || !dataset.import_status.is_terminal() {
         format!("{} {}", dataset.import_status.as_str(), app.loading_dots())
     } else {

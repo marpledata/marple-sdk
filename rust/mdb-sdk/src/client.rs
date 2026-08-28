@@ -268,6 +268,25 @@ impl MarpleDB {
         Ok(())
     }
 
+    /// Reruns aliasing and script processing for the given datasets.
+    ///
+    /// `dataset_ids` must be non-empty. Only datasets in `FINISHED` or
+    /// `POSTPROCESSING_FAILED` are marked for processing; other statuses are
+    /// ignored by the API.
+    pub async fn rerun_processing(&self, stream_id: i64, dataset_ids: &[i64]) -> Result<()> {
+        if dataset_ids.is_empty() {
+            return Err(Error::protocol(
+                "rerun_processing requires at least one dataset id",
+            ));
+        }
+        self.post::<_, Value>(
+            &format!("stream/{stream_id}/processing/datasets"),
+            dataset_ids,
+        )
+        .await?;
+        Ok(())
+    }
+
     /// Fetches ingest debug messages for a dataset's latest ingestion record.
     pub async fn get_debug_messages(&self, stream_id: i64, dataset_id: i64) -> Result<Vec<String>> {
         self.get_json(&format!("stream/{stream_id}/dataset/{dataset_id}/debug"))

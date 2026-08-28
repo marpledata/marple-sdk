@@ -1,6 +1,6 @@
-use marple_db::{Dataset, HealthResponse, MarpleDB};
+use marple_db::{Dataset, Error, HealthResponse, MarpleDB};
 use serde_json::json;
-use wiremock::matchers::{method, path, query_param};
+use wiremock::matchers::{body_json, method, path, query_param};
 use wiremock::{Mock, MockServer, ResponseTemplate};
 
 fn client(server: &MockServer) -> MarpleDB {
@@ -121,6 +121,33 @@ async fn get_dataset_by_path_sends_query() {
         .expect("dataset");
     assert_eq!(dataset.id, 42);
     assert_eq!(dataset.path, "run.csv");
+}
+
+#[tokio::test]
+async fn rerun_processing_posts_dataset_ids() {
+    let server = MockServer::start().await;
+    Mock::given(method("POST"))
+        .and(path("/api/v1/stream/7/processing/datasets"))
+        .and(body_json(json!([42, 43])))
+        .respond_with(ResponseTemplate::new(200).set_body_json(json!({"status": "success"})))
+        .expect(1)
+        .mount(&server)
+        .await;
+
+    client(&server)
+        .rerun_processing(7, &[42, 43])
+        .await
+        .expect("rerun");
+}
+
+#[tokio::test]
+async fn rerun_processing_rejects_empty_ids() {
+    let server = MockServer::start().await;
+    let error = client(&server)
+        .rerun_processing(7, &[])
+        .await
+        .expect_err("empty");
+    assert!(matches!(error, Error::Protocol(_)));
 }
 
 #[tokio::test]

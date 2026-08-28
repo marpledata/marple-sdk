@@ -76,7 +76,7 @@ Keys (the footer repeats the current mode):
 - Filter: `/` on the focused table, or on debug lines when that view is focused. Enter keeps the filter, Esc cancels the edit, Esc again clears it
 - Inspect: `i` expands stream details, or jumps to dataset info; `j`/`k` then scroll
 - Select datasets (dataset table): Enter or space toggles the row, Shift+Enter selects the range from the last toggle, `a` toggles all visible rows
-- Actions: `u` upload, `d` download, `x` delete (Enter confirms), `r` reingest. `d`/`x`/`r` on a stream apply to every dataset in it
+- Actions: `u` upload, `d` download, `x` delete (Enter confirms), `r` reingest, `p` rerun processing. `d`/`x`/`r`/`p` on a stream apply to every dataset in it
 - Env: `w` opens a folder picker (type a path, or pick a recent file labeled by workspace). The chosen file is saved for the next session
 - Quit: `q`
 

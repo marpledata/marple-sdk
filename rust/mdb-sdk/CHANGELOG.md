@@ -9,6 +9,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- `rerun_processing()` to rerun aliasing and script processing for selected datasets.
 - `get_dataset_by_path()` to fetch a dataset by path within a datapool.
 - `delete_stream()`, `delete_dataset()`, `reingest_dataset()`, `get_debug_messages()`, and `get_dataset_statuses()`.
 - Typed helpers for license, user/workspace info, usage, settings, stream metadata, `get_stream_by_id()`, and `get_signals()`.

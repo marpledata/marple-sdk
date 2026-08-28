@@ -17,8 +17,8 @@ the Rust SDK crate `marple-db`.
   `debug.rs`. Dataset check / range / select-all live in `selection.rs`. The
   env-file modal (`w`) lives in `picker.rs`.
   Upload from a stream (`u`) lives in `upload.rs`. Download of original files
-  (`d`) lives in `download.rs`. Dataset delete (`x`) and reingest (`r`) live in
-  `batch.rs`. TUI palette and bordered chrome live in `style.rs`.
+  (`d`) lives in `download.rs`. Dataset delete (`x`), reingest (`r`), and rerun
+  processing (`p`) live in `batch.rs`. TUI palette and bordered chrome live in `style.rs`.
 - `src/table.rs`: shared windowed table draw plus `/` substring row search used
   by browse.
 - `tests/integration.rs`: CLI tests using `assert_cmd`.

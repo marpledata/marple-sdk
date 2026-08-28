@@ -8,6 +8,7 @@ use std::collections::VecDeque;
 enum BatchKind {
     Delete,
     Reingest,
+    Process,
 }
 
 #[derive(Default)]
@@ -25,12 +26,13 @@ struct BatchItem {
 
 struct RunningBatch {
     kind: BatchKind,
-    dataset_id: i64,
+    dataset_ids: Vec<i64>,
 }
 
 pub(super) enum BatchEvent {
     Deleted(i64),
     Reingested(i64, i64, Option<Box<Dataset>>),
+    Processed(i64, Vec<i64>),
     Failed(String),
 }
 
@@ -50,12 +52,20 @@ impl BatchState {
     }
 
     pub(super) fn is_deleting(&self, dataset_id: i64) -> bool {
+        self.is_kind(BatchKind::Delete, dataset_id)
+    }
+
+    pub(super) fn is_processing(&self, dataset_id: i64) -> bool {
+        self.is_kind(BatchKind::Process, dataset_id)
+    }
+
+    fn is_kind(&self, kind: BatchKind, dataset_id: i64) -> bool {
         self.running.as_ref().is_some_and(|running| {
-            running.kind == BatchKind::Delete && running.dataset_id == dataset_id
+            running.kind == kind && running.dataset_ids.contains(&dataset_id)
         }) || self
             .queue
             .iter()
-            .any(|item| item.kind == BatchKind::Delete && item.dataset.id == dataset_id)
+            .any(|item| item.kind == kind && item.dataset.id == dataset_id)
     }
 }
 
@@ -79,7 +89,7 @@ impl App {
         }
         match kind {
             BatchKind::Delete => self.prompt_delete(datasets),
-            BatchKind::Reingest => self.queue_batch(BatchKind::Reingest, datasets),
+            BatchKind::Reingest | BatchKind::Process => self.queue_batch(kind, datasets),
         }
     }
 
@@ -99,26 +109,35 @@ impl App {
     }
 
     pub(super) fn request_delete(&mut self) {
-        if self.batch.confirming() {
-            return;
-        }
-        if !self.connected {
-            self.prompt_for_env();
-            return;
-        }
-        match self.batch_datasets() {
-            Ok(BatchResolve::Ready(datasets)) => self.prompt_delete(datasets),
-            Ok(BatchResolve::Load(stream_id)) => {
-                self.batch.pending_stream = Some((BatchKind::Delete, stream_id));
-                self.show_dataset_table(stream_id);
-                self.status = "loading datasets to delete".to_string();
-                self.request_datasets(stream_id);
-            }
-            Err(error) => self.status = error,
-        }
+        self.request_batch(
+            BatchKind::Delete,
+            "loading datasets to delete",
+            Self::prompt_delete,
+        );
     }
 
     pub(super) fn request_reingest(&mut self) {
+        self.request_batch(
+            BatchKind::Reingest,
+            "loading datasets to reingest",
+            |app, datasets| app.queue_batch(BatchKind::Reingest, datasets),
+        );
+    }
+
+    pub(super) fn request_process(&mut self) {
+        self.request_batch(
+            BatchKind::Process,
+            "loading datasets to process",
+            |app, datasets| app.queue_batch(BatchKind::Process, datasets),
+        );
+    }
+
+    fn request_batch(
+        &mut self,
+        kind: BatchKind,
+        loading: &str,
+        on_ready: impl FnOnce(&mut Self, Vec<Dataset>),
+    ) {
         if self.batch.confirming() {
             return;
         }
@@ -127,11 +146,11 @@ impl App {
             return;
         }
         match self.batch_datasets() {
-            Ok(BatchResolve::Ready(datasets)) => self.queue_batch(BatchKind::Reingest, datasets),
+            Ok(BatchResolve::Ready(datasets)) => on_ready(self, datasets),
             Ok(BatchResolve::Load(stream_id)) => {
-                self.batch.pending_stream = Some((BatchKind::Reingest, stream_id));
+                self.batch.pending_stream = Some((kind, stream_id));
                 self.show_dataset_table(stream_id);
-                self.status = "loading datasets to reingest".to_string();
+                self.status = loading.to_string();
                 self.request_datasets(stream_id);
             }
             Err(error) => self.status = error,
@@ -214,7 +233,25 @@ impl App {
         let db = self.db.clone();
         let kind = item.kind;
         let stream_id = item.dataset.datastream_id;
-        let dataset_id = item.dataset.id;
+        let dataset_ids = match kind {
+            BatchKind::Process => {
+                let mut ids = vec![item.dataset.id];
+                while let Some(next) = self.batch.queue.pop_front() {
+                    if next.kind != BatchKind::Process || next.dataset.datastream_id != stream_id {
+                        self.batch.queue.push_front(next);
+                        break;
+                    }
+                    ids.push(next.dataset.id);
+                }
+                ids
+            }
+            BatchKind::Delete | BatchKind::Reingest => vec![item.dataset.id],
+        };
+        let dataset_id = dataset_ids[0];
+        self.batch.running = Some(RunningBatch {
+            kind,
+            dataset_ids: dataset_ids.clone(),
+        });
         tokio::spawn(async move {
             let event = match kind {
                 BatchKind::Delete => match db.delete_dataset(stream_id, dataset_id).await {
@@ -232,10 +269,13 @@ impl App {
                     }
                     Err(error) => BatchEvent::Failed(error.to_string()),
                 },
+                BatchKind::Process => match db.rerun_processing(stream_id, &dataset_ids).await {
+                    Ok(()) => BatchEvent::Processed(stream_id, dataset_ids),
+                    Err(error) => BatchEvent::Failed(error.to_string()),
+                },
             };
             let _ = tx.send(super::Message::Batch(event));
         });
-        self.batch.running = Some(RunningBatch { kind, dataset_id });
     }
 
     pub(super) fn apply_batch_event(&mut self, event: BatchEvent) {
@@ -251,6 +291,14 @@ impl App {
                     });
                 }
                 self.upload.watch_dataset(stream_id, dataset_id);
+            }
+            BatchEvent::Processed(stream_id, dataset_ids) => {
+                for dataset_id in dataset_ids {
+                    self.patch_dataset(dataset_id, |dataset| {
+                        dataset.import_status = ImportStatus::Postprocessing;
+                    });
+                    self.upload.watch_dataset(stream_id, dataset_id);
+                }
             }
             BatchEvent::Failed(error) => self.status = error,
         }
@@ -324,9 +372,38 @@ mod tests {
         state.queue.clear();
         state.running = Some(RunningBatch {
             kind: BatchKind::Delete,
-            dataset_id: 3,
+            dataset_ids: vec![3],
         });
         assert!(state.is_deleting(3));
         assert!(!state.is_deleting(1));
+    }
+
+    #[test]
+    fn is_processing_covers_queued_and_coalesced_running() {
+        let mut state = BatchState::default();
+        assert!(!state.is_processing(1));
+        state.queue.push_back(BatchItem {
+            kind: BatchKind::Process,
+            dataset: dataset(1),
+        });
+        state.queue.push_back(BatchItem {
+            kind: BatchKind::Process,
+            dataset: dataset(2),
+        });
+        state.queue.push_back(BatchItem {
+            kind: BatchKind::Delete,
+            dataset: dataset(3),
+        });
+        assert!(state.is_processing(1));
+        assert!(state.is_processing(2));
+        assert!(!state.is_processing(3));
+        state.queue.clear();
+        state.running = Some(RunningBatch {
+            kind: BatchKind::Process,
+            dataset_ids: vec![4, 5],
+        });
+        assert!(state.is_processing(4));
+        assert!(state.is_processing(5));
+        assert!(!state.is_processing(1));
     }
 }

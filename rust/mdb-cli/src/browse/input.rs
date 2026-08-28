@@ -100,17 +100,17 @@ impl App {
             }
             InputMode::Browse if self.browse_level == BrowseLevel::Root => {
                 format!(
-                    "j/k  S-↓/↑ page  gg/G  / filter  → open  i info  u upload  d download  x delete  r reingest  w env ({env})  q quit"
+                    "j/k  S-↓/↑ page  gg/G  / filter  → open  i info  u upload  d download  x delete  r reingest  p process  w env ({env})  q quit"
                 )
             }
             InputMode::Browse if self.browse_level == BrowseLevel::Datasets => {
                 format!(
-                    "tab list|table  j/k  S-↓/↑ page  gg/G  / filter  → view  ← back  i info  u upload  d download  x delete  r reingest  w env ({env})  q quit"
+                    "tab list|table  j/k  S-↓/↑ page  gg/G  / filter  → view  ← back  i info  u upload  d download  x delete  r reingest  p process  w env ({env})  q quit"
                 )
             }
             InputMode::Browse => {
                 format!(
-                    "tab list|table  j/k  S-↓/↑ page  gg/G  / filter  enter/space select  S-enter range  a all  → open  i info  u upload  d download  x delete  r reingest  ← back  w env ({env})  q quit"
+                    "tab list|table  j/k  S-↓/↑ page  gg/G  / filter  enter/space select  S-enter range  a all  → open  i info  u upload  d download  x delete  r reingest  p process  ← back  w env ({env})  q quit"
                 )
             }
         }
@@ -249,6 +249,7 @@ fn handle_browse_key(app: &mut App, key: KeyEvent) -> bool {
         KeyCode::Char('d') => app.open_download(),
         KeyCode::Char('x') => app.request_delete(),
         KeyCode::Char('r') => app.request_reingest(),
+        KeyCode::Char('p') => app.request_process(),
         KeyCode::Char(' ') => app.toggle_dataset_selection(),
         KeyCode::Char('a') => app.select_all_datasets(),
         _ => {}
