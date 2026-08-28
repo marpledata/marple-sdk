@@ -211,7 +211,7 @@ async fn handle_env_key(app: &mut App, key: KeyEvent) {
         KeyCode::Esc | KeyCode::Char('q') => app.env_picker = None,
         KeyCode::Enter => {
             if let Some(path) = app.env_picker.as_mut().and_then(FilePicker::enter_selected) {
-                app.use_env_file(path).await;
+                app.use_env_file(path);
             }
         }
         other => {
@@ -242,7 +242,7 @@ async fn handle_env_input(app: &mut App, key: KeyEvent) {
                 .map(FilePicker::submit_input)
                 .unwrap_or(Err("no picker".to_string()));
             match result {
-                Ok(Some(path)) => app.use_env_file(path).await,
+                Ok(Some(path)) => app.use_env_file(path),
                 Ok(None) => {}
                 Err(error) => app.status = error,
             }

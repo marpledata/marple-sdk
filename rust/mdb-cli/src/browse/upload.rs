@@ -164,9 +164,6 @@ impl App {
     }
 
     pub(super) async fn on_upload_tick(&mut self) {
-        if self.upload.needs_tick() {
-            self.load_tick = self.load_tick.wrapping_add(1);
-        }
         self.apply_upload_events();
         self.patch_upload_progress();
         self.start_next_upload();
@@ -684,5 +681,7 @@ mod tests {
         assert!(state.is_active(1));
         assert!(!state.is_active(2));
         assert!(state.needs_tick());
+        state.clear();
+        assert!(!state.needs_tick());
     }
 }

@@ -215,6 +215,16 @@ fn draw_table(frame: &mut Frame, app: &App, area: Rect) {
     let focused = app.focus == Focus::Table;
     match app.browse_level {
         BrowseLevel::Root => {
+            if app.is_loading_streams() {
+                draw_hint(
+                    frame,
+                    area,
+                    "streams",
+                    focused,
+                    &format!("loading streams {}", app.loading_dots()),
+                );
+                return;
+            }
             if app.streams.is_empty() {
                 draw_hint(frame, area, "streams", focused, "no streams");
                 return;

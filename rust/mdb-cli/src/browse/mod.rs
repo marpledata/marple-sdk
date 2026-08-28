@@ -9,11 +9,13 @@ mod upload;
 use crate::connect;
 use crate::table::{TableSearch, Visible, goto_visible, snap_visible, step_visible};
 use anyhow::Result;
+use crossterm::event::{Event, EventStream, KeyEventKind};
 use draw::draw;
 use format::{
     ImportMix, dataset_info, dataset_matches, signal_info, signal_matches, stream_info,
     stream_matches,
 };
+use futures_util::StreamExt;
 use input::{MotionState, handle_key};
 use marple_db::{CurrentWorkspace, Dataset, ImportStatus, MarpleDB, Signal, Stream};
 use picker::FilePicker;
@@ -24,6 +26,7 @@ use session::{
     remember_recent, save_settings,
 };
 use std::path::{Path, PathBuf};
+use tokio::sync::mpsc::{UnboundedReceiver, UnboundedSender};
 use upload::UploadState;
 
 pub(super) const AUTO_LOAD_LIMIT: u64 = 100;
@@ -99,6 +102,7 @@ fn step_back(level: BrowseLevel, focus: Focus) -> (BrowseLevel, Focus) {
 
 #[derive(Clone, Copy)]
 enum PendingLoad {
+    Streams,
     Datasets(i64),
     Signals { stream_id: i64, dataset_id: i64 },
 }
@@ -106,6 +110,7 @@ enum PendingLoad {
 impl PendingLoad {
     fn same_target(self, other: Self) -> bool {
         match (self, other) {
+            (Self::Streams, Self::Streams) => true,
             (Self::Datasets(left), Self::Datasets(right)) => left == right,
             (
                 Self::Signals {
@@ -121,10 +126,26 @@ impl PendingLoad {
 
     fn loaded_in(self, app: &App) -> bool {
         match self {
+            Self::Streams => false,
             Self::Datasets(id) => app.loaded_stream_id() == Some(id),
             Self::Signals { dataset_id, .. } => app.signals_dataset_id() == Some(dataset_id),
         }
     }
+}
+
+enum Message {
+    Input(Event),
+    Loaded(u64, PendingLoad, Box<Result<LoadResult, String>>),
+    Tick,
+}
+
+enum LoadResult {
+    Streams {
+        streams: Vec<Stream>,
+        workspace: Option<Box<CurrentWorkspace>>,
+    },
+    Datasets(i64, Vec<Dataset>),
+    Signals(i64, Vec<Signal>),
 }
 
 struct Loaded<T> {
@@ -164,6 +185,9 @@ pub(super) struct App {
     loaded_datasets: Option<Loaded<Dataset>>,
     loaded_signals: Option<Loaded<Signal>>,
     pending: Option<PendingLoad>,
+    restore_stream_id: Option<i64>,
+    load_gen: u64,
+    events: UnboundedSender<Message>,
     browse_level: BrowseLevel,
     focus: Focus,
     status: String,
@@ -192,110 +216,110 @@ pub async fn run(db: MarpleDB, url: String, env_file: Option<PathBuf>) -> Result
             .filter(|path| path.is_file())
             .or_else(local_dotenv),
     };
-    let mut app = App::new(db, url, env_file, settings.recents.clone());
+    let (tx, rx) = tokio::sync::mpsc::unbounded_channel();
+    let mut app = App::new(db, url, env_file, settings.recents.clone(), tx);
+    app.restore_stream_id = settings.stream_id;
     if let Some(path) = app.env_file.clone()
         && let Err(error) = app.connect_from_path(&path)
     {
         app.status = format!("not connected — {error}");
     }
-    app.refresh_streams().await;
-    app.restore_session(&settings);
-    if app.connected {
-        app.remember_current_env();
-        app.persist_settings();
-    } else {
-        app.prompt_for_env();
-    }
 
     let mut terminal = ratatui::init();
-    let result = event_loop(&mut terminal, &mut app).await;
+    app.request_streams();
+    let result = event_loop(&mut terminal, &mut app, rx).await;
     app.persist_settings();
     ratatui::restore();
     result
 }
 
-async fn event_loop(terminal: &mut ratatui::DefaultTerminal, app: &mut App) -> Result<()> {
+async fn event_loop(
+    terminal: &mut ratatui::DefaultTerminal,
+    app: &mut App,
+    mut events: UnboundedReceiver<Message>,
+) -> Result<()> {
+    let mut input = EventStream::new();
     loop {
         let mut info_view = app.info_view;
         terminal.draw(|frame| {
             info_view = draw(frame, app);
         })?;
         app.info_view = info_view;
-        if app.pending.is_some() {
-            run_pending_load(terminal, app).await;
-            continue;
-        }
-        app.on_upload_tick().await;
-        let wait_key = if app.upload.needs_tick() {
-            crossterm::event::poll(SPINNER_TICK)?
-        } else {
-            true
-        };
-        if !wait_key {
-            continue;
-        }
-        let crossterm::event::Event::Key(key) = crossterm::event::read()? else {
-            continue;
-        };
-        if key.kind != crossterm::event::KeyEventKind::Press {
-            continue;
-        }
-        if handle_key(app, key).await {
-            break;
+        tokio::select! {
+            biased;
+            Some(message) = events.recv() => {
+                if apply_message(app, message).await {
+                    break;
+                }
+            }
+            event = input.next() => {
+                match event {
+                    Some(Ok(event)) => {
+                        if apply_message(app, Message::Input(event)).await {
+                            break;
+                        }
+                    }
+                    Some(Err(error)) => app.status = error.to_string(),
+                    None => break,
+                }
+            }
+            _ = tokio::time::sleep(SPINNER_TICK), if app.needs_tick() => {
+                apply_message(app, Message::Tick).await;
+            }
         }
     }
     Ok(())
 }
 
-enum LoadResult {
-    Datasets(i64, Vec<Dataset>),
-    Signals(i64, Vec<Signal>),
-}
-
-async fn run_pending_load(terminal: &mut ratatui::DefaultTerminal, app: &mut App) {
-    let db = app.db.clone();
-    let pending = app.pending;
-    let fetch = async {
-        match pending {
-            Some(PendingLoad::Datasets(stream_id)) => db
-                .get_datasets(stream_id)
-                .await
-                .map(|datasets| LoadResult::Datasets(stream_id, datasets))
-                .map_err(|error| error.to_string()),
-            Some(PendingLoad::Signals {
-                stream_id,
-                dataset_id,
-            }) => db
-                .get_signals(stream_id, dataset_id)
-                .await
-                .map(|signals| LoadResult::Signals(dataset_id, signals))
-                .map_err(|error| error.to_string()),
-            None => Err("nothing to load".to_string()),
+async fn apply_message(app: &mut App, message: Message) -> bool {
+    match message {
+        Message::Input(Event::Key(key)) if key.kind == KeyEventKind::Press => {
+            handle_key(app, key).await
         }
-    };
-    tokio::pin!(fetch);
-    loop {
-        let mut info_view = app.info_view;
-        terminal
-            .draw(|frame| {
-                info_view = draw(frame, app);
-            })
-            .ok();
-        app.info_view = info_view;
-        tokio::select! {
-            result = &mut fetch => {
-                app.apply_load_result(result);
-                return;
-            }
-            _ = tokio::time::sleep(SPINNER_TICK) => {
-                app.load_tick = app.load_tick.wrapping_add(1);
-            }
+        Message::Input(_) => false,
+        Message::Loaded(load_gen, pending, result) => {
+            app.apply_load_result(load_gen, pending, *result);
+            false
+        }
+        Message::Tick => {
+            app.load_tick = app.load_tick.wrapping_add(1);
+            app.on_upload_tick().await;
+            false
         }
     }
 }
 
+async fn fetch(db: MarpleDB, pending: PendingLoad) -> Result<LoadResult, String> {
+    match pending {
+        PendingLoad::Streams => {
+            let streams = db.get_streams().await.map_err(|error| error.to_string())?;
+            let workspace = db.get_current_workspace().await.ok().map(Box::new);
+            Ok(LoadResult::Streams { streams, workspace })
+        }
+        PendingLoad::Datasets(stream_id) => db
+            .get_datasets(stream_id)
+            .await
+            .map(|datasets| LoadResult::Datasets(stream_id, datasets))
+            .map_err(|error| error.to_string()),
+        PendingLoad::Signals {
+            stream_id,
+            dataset_id,
+        } => db
+            .get_signals(stream_id, dataset_id)
+            .await
+            .map(|signals| LoadResult::Signals(dataset_id, signals))
+            .map_err(|error| error.to_string()),
+    }
+}
+
 impl App {
-    fn new(db: MarpleDB, url: String, env_file: Option<PathBuf>, recents: Vec<RecentEnv>) -> Self {
+    fn new(
+        db: MarpleDB,
+        url: String,
+        env_file: Option<PathBuf>,
+        recents: Vec<RecentEnv>,
+        events: UnboundedSender<Message>,
+    ) -> Self {
         Self {
             db,
             url,
@@ -307,6 +331,9 @@ impl App {
             loaded_datasets: None,
             loaded_signals: None,
             pending: None,
+            restore_stream_id: None,
+            load_gen: 0,
+            events,
             browse_level: BrowseLevel::Root,
             focus: Focus::Table,
             status: String::new(),
@@ -331,7 +358,7 @@ impl App {
         Ok(())
     }
 
-    async fn use_env_file(&mut self, path: PathBuf) {
+    fn use_env_file(&mut self, path: PathBuf) {
         match self.connect_from_path(&path) {
             Ok(()) => {
                 self.clear_loaded();
@@ -339,13 +366,9 @@ impl App {
                 self.focus = Focus::Table;
                 self.info_expanded = false;
                 self.info_scroll = 0;
-                self.refresh_streams().await;
-                if self.connected {
-                    self.remember_current_env();
-                    self.env_picker = None;
-                    self.status.clear();
-                }
                 self.persist_settings();
+                self.env_picker = None;
+                self.request_streams();
             }
             Err(error) => self.status = error,
         }
@@ -388,12 +411,11 @@ impl App {
         }
     }
 
-    fn restore_session(&mut self, settings: &BrowseSettings) {
-        if let Some(stream_id) = settings.stream_id
-            && let Some(index) = self
-                .streams
-                .iter()
-                .position(|stream| stream.id == stream_id)
+    fn restore_session(&mut self, stream_id: i64) {
+        if let Some(index) = self
+            .streams
+            .iter()
+            .position(|stream| stream.id == stream_id)
         {
             self.stream_state.select(Some(index));
             self.browse_level = BrowseLevel::Streams;
@@ -472,36 +494,8 @@ impl App {
         pane_at(self.browse_level, self.focus)
     }
 
-    async fn refresh_streams(&mut self) {
-        match self.db.get_streams().await {
-            Ok(streams) => {
-                self.connected = true;
-                let selected_id = self.selected_stream().map(|stream| stream.id);
-                self.streams = streams;
-                self.streams.sort_by_key(|stream| stream.id);
-                self.stream_state.select(
-                    selected_id
-                        .and_then(|id| self.streams.iter().position(|stream| stream.id == id))
-                        .or((!self.streams.is_empty()).then_some(0)),
-                );
-                self.refresh_workspace().await;
-                self.status.clear();
-            }
-            Err(error) => {
-                self.connected = false;
-                self.workspace = None;
-                self.streams.clear();
-                self.clear_loaded();
-                self.status = format!("not connected — {error}");
-            }
-        }
-    }
-
-    async fn refresh_workspace(&mut self) {
-        match self.db.get_current_workspace().await {
-            Ok(workspace) => self.workspace = Some(workspace),
-            Err(_) => self.workspace = None,
-        }
+    fn request_streams(&mut self) {
+        self.request_unchecked(PendingLoad::Streams);
     }
 
     fn maybe_autoload_datasets(&mut self) {
@@ -540,6 +534,10 @@ impl App {
             self.prompt_for_env();
             return;
         }
+        self.request_unchecked(load);
+    }
+
+    fn request_unchecked(&mut self, load: PendingLoad) {
         if load.loaded_in(self)
             || self
                 .pending
@@ -549,10 +547,26 @@ impl App {
         }
         self.pending = Some(load);
         self.load_tick = 0;
+        self.load_gen = self.load_gen.wrapping_add(1);
+        let load_gen = self.load_gen;
+        let db = self.db.clone();
+        let tx = self.events.clone();
+        tokio::spawn(async move {
+            let result = fetch(db, load).await;
+            let _ = tx.send(Message::Loaded(load_gen, load, Box::new(result)));
+        });
+    }
+
+    fn needs_tick(&self) -> bool {
+        self.pending.is_some() || self.upload.needs_tick()
     }
 
     pub(super) fn loading_dots(&self) -> &'static str {
         SPINNER[(self.load_tick as usize) % SPINNER.len()]
+    }
+
+    fn is_loading_streams(&self) -> bool {
+        matches!(self.pending, Some(PendingLoad::Streams))
     }
 
     fn is_loading_datasets(&self) -> bool {
@@ -571,17 +585,67 @@ impl App {
         })
     }
 
-    fn apply_load_result(&mut self, result: Result<LoadResult, String>) {
+    fn apply_load_result(
+        &mut self,
+        load_gen: u64,
+        load: PendingLoad,
+        result: Result<LoadResult, String>,
+    ) {
+        if load_gen != self.load_gen
+            || !self
+                .pending
+                .is_some_and(|pending| pending.same_target(load))
+        {
+            return;
+        }
         self.pending = None;
         match result {
+            Ok(LoadResult::Streams { streams, workspace }) => {
+                self.apply_streams(streams, workspace);
+            }
             Ok(LoadResult::Datasets(stream_id, datasets)) => {
                 self.apply_datasets(stream_id, datasets);
             }
             Ok(LoadResult::Signals(dataset_id, signals)) => {
                 self.apply_signals(dataset_id, signals);
             }
-            Err(error) => self.status = error,
+            Err(error) => {
+                if matches!(load, PendingLoad::Streams) {
+                    self.connected = false;
+                    self.workspace = None;
+                    self.streams.clear();
+                    self.clear_loaded();
+                    self.status = format!("not connected — {error}");
+                    self.prompt_for_env();
+                } else {
+                    self.status = error;
+                }
+            }
         }
+    }
+
+    fn apply_streams(
+        &mut self,
+        mut streams: Vec<Stream>,
+        workspace: Option<Box<CurrentWorkspace>>,
+    ) {
+        self.connected = true;
+        let selected_id = self.selected_stream().map(|stream| stream.id);
+        streams.sort_by_key(|stream| stream.id);
+        self.streams = streams;
+        self.stream_state.select(
+            selected_id
+                .and_then(|id| self.streams.iter().position(|stream| stream.id == id))
+                .or((!self.streams.is_empty()).then_some(0)),
+        );
+        self.workspace = workspace.map(|workspace| *workspace);
+        self.status.clear();
+        if let Some(stream_id) = self.restore_stream_id.take() {
+            self.restore_session(stream_id);
+        }
+        self.remember_current_env();
+        self.env_picker = None;
+        self.persist_settings();
     }
 
     fn apply_datasets(&mut self, stream_id: i64, mut datasets: Vec<Dataset>) {
@@ -626,6 +690,7 @@ impl App {
         self.loaded_datasets = None;
         self.loaded_signals = None;
         self.pending = None;
+        self.load_gen = self.load_gen.wrapping_add(1);
         self.upload.clear();
     }
 
@@ -655,7 +720,7 @@ impl App {
         self.loaded_stream_id().or(match self.pending {
             Some(PendingLoad::Datasets(id)) => Some(id),
             Some(PendingLoad::Signals { stream_id, .. }) => Some(stream_id),
-            None => None,
+            Some(PendingLoad::Streams) | None => None,
         })
     }
 
@@ -830,7 +895,17 @@ fn clamp_scroll(scroll: u16, delta: i32, lines: u16, view: u16) -> u16 {
 
 #[cfg(test)]
 mod tests {
-    use super::{BrowseLevel, Focus, Pane, clamp_scroll, cycle_focus, pane_at, step_back};
+    use super::{
+        BrowseLevel, Focus, Pane, PendingLoad, clamp_scroll, cycle_focus, pane_at, step_back,
+    };
+
+    #[test]
+    fn pending_streams_match_only_streams() {
+        assert!(PendingLoad::Streams.same_target(PendingLoad::Streams));
+        assert!(!PendingLoad::Streams.same_target(PendingLoad::Datasets(1)));
+        assert!(PendingLoad::Datasets(1).same_target(PendingLoad::Datasets(1)));
+        assert!(!PendingLoad::Datasets(1).same_target(PendingLoad::Datasets(2)));
+    }
 
     #[test]
     fn pane_follows_level_and_focus() {

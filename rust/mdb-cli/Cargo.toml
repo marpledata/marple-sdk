@@ -11,7 +11,7 @@ native-tls = ["marple-db/native-tls"]
 [dependencies]
 anyhow.workspace = true
 colored = "3.0.0"
-crossterm.workspace = true
+crossterm = { workspace = true, features = ["event-stream"] }
 dotenvy = "0.15.7"
 futures-util = { workspace = true, default-features = false, features = ["std"] }
 marple-db = { path = "../mdb-sdk", version = "0.3.0" }
@@ -31,7 +31,7 @@ features = ["tokio"]
 version = "0.18.3"
 
 [dependencies.tokio]
-features = ["rt-multi-thread", "macros", "fs", "io-util", "time"]
+features = ["rt-multi-thread", "macros", "fs", "io-util", "sync", "time"]
 workspace = true
 
 [dev-dependencies]
