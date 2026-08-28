@@ -496,6 +496,11 @@ impl ImportStatus {
             Self::Failed | Self::PostprocessingFailed | Self::CoolingFailed
         )
     }
+
+    /// `true` when import reached a success or failure status.
+    pub fn is_terminal(self) -> bool {
+        self.is_success() || self.is_failure()
+    }
 }
 
 impl fmt::Display for ImportStatus {
@@ -912,6 +917,7 @@ mod import_status_tests {
             assert_eq!(status.to_string(), name);
             assert_eq!(status.is_success(), success);
             assert_eq!(status.is_failure(), failure);
+            assert_eq!(status.is_terminal(), success || failure);
             assert!(!(success && failure));
         }
     }

@@ -97,8 +97,19 @@ impl FilePicker {
     }
 
     pub(crate) fn enter_selected(&mut self) -> Option<PathBuf> {
+        self.take_selected(false)
+    }
+
+    /// Returns the selected file, or a directory when `submit_dirs` is set.
+    ///
+    /// `..` always navigates. Other directories navigate when `submit_dirs` is
+    /// false.
+    pub(crate) fn take_selected(&mut self, submit_dirs: bool) -> Option<PathBuf> {
         let entry = self.selected_entry()?;
         if entry.is_dir {
+            if submit_dirs && entry.name != ".." {
+                return Some(entry.path.clone());
+            }
             let path = entry.path.clone();
             self.editing = false;
             self.set_dir(path, None);
@@ -148,12 +159,19 @@ impl FilePicker {
     }
 
     pub(crate) fn submit_input(&mut self) -> Result<Option<PathBuf>, String> {
+        self.submit_typed(false)
+    }
+
+    pub(crate) fn submit_typed(&mut self, allow_dir: bool) -> Result<Option<PathBuf>, String> {
         let path = expand_path(self.input.trim());
         if path.as_os_str().is_empty() {
             return Err("enter a path".to_string());
         }
         if path.is_dir() {
             self.editing = false;
+            if allow_dir {
+                return Ok(Some(path));
+            }
             self.set_dir(path, None);
             return Ok(None);
         }
@@ -161,7 +179,11 @@ impl FilePicker {
             self.editing = false;
             return Ok(Some(path));
         }
-        Err(format!("{} is not a file", path.display()))
+        Err(format!(
+            "{} is not a {}",
+            path.display(),
+            if allow_dir { "file or folder" } else { "file" }
+        ))
     }
 
     fn sync_input(&mut self) {
@@ -348,6 +370,56 @@ mod tests {
 
         picker.input = tmp.path().join("missing.env").display().to_string();
         assert!(picker.submit_input().unwrap_err().contains("not a file"));
+    }
+
+    #[test]
+    fn take_selected_can_submit_a_directory() {
+        let tmp = tempfile::tempdir().unwrap();
+        fs::create_dir(tmp.path().join("data")).unwrap();
+        fs::write(tmp.path().join("run.csv"), "time,value\n0,1\n").unwrap();
+        let mut picker = FilePicker::open(Some(tmp.path()), &[]);
+        picker.goto(
+            picker
+                .entries
+                .iter()
+                .position(|entry| entry.name == "data")
+                .unwrap(),
+        );
+        let submitted = picker.take_selected(true);
+        assert_eq!(
+            submitted
+                .as_deref()
+                .and_then(|path| fs::canonicalize(path).ok()),
+            fs::canonicalize(tmp.path().join("data")).ok()
+        );
+        assert_eq!(picker.dir, fs::canonicalize(tmp.path()).unwrap());
+
+        picker.goto(
+            picker
+                .entries
+                .iter()
+                .position(|entry| entry.name == "run.csv")
+                .unwrap(),
+        );
+        assert_eq!(
+            picker
+                .take_selected(true)
+                .as_deref()
+                .and_then(|path| fs::canonicalize(path).ok()),
+            fs::canonicalize(tmp.path().join("run.csv")).ok()
+        );
+    }
+
+    #[test]
+    fn typed_path_can_submit_a_directory() {
+        let tmp = tempfile::tempdir().unwrap();
+        fs::create_dir(tmp.path().join("data")).unwrap();
+        let mut picker = FilePicker::open(Some(tmp.path()), &[]);
+        picker.input = tmp.path().join("data").display().to_string();
+        assert_eq!(
+            picker.submit_typed(true).unwrap(),
+            Some(tmp.path().join("data"))
+        );
     }
 
     #[test]

@@ -149,7 +149,17 @@ pub(super) fn dataset_card(
     };
     let title = ellipsis(&format!("dataset  {}", dataset.path), width);
     let status = crate::format_import_status(dataset.import_status);
-    let mut lines = vec![card_line(status, width)];
+    let status_line = match dataset
+        .import_progress
+        .filter(|_| !dataset.import_status.is_terminal())
+    {
+        Some(_) => format!(
+            "{status}  {}",
+            crate::format_progress_with(dataset.import_progress, MISSING)
+        ),
+        None => status.to_string(),
+    };
+    let mut lines = vec![card_line(status_line, width)];
     if !dataset.import_status.is_success() {
         let message = dataset
             .import_message
@@ -337,6 +347,29 @@ pub(super) fn usage_bar(
     ))
 }
 
+pub(super) fn progress_cell(value: Option<f64>, in_flight: bool) -> Cell<'static> {
+    if !in_flight {
+        return Cell::from(MISSING);
+    }
+    Cell::from(ratio_bar(normalize_progress(value), 8))
+}
+
+fn normalize_progress(value: Option<f64>) -> Option<f64> {
+    value.map(|value| {
+        let ratio = if value > 1.0 { value / 100.0 } else { value };
+        ratio.clamp(0.0, 1.0)
+    })
+}
+
+fn ratio_bar(ratio: Option<f64>, width: usize) -> String {
+    let width = width.max(1);
+    let filled = match ratio {
+        Some(ratio) => ((ratio * width as f64).round() as usize).min(width),
+        None => 0,
+    };
+    format!("{}{}", "█".repeat(filled), "░".repeat(width - filled))
+}
+
 pub(super) fn license_color(license_type: LicenseType) -> Color {
     match license_type {
         LicenseType::Paid => Color::Green,
@@ -518,10 +551,12 @@ fn dataset_points_archive(dataset: &Dataset) -> String {
 mod tests {
     use super::{
         ImportMix, bar_color, dataset_card, ellipsis, format_expiry, format_usage, host_from_url,
-        license_color, license_type, storage_status, stream_card, usage_bar, usage_ratio,
+        license_color, license_type, progress_cell, storage_status, stream_card, usage_bar,
+        usage_ratio,
     };
     use marple_db::{Dataset, LicenseType, StorageQuota, StorageStatus, Stream};
     use ratatui::style::Color;
+    use ratatui::widgets::Cell;
     use serde_json::json;
 
     #[test]
@@ -638,6 +673,13 @@ mod tests {
         );
         assert!(texts.iter().all(|line| !line.contains("race-001.mf4")));
         assert!(texts.iter().all(|line| !line.contains("42")));
+    }
+
+    #[test]
+    fn progress_cell_draws_a_bar_when_in_flight() {
+        let cell = progress_cell(Some(0.5), true);
+        assert_eq!(cell, Cell::from("████░░░░"));
+        assert_eq!(progress_cell(Some(0.5), false), Cell::from("—"));
     }
 
     #[test]

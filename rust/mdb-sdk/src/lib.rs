@@ -70,3 +70,4 @@ pub use models::{
     UserInfo, WorkspaceLicense, WorkspaceMembership,
 };
 pub use progress::{NoopProgress, ProgressReporter};
+pub use upload::UploadSession;

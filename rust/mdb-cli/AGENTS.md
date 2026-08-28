@@ -10,7 +10,8 @@ the Rust SDK crate `marple-db`.
 - `src/browse/`: stream / dataset / signal browser started by `mdb` (TTY) or
   `mdb browse`. Session (env file and last stream) is saved in
   `$XDG_CONFIG_HOME/mdb/browse.toml`. The env-file modal lives in `picker.rs`.
-  TUI palette and bordered chrome live in `style.rs`.
+  Upload from a stream (`u`) lives in `upload.rs`. TUI palette and bordered
+  chrome live in `style.rs`.
 - `src/table.rs`: shared windowed table draw plus `/` substring row search used
   by browse.
 - `tests/integration.rs`: CLI tests using `assert_cmd`.

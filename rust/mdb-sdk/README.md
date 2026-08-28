@@ -91,6 +91,7 @@ async fn main() -> anyhow::Result<()> {
 - `db.get_dataset_statuses(stream_id, &[dataset_id])` fetches import status for selected datasets.
 - `db.get_signals(stream_id, dataset_id)` lists signals in a dataset.
 - `db.push_file(stream_id, path, PushFileOptions::default())` uploads a file.
+- `db.begin_upload(stream_id, path, options)` creates the dataset and returns an `UploadSession`; `session.send()` transfers bytes.
 - `db.wait_for_import(stream_id, dataset_id, timeout)` polls until import reaches a terminal status.
 - `db.download_original(&dataset, ".")` downloads the original uploaded file into a directory.
 - `db.get_download_link(&dataset)` returns a pre-signed URL for the original uploaded file.
@@ -114,7 +115,15 @@ let value: serde_json::Value = db.get("/health", &()).await?;
 
 ## Upload Options
 
-`push_file` asks the server which upload mode to use and automatically handles direct storage uploads, multipart uploads, Azure block uploads, and API-server uploads.
+`push_file` asks the server which upload mode to use and automatically handles direct storage uploads, multipart uploads, Azure block uploads, and API-server uploads. It is `begin_upload` followed by `UploadSession::send`. Use the session when you need the dataset id and `UPLOADING` status before bytes finish:
+
+```rust
+let session = db
+    .begin_upload(stream.id, "run.csv", PushFileOptions::default())
+    .await?;
+println!("uploading dataset {}", session.dataset().id);
+let dataset = session.send().await?;
+```
 
 ```rust
 use marple_db::{PushFileOptions, UploadModeOverride};

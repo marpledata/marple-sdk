@@ -3,6 +3,7 @@ mod format;
 mod picker;
 mod session;
 pub(crate) mod style;
+mod upload;
 
 use crate::connect;
 use crate::table::{
@@ -24,9 +25,10 @@ use session::{
 };
 use std::path::PathBuf;
 use std::time::Duration;
+use upload::{FormFocus, OptionField, UploadState};
 
 pub(super) const AUTO_LOAD_LIMIT: u64 = 100;
-const PAGE_SIZE: i32 = 10;
+pub(super) const PAGE_SIZE: i32 = 10;
 const NOT_CONNECTED: &str = "not connected — pick an env file (v)";
 const SPINNER: [&str; 3] = [".", "..", "..."];
 const SPINNER_TICK: std::time::Duration = std::time::Duration::from_millis(200);
@@ -35,7 +37,7 @@ fn is_cheap(count: Option<u64>) -> bool {
     count.is_some_and(|count| count < AUTO_LOAD_LIMIT)
 }
 
-enum Motion {
+pub(super) enum Motion {
     Delta(i32),
     Page(i32),
     First,
@@ -93,6 +95,7 @@ pub(super) struct App {
     pending_g: bool,
     load_tick: u8,
     search: TableSearch,
+    upload: UploadState,
 }
 
 pub async fn run(mut db: MarpleDB, mut url: String, env_file: Option<PathBuf>) -> Result<()> {
@@ -138,6 +141,15 @@ async fn event_loop(terminal: &mut ratatui::DefaultTerminal, app: &mut App) -> R
         terminal.draw(|frame| draw(frame, app))?;
         if app.has_pending_load() {
             run_pending_load(terminal, app).await;
+            continue;
+        }
+        app.on_upload_tick().await;
+        let wait_key = if app.upload.needs_tick() {
+            event::poll(SPINNER_TICK)?
+        } else {
+            true
+        };
+        if !wait_key {
             continue;
         }
         let Event::Key(key) = event::read()? else {
@@ -203,28 +215,44 @@ async fn handle_key(app: &mut App, mut key: KeyEvent) -> bool {
         if app.env_picker.as_ref().is_some_and(|picker| picker.editing) {
             return handle_env_input(app, key).await;
         }
+        if app
+            .upload
+            .form
+            .as_ref()
+            .is_some_and(|form| form.picker.editing)
+        {
+            return app.handle_upload_input(key).await;
+        }
         if app.search.editing {
             handle_search_key(&mut app.search, key);
             app.snap_search();
             return false;
         }
-        match read_motion(app, key) {
-            MotionRead::Pending => return false,
-            MotionRead::Act(motion) => {
-                let (motion, leftover) = coalesce_motion(motion);
-                apply_motion(app, motion);
-                match leftover {
-                    Some(next) => {
-                        key = next;
-                        continue;
+        let typing_extension = app.upload.form.as_ref().is_some_and(|form| {
+            form.focus == FormFocus::Options && form.option == OptionField::Extension
+        });
+        if !typing_extension {
+            match read_motion(app, key) {
+                MotionRead::Pending => return false,
+                MotionRead::Act(motion) => {
+                    let (motion, leftover) = coalesce_motion(motion);
+                    apply_motion(app, motion);
+                    match leftover {
+                        Some(next) => {
+                            key = next;
+                            continue;
+                        }
+                        None => return false,
                     }
-                    None => return false,
                 }
+                MotionRead::None => {}
             }
-            MotionRead::None => {}
         }
         if app.env_picker.is_some() {
             return handle_env_key(app, key).await;
+        }
+        if app.upload.form.is_some() {
+            return app.handle_upload_key(key);
         }
         if matches!(key.code, KeyCode::Char('/')) && !app.info_expanded {
             app.clear_motion();
@@ -245,6 +273,7 @@ async fn handle_key(app: &mut App, mut key: KeyEvent) -> bool {
             KeyCode::Char('l') | KeyCode::Right | KeyCode::Enter => app.activate(),
             KeyCode::Char('i') => app.toggle_info(),
             KeyCode::Char('v') => app.open_env(),
+            KeyCode::Char('u') => app.open_upload(),
             _ => {}
         }
         return false;
@@ -404,6 +433,8 @@ fn drain_arrow_delta(delta: &mut i32) -> Option<KeyEvent> {
 fn apply_motion(app: &mut App, motion: Motion) {
     if app.env_picker.is_some() {
         apply_env_motion(app, motion);
+    } else if app.upload.form.is_some() {
+        app.apply_upload_motion(motion);
     } else {
         apply_browse_motion(app, motion);
     }
@@ -470,6 +501,7 @@ impl App {
             pending_g: false,
             load_tick: 0,
             search: TableSearch::default(),
+            upload: UploadState::default(),
         }
     }
 

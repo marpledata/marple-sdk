@@ -1,4 +1,4 @@
-use marple_db::{Error, MarpleDB, PushFileOptions, UploadModeOverride};
+use marple_db::{Error, ImportStatus, MarpleDB, PushFileOptions, UploadModeOverride};
 use serde_json::json;
 use std::fs;
 use tempfile::TempDir;
@@ -61,7 +61,7 @@ async fn server_upload_inits_uploads_completes_and_reloads_dataset() {
     Mock::given(method("GET"))
         .and(path("/api/v1/stream/7/dataset/42"))
         .respond_with(ResponseTemplate::new(200).set_body_json(dataset_body()))
-        .expect(1)
+        .expect(2)
         .mount(&server)
         .await;
     Mock::given(method("POST"))
@@ -87,6 +87,12 @@ async fn failed_upload_aborts_and_skips_complete() {
     Mock::given(method("POST"))
         .and(path("/api/v1/ingestion"))
         .respond_with(ResponseTemplate::new(200).set_body_json(ingestion_init("server")))
+        .mount(&server)
+        .await;
+    Mock::given(method("GET"))
+        .and(path("/api/v1/stream/7/dataset/42"))
+        .respond_with(ResponseTemplate::new(200).set_body_json(dataset_body()))
+        .expect(1)
         .mount(&server)
         .await;
     Mock::given(method("POST"))
@@ -149,6 +155,7 @@ async fn server_override_ignores_multipart_mode() {
     Mock::given(method("GET"))
         .and(path("/api/v1/stream/7/dataset/42"))
         .respond_with(ResponseTemplate::new(200).set_body_json(dataset_body()))
+        .expect(2)
         .mount(&server)
         .await;
 
@@ -177,4 +184,40 @@ async fn path_without_file_name_is_a_config_error() {
         .await
         .expect_err("root path");
     assert!(matches!(error, Error::Config(_)));
+}
+
+#[tokio::test]
+async fn begin_upload_returns_dataset_before_bytes() {
+    let server = MockServer::start().await;
+    let (_dir, file_path) = csv_file();
+
+    Mock::given(method("POST"))
+        .and(path("/api/v1/ingestion"))
+        .respond_with(ResponseTemplate::new(200).set_body_json(ingestion_init("server")))
+        .expect(1)
+        .mount(&server)
+        .await;
+    Mock::given(method("GET"))
+        .and(path("/api/v1/stream/7/dataset/42"))
+        .respond_with(ResponseTemplate::new(200).set_body_json(dataset_body()))
+        .expect(1)
+        .mount(&server)
+        .await;
+    Mock::given(method("POST"))
+        .and(path("/api/v1/ingestion/10/upload/server"))
+        .respond_with(ResponseTemplate::new(200).set_body_json(json!({})))
+        .expect(0)
+        .mount(&server)
+        .await;
+
+    let session = client(&server)
+        .begin_upload(7, &file_path, PushFileOptions::default())
+        .await
+        .expect("begin");
+    assert_eq!(session.dataset().id, 42);
+    assert_eq!(session.dataset().import_status, ImportStatus::Uploading);
+    assert_eq!(
+        session.total_size(),
+        fs::metadata(&file_path).expect("size").len()
+    );
 }

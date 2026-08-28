@@ -1,11 +1,13 @@
 use super::format::{
     clip_args, compact_count, count_cell, dataset_card, ellipsis, format_expiry, format_usage,
     host_from_url, kv, kv_styled, license_color, license_type, now_epoch, opt_bytes, opt_count,
-    opt_text, signal_kind, signal_source, stream_card, stream_kind, sum_bytes, usage_bar,
+    opt_text, progress_cell, signal_kind, signal_source, stream_card, stream_kind, sum_bytes,
+    usage_bar,
 };
 use super::picker::FilePicker;
 use super::session::settings_path;
 use super::style::{accent, accent_bold, block, body_style, highlight};
+use super::upload::{FormFocus, OptionField, UploadForm};
 use super::{AUTO_LOAD_LIMIT, App, BrowseLevel, Focus};
 use crate::table::{render_table, search_title, text_col};
 use marple_db::{CurrentWorkspace, StorageQuota};
@@ -60,8 +62,15 @@ pub(super) fn draw(frame: &mut Frame, app: &mut App) {
     }
     draw_help(frame, app, root[2]);
 
-    if let Some(picker) = &app.env_picker {
-        draw_file_picker(frame, picker);
+    if let Some(form) = &app.upload.form {
+        draw_upload_picker(frame, form);
+    } else if let Some(picker) = &app.env_picker {
+        draw_file_picker(
+            frame,
+            picker,
+            &format!("env file  (saved in {})", settings_path().display()),
+            None,
+        );
     }
 }
 
@@ -277,6 +286,7 @@ fn draw_table(frame: &mut Frame, app: &App, area: Rect) {
                     "cold",
                     "hot",
                     "status",
+                    "progress",
                 ],
                 [
                     Constraint::Length(8),
@@ -286,7 +296,8 @@ fn draw_table(frame: &mut Frame, app: &App, area: Rect) {
                     Constraint::Length(12),
                     Constraint::Length(12),
                     Constraint::Length(12),
-                    Constraint::Length(12),
+                    Constraint::Length(14),
+                    Constraint::Length(10),
                 ],
                 &indices,
                 app.dataset_state.selected(),
@@ -301,6 +312,12 @@ fn draw_table(frame: &mut Frame, app: &App, area: Rect) {
                         Cell::from(opt_bytes(dataset.cold_bytes)),
                         Cell::from(opt_bytes(dataset.hot_bytes)),
                         Cell::from(crate::format_import_status(dataset.import_status)),
+                        progress_cell(
+                            app.upload
+                                .byte_ratio(dataset.id)
+                                .or(dataset.import_progress),
+                            !dataset.import_status.is_terminal(),
+                        ),
                     ])
                 },
             );
@@ -552,6 +569,14 @@ fn draw_help(frame: &mut Frame, app: &App, area: Rect) {
         format!("filter  /{}_  enter keep  esc cancel", app.search.query)
     } else if !app.status.is_empty() {
         app.status.clone()
+    } else if let Some(form) = &app.upload.form {
+        if form.picker.editing {
+            "enter use file or folder  esc cancel".to_string()
+        } else if form.focus == FormFocus::Options {
+            "tab files  h/l field  space toggle  enter upload  esc close".to_string()
+        } else {
+            "tab options  j/k  enter file or folder  ← parent  / path  esc close".to_string()
+        }
     } else if let Some(picker) = &app.env_picker {
         if picker.editing {
             "enter use or open  esc cancel".to_string()
@@ -561,24 +586,68 @@ fn draw_help(frame: &mut Frame, app: &App, area: Rect) {
     } else if app.info_expanded {
         format!("j/k next  S-↓/↑ page  gg/G  i/esc close  v env ({env})  q quit")
     } else if app.browse_level == BrowseLevel::Root {
-        format!("j/k  S-↓/↑ page  gg/G  / filter  → open  i info  v env ({env})  q quit")
+        format!("j/k  S-↓/↑ page  gg/G  / filter  → open  i info  u upload  v env ({env})  q quit")
     } else {
         format!(
-            "tab list|table  j/k  S-↓/↑ page  gg/G  / filter  → open  i info  ← back  v env ({env})  q quit"
+            "tab list|table  j/k  S-↓/↑ page  gg/G  / filter  → open  i info  u upload  ← back  v env ({env})  q quit"
         )
     };
     frame.render_widget(Paragraph::new(help).style(body_style()), area);
 }
 
-fn draw_file_picker(frame: &mut Frame, picker: &FilePicker) {
+fn draw_upload_picker(frame: &mut Frame, form: &UploadForm) {
+    draw_file_picker(
+        frame,
+        &form.picker,
+        &format!("upload  /{}", form.stream_name),
+        Some(upload_options_line(form)),
+    );
+}
+
+fn upload_options_line(form: &UploadForm) -> Line<'static> {
+    let check = |on: bool| if on { "[x]" } else { "[ ]" };
+    let ext = if form.extension.is_empty() {
+        "any".to_string()
+    } else {
+        form.extension.clone()
+    };
+    let selected = form.focus == FormFocus::Options;
+    let style = |field: OptionField| {
+        if selected && form.option == field {
+            highlight()
+        } else {
+            body_style()
+        }
+    };
+    Line::from(vec![
+        Span::styled(
+            format!("overwrite {}  ", check(form.overwrite)),
+            style(OptionField::Overwrite),
+        ),
+        Span::styled(
+            format!("skip existing {}  ", check(form.skip_existing)),
+            style(OptionField::SkipExisting),
+        ),
+        Span::styled(format!("ext [{ext}]"), style(OptionField::Extension)),
+    ])
+}
+
+fn draw_file_picker(
+    frame: &mut Frame,
+    picker: &FilePicker,
+    title: &str,
+    header: Option<Line<'static>>,
+) {
     let area = centered(frame.area(), 80, 60);
-    let title = format!("env file  (saved in {})", settings_path().display());
-    let bordered = block(&title, true);
+    let bordered = block(title, true);
     let inner = bordered.inner(area);
     frame.render_widget(ratatui::widgets::Clear, area);
     frame.render_widget(bordered, area);
 
     let mut constraints = Vec::new();
+    if header.is_some() {
+        constraints.push(Constraint::Length(1));
+    }
     if !picker.recents.is_empty() {
         constraints.push(Constraint::Length(1));
         constraints.push(Constraint::Length(picker.recents.len() as u16));
@@ -595,6 +664,10 @@ fn draw_file_picker(frame: &mut Frame, picker: &FilePicker) {
         .split(inner);
 
     let mut index = 0;
+    if let Some(header) = header {
+        frame.render_widget(Paragraph::new(header), chunks[index]);
+        index += 1;
+    }
     if !picker.recents.is_empty() {
         frame.render_widget(Paragraph::new("recent").style(body_style()), chunks[index]);
         index += 1;

@@ -6,8 +6,9 @@ use futures_util::{StreamExt, TryStreamExt};
 use reqwest::{Body, header::CONTENT_LENGTH};
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
+use std::fmt;
 use std::io::SeekFrom;
-use std::path::Path;
+use std::path::{Path, PathBuf};
 use std::sync::{
     Arc,
     atomic::{AtomicU64, Ordering},
@@ -21,6 +22,10 @@ impl MarpleDB {
     /// Pass [`PushFileOptions::default`] for local-file defaults, or chain
     /// setters for metadata, dataset name, overwrite, concurrency, upload
     /// mode, and progress reporting.
+    ///
+    /// This is [`MarpleDB::begin_upload`] followed by
+    /// [`UploadSession::send`]. Use those when you need the dataset row before
+    /// bytes finish transferring.
     #[tracing::instrument(skip_all, fields(stream_id, path = %file_path.as_ref().display()))]
     pub async fn push_file(
         &self,
@@ -28,10 +33,28 @@ impl MarpleDB {
         file_path: impl AsRef<Path>,
         options: PushFileOptions,
     ) -> Result<Dataset> {
-        let file_path = file_path.as_ref();
-        let file_name = file_name_from_path(file_path)?;
-        let total_size = tokio::fs::metadata(file_path).await?.len();
+        self.begin_upload(stream_id, file_path, options)
+            .await?
+            .send()
+            .await
+    }
 
+    /// Creates the dataset and returns an upload session.
+    ///
+    /// [`UploadSession::dataset`] is available immediately (`UPLOADING`). Call
+    /// [`UploadSession::send`] to transfer bytes and complete the session.
+    /// Dropping a session without `send` leaves an `UPLOADING` dataset on the
+    /// server.
+    #[tracing::instrument(skip_all, fields(stream_id, path = %file_path.as_ref().display()))]
+    pub async fn begin_upload(
+        &self,
+        stream_id: i64,
+        file_path: impl AsRef<Path>,
+        options: PushFileOptions,
+    ) -> Result<UploadSession> {
+        let file_path = file_path.as_ref().to_path_buf();
+        let file_name = file_name_from_path(&file_path)?;
+        let total_size = tokio::fs::metadata(&file_path).await?.len();
         let init = self
             .init_ingestion(
                 stream_id,
@@ -41,68 +64,152 @@ impl MarpleDB {
                 options.overwrite,
             )
             .await?;
-        let progress = Arc::clone(&options.progress);
-
-        let upload_result = async {
-            match effective_upload_mode(options.upload_mode, init.mode) {
-                UploadMode::Server => {
-                    tracing::debug!(ingestion_id = init.ingestion_id, "uploading via server");
-                    self.upload_via_server(
-                        &init,
-                        file_path,
-                        &file_name,
-                        total_size,
-                        Arc::clone(&progress),
-                    )
-                    .await?;
-                }
-                UploadMode::Azure => {
-                    tracing::debug!(
-                        ingestion_id = init.ingestion_id,
-                        "uploading via Azure blocks"
-                    );
-                    self.upload_via_azure(
-                        &init,
-                        file_path,
-                        total_size,
-                        options.concurrency,
-                        Arc::clone(&progress),
-                    )
-                    .await?;
-                }
-                UploadMode::Single => {
-                    tracing::debug!(ingestion_id = init.ingestion_id, "uploading via single PUT");
-                    self.upload_via_single(&init, file_path, total_size, Arc::clone(&progress))
-                        .await?;
-                }
-                UploadMode::Multipart => {
-                    tracing::debug!(ingestion_id = init.ingestion_id, "uploading via multipart");
-                    self.upload_via_multipart(
-                        &init,
-                        file_path,
-                        total_size,
-                        options.concurrency,
-                        Arc::clone(&progress),
-                    )
-                    .await?;
-                }
-            }
-            self.complete_upload(init.ingestion_id).await?;
-            self.get_dataset(stream_id, init.dataset_id).await
-        }
-        .await;
-
-        match upload_result {
-            Ok(dataset) => Ok(dataset),
-            Err(e) => {
+        match self.get_dataset(stream_id, init.dataset_id).await {
+            Ok(dataset) => Ok(UploadSession {
+                db: self.clone(),
+                stream_id,
+                init,
+                dataset,
+                file_path,
+                file_name,
+                total_size,
+                options,
+            }),
+            Err(error) => {
                 let _ = self
-                    .abort_upload(init.ingestion_id, &format!("{e:#}"))
+                    .abort_upload(init.ingestion_id, &format!("{error:#}"))
                     .await;
-                Err(e)
+                Err(error)
+            }
+        }
+    }
+}
+
+/// In-progress file upload created by [`MarpleDB::begin_upload`].
+///
+/// The dataset row exists as soon as the session is returned. [`UploadSession::send`]
+/// transfers bytes and completes (or aborts) the upload.
+pub struct UploadSession {
+    db: MarpleDB,
+    stream_id: i64,
+    init: IngestionInit,
+    dataset: Dataset,
+    file_path: PathBuf,
+    file_name: String,
+    total_size: u64,
+    options: PushFileOptions,
+}
+
+impl fmt::Debug for UploadSession {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.debug_struct("UploadSession")
+            .field("stream_id", &self.stream_id)
+            .field("dataset_id", &self.dataset.id)
+            .field("file_path", &self.file_path)
+            .field("total_size", &self.total_size)
+            .finish_non_exhaustive()
+    }
+}
+
+impl UploadSession {
+    /// Dataset created by this upload. Status is typically `UPLOADING`.
+    pub fn dataset(&self) -> &Dataset {
+        &self.dataset
+    }
+
+    /// Local file size in bytes.
+    pub fn total_size(&self) -> u64 {
+        self.total_size
+    }
+
+    /// Transfers the file and completes the upload.
+    ///
+    /// On success, returns the dataset (typically `WAITING`). On failure,
+    /// aborts the ingestion and returns the error.
+    pub async fn send(self) -> Result<Dataset> {
+        match self.upload_and_complete().await {
+            Ok(dataset) => Ok(dataset),
+            Err(error) => {
+                let _ = self
+                    .db
+                    .abort_upload(self.init.ingestion_id, &format!("{error:#}"))
+                    .await;
+                Err(error)
             }
         }
     }
 
+    async fn upload_and_complete(&self) -> Result<Dataset> {
+        let progress = Arc::clone(&self.options.progress);
+        match effective_upload_mode(self.options.upload_mode, self.init.mode) {
+            UploadMode::Server => {
+                tracing::debug!(
+                    ingestion_id = self.init.ingestion_id,
+                    "uploading via server"
+                );
+                self.db
+                    .upload_via_server(
+                        &self.init,
+                        &self.file_path,
+                        &self.file_name,
+                        self.total_size,
+                        Arc::clone(&progress),
+                    )
+                    .await?;
+            }
+            UploadMode::Azure => {
+                tracing::debug!(
+                    ingestion_id = self.init.ingestion_id,
+                    "uploading via Azure blocks"
+                );
+                self.db
+                    .upload_via_azure(
+                        &self.init,
+                        &self.file_path,
+                        self.total_size,
+                        self.options.concurrency,
+                        Arc::clone(&progress),
+                    )
+                    .await?;
+            }
+            UploadMode::Single => {
+                tracing::debug!(
+                    ingestion_id = self.init.ingestion_id,
+                    "uploading via single PUT"
+                );
+                self.db
+                    .upload_via_single(
+                        &self.init,
+                        &self.file_path,
+                        self.total_size,
+                        Arc::clone(&progress),
+                    )
+                    .await?;
+            }
+            UploadMode::Multipart => {
+                tracing::debug!(
+                    ingestion_id = self.init.ingestion_id,
+                    "uploading via multipart"
+                );
+                self.db
+                    .upload_via_multipart(
+                        &self.init,
+                        &self.file_path,
+                        self.total_size,
+                        self.options.concurrency,
+                        Arc::clone(&progress),
+                    )
+                    .await?;
+            }
+        }
+        self.db.complete_upload(self.init.ingestion_id).await?;
+        self.db
+            .get_dataset(self.stream_id, self.init.dataset_id)
+            .await
+    }
+}
+
+impl MarpleDB {
     async fn upload_via_server(
         &self,
         init: &IngestionInit,

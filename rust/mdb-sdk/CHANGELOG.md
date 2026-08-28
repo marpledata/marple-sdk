@@ -14,7 +14,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Typed helpers for license, user/workspace info, usage, settings, stream metadata, `get_stream_by_id()`, and `get_signals()`.
 - `download_original()` / `download_original_with_progress()`.
 - TLS features (`rustls-tls-native-roots` default, `rustls-tls`, `native-tls`), `SAAS_URL`, `VERSION`, and a generic `patch` helper.
-- `PushFileOptions::dataset_name`, `StorageQuota`, `Settings`, and `ImportStatus` helpers (`as_str`, `is_success`, `is_failure`).
+- `PushFileOptions::dataset_name`, `StorageQuota`, `Settings`, and `ImportStatus` helpers (`as_str`, `is_success`, `is_failure`, `is_terminal`).
+- `MarpleDB::begin_upload` / `UploadSession` so callers can insert the dataset row (`UPLOADING`) before bytes finish. `push_file` is `begin_upload` + `send`.
 
 ### Changed
 

@@ -10,7 +10,7 @@ This crate is the async Rust SDK for the MarpleDB API. The package name is
 - `src/models.rs`: public response and option types.
 - `src/errors.rs`: SDK error type and result alias.
 - `src/retry.rs`: HTTP timeout/retry policy matching the Python SDK.
-- `src/upload.rs`: upload mode negotiation and upload implementations.
+- `src/upload.rs`: upload mode negotiation, `UploadSession`, and upload implementations.
 - `src/progress.rs`: progress reporting traits and no-op reporter.
 - `tests/unit.rs`: serde and public-model unit tests.
 - `tests/http.rs`: mock HTTP tests for retries, `patch`, and downloads.
