@@ -1,8 +1,8 @@
 use anyhow::{Context, Result, anyhow};
-use clap::{CommandFactory, Parser, Subcommand, ValueEnum};
+use clap::{Args, CommandFactory, Parser, Subcommand, ValueEnum};
 use colored::*;
 use marple_db::{
-    Dataset, MarpleDB, Metadata, ProgressReporter, PushFileOptions, UploadModeOverride,
+    Dataset, MarpleDB, Metadata, ProgressReporter, PushFileOptions, Stream, UploadModeOverride,
 };
 use mdb_cli::{
     DatasetListFormat, IndicatifProgress, StreamListFormat, dataset_queue_table_header,
@@ -103,9 +103,6 @@ enum Commands {
 
     /// Dataset commands
     Dataset {
-        /// Stream name
-        stream_name: String,
-
         #[command(subcommand)]
         command: DatasetCommands,
     },
@@ -192,10 +189,20 @@ enum StreamCommands {
     },
 }
 
+#[derive(Args)]
+struct StreamArg {
+    /// Stream name; can also be provided through MDB_STREAM
+    #[arg(long, env = "MDB_STREAM")]
+    stream: String,
+}
+
 #[derive(Subcommand)]
 enum DatasetCommands {
     /// List all datasets in a stream
     List {
+        #[command(flatten)]
+        stream: StreamArg,
+
         /// Output format
         #[arg(long, value_enum, default_value_t = DatasetListFormat::Short)]
         format: DatasetListFormat,
@@ -203,36 +210,56 @@ enum DatasetCommands {
 
     /// Get a dataset
     Get {
-        /// Dataset ID
-        dataset_id: i64,
+        /// Dataset path or id
+        #[arg(value_name = "DATASET")]
+        dataset: String,
+
+        #[command(flatten)]
+        stream: StreamArg,
     },
 
-    /// Download one dataset, or all datasets when no dataset id is provided
+    /// Download one dataset, or all datasets when none is provided
     Download {
         /// Output directory
         #[arg(short, long)]
         output_dir: Option<String>,
 
-        /// Dataset ID; omit to download all datasets in the stream
-        dataset_id: Option<i64>,
+        /// Dataset path or id; omit to download all datasets in the stream
+        #[arg(value_name = "DATASET")]
+        dataset: Option<String>,
+
+        #[command(flatten)]
+        stream: StreamArg,
     },
 
     /// Re-queue a dataset for ingest from its original uploaded file
     Reingest {
-        /// Dataset ID
-        dataset_id: i64,
+        /// Dataset path or id
+        #[arg(value_name = "DATASET")]
+        dataset: String,
+
+        #[command(flatten)]
+        stream: StreamArg,
     },
 
     /// Print ingest debug messages for a dataset
     Debug {
-        /// Dataset ID
-        dataset_id: i64,
+        /// Dataset path or id
+        #[arg(value_name = "DATASET")]
+        dataset: String,
+
+        #[command(flatten)]
+        stream: StreamArg,
     },
 
     /// Delete a dataset
     Delete {
-        /// Dataset ID
-        dataset_id: i64,
+        /// Dataset path or id
+        #[arg(value_name = "DATASET")]
+        dataset: String,
+
+        #[command(flatten)]
+        stream: StreamArg,
     },
 }
 
@@ -392,28 +419,33 @@ async fn handle_stream_commands(marpledb: &MarpleDB, command: &StreamCommands) -
     Ok(())
 }
 
-async fn handle_dataset_commands(
-    marpledb: &MarpleDB,
-    stream_name: &str,
-    command: &DatasetCommands,
-) -> Result<()> {
+async fn handle_dataset_commands(marpledb: &MarpleDB, command: &DatasetCommands) -> Result<()> {
+    let stream_name = match command {
+        DatasetCommands::List { stream, .. }
+        | DatasetCommands::Get { stream, .. }
+        | DatasetCommands::Download { stream, .. }
+        | DatasetCommands::Reingest { stream, .. }
+        | DatasetCommands::Debug { stream, .. }
+        | DatasetCommands::Delete { stream, .. } => stream.stream.as_str(),
+    };
     let stream = marpledb.get_stream(stream_name).await?;
 
     match command {
-        DatasetCommands::List { format } => {
+        DatasetCommands::List { format, .. } => {
             let datasets = marpledb.get_datasets(stream.id).await?;
             print_datasets(&datasets, *format)?;
         }
-        DatasetCommands::Get { dataset_id } => {
-            let dataset = marpledb.get_dataset(stream.id, *dataset_id).await?;
+        DatasetCommands::Get { dataset, .. } => {
+            let dataset = resolve_dataset(marpledb, &stream, dataset).await?;
             println!("{}", serde_json::to_string_pretty(&dataset)?);
         }
         DatasetCommands::Download {
-            dataset_id,
+            dataset,
             output_dir,
+            ..
         } => {
-            if let Some(dataset_id) = dataset_id {
-                let dataset = marpledb.get_dataset(stream.id, *dataset_id).await?;
+            if let Some(dataset) = dataset {
+                let dataset = resolve_dataset(marpledb, &stream, dataset).await?;
                 match download_dataset(marpledb, &dataset, output_dir.as_deref()).await {
                     Ok(path) => println!("{} {} -> {}", "✓".green(), dataset.path, path),
                     Err(e) => eprintln!("{} {} failed: {}", "✗".red(), dataset.id, e),
@@ -428,20 +460,40 @@ async fn handle_dataset_commands(
                 }
             }
         }
-        DatasetCommands::Reingest { dataset_id } => {
-            marpledb.reingest_dataset(stream.id, *dataset_id).await?;
-            println!("{} {}", "✓".green(), dataset_id);
+        DatasetCommands::Reingest { dataset, .. } => {
+            let dataset = resolve_dataset(marpledb, &stream, dataset).await?;
+            marpledb.reingest_dataset(stream.id, dataset.id).await?;
+            println!("{} {}", "✓".green(), dataset.path);
         }
-        DatasetCommands::Debug { dataset_id } => {
-            let messages = marpledb.get_debug_messages(stream.id, *dataset_id).await?;
+        DatasetCommands::Debug { dataset, .. } => {
+            let dataset = resolve_dataset(marpledb, &stream, dataset).await?;
+            let messages = marpledb.get_debug_messages(stream.id, dataset.id).await?;
             println!("{}", serde_json::to_string_pretty(&messages)?);
         }
-        DatasetCommands::Delete { dataset_id } => {
-            marpledb.delete_dataset(stream.id, *dataset_id).await?;
-            println!("{} {}", "✓".green(), dataset_id);
+        DatasetCommands::Delete { dataset, .. } => {
+            let dataset = resolve_dataset(marpledb, &stream, dataset).await?;
+            marpledb.delete_dataset(stream.id, dataset.id).await?;
+            println!("{} {}", "✓".green(), dataset.path);
         }
     }
     Ok(())
+}
+
+async fn resolve_dataset(marpledb: &MarpleDB, stream: &Stream, spec: &str) -> Result<Dataset> {
+    if let Ok(dataset_id) = spec.parse::<i64>() {
+        return Ok(marpledb.get_dataset(stream.id, dataset_id).await?);
+    }
+
+    let pool = if stream.datapool.is_empty() {
+        "default"
+    } else {
+        stream.datapool.as_str()
+    };
+    let dataset = marpledb.get_dataset_by_path(pool, spec).await?;
+    if dataset.datastream_id != stream.id {
+        return Err(anyhow!("dataset {spec:?} is not in stream {}", stream.name));
+    }
+    Ok(dataset)
 }
 
 async fn handle_datapool_commands(marpledb: &MarpleDB, command: &DatapoolCommands) -> Result<()> {
@@ -697,10 +749,7 @@ async fn main() -> Result<()> {
     match command {
         Commands::Ping => handle_ping(&marpledb).await?,
         Commands::Stream { command } => handle_stream_commands(&marpledb, &command).await?,
-        Commands::Dataset {
-            stream_name,
-            command,
-        } => handle_dataset_commands(&marpledb, &stream_name, &command).await?,
+        Commands::Dataset { command } => handle_dataset_commands(&marpledb, &command).await?,
         Commands::Datapool { command } => handle_datapool_commands(&marpledb, &command).await?,
         Commands::Ingest {
             stream_name,

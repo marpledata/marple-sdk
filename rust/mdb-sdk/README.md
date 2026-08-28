@@ -84,6 +84,7 @@ async fn main() -> anyhow::Result<()> {
 - `db.get_datapool_datasets("default")` lists datasets across a datapool.
 - `db.get_datapool_ingest_queue("default")` lists datasets currently in the ingest queue.
 - `db.get_dataset(stream_id, dataset_id)` fetches one dataset.
+- `db.get_dataset_by_path("default", "run.csv")` fetches a dataset by path within a datapool.
 - `db.delete_dataset(stream_id, dataset_id)` deletes a dataset.
 - `db.reingest_dataset(stream_id, dataset_id)` re-queues a dataset for ingest from its original file.
 - `db.get_debug_messages(stream_id, dataset_id)` fetches ingest debug messages.

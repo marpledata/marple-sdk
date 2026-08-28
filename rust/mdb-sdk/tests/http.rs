@@ -1,6 +1,6 @@
 use marple_db::{HealthResponse, MarpleDB};
 use serde_json::json;
-use wiremock::matchers::{method, path};
+use wiremock::matchers::{method, path, query_param};
 use wiremock::{Mock, MockServer, ResponseTemplate};
 
 fn client(server: &MockServer) -> MarpleDB {
@@ -100,6 +100,31 @@ async fn download_original_writes_backup_bytes() {
         Some("run.csv")
     );
     assert_eq!(std::fs::read(&path).expect("bytes"), body);
+}
+
+#[tokio::test]
+async fn get_dataset_by_path_sends_query() {
+    use marple_db::Dataset;
+
+    let server = MockServer::start().await;
+    Mock::given(method("GET"))
+        .and(path("/api/v1/datapool/default/dataset"))
+        .and(query_param("path", "run.csv"))
+        .respond_with(ResponseTemplate::new(200).set_body_json(json!({
+            "id": 42,
+            "datastream_id": 7,
+            "path": "run.csv"
+        })))
+        .expect(1)
+        .mount(&server)
+        .await;
+
+    let dataset: Dataset = client(&server)
+        .get_dataset_by_path("default", "run.csv")
+        .await
+        .expect("dataset");
+    assert_eq!(dataset.id, 42);
+    assert_eq!(dataset.path, "run.csv");
 }
 
 #[tokio::test]

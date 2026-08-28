@@ -237,6 +237,15 @@ impl MarpleDB {
             .await
     }
 
+    /// Fetches a dataset by path within a datapool.
+    ///
+    /// Dataset paths are unique per datapool. Pass the stream's `datapool`
+    /// (typically `"default"`).
+    pub async fn get_dataset_by_path(&self, pool: &str, path: &str) -> Result<Dataset> {
+        self.get(&format!("datapool/{pool}/dataset"), &[("path", path)])
+            .await
+    }
+
     /// Deletes a dataset.
     ///
     /// This cannot be undone.

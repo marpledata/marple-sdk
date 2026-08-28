@@ -203,6 +203,37 @@ fn test_env_file_appears_in_help() {
 }
 
 #[test]
+fn test_dataset_help_uses_stream_flag() {
+    let mut cmd = cargo_bin_cmd!("mdb");
+    cmd.env("NO_COLOR", "1");
+    let output = cmd.args(["dataset", "list", "--help"]).assert().success();
+    let stdout = String::from_utf8_lossy(&output.get_output().stdout);
+
+    assert!(
+        stdout.contains("--stream"),
+        "dataset list help should mention --stream, got: {stdout}"
+    );
+    assert!(
+        stdout.contains("MDB_STREAM"),
+        "dataset list help should mention MDB_STREAM, got: {stdout}"
+    );
+}
+
+#[test]
+fn test_dataset_list_requires_stream() {
+    let output = mdb_cmd_without_auth()
+        .env_remove("MDB_STREAM")
+        .args(["dataset", "list"])
+        .assert()
+        .failure();
+    let stderr = String::from_utf8_lossy(&output.get_output().stderr);
+    assert!(
+        stderr.contains("--stream"),
+        "dataset list without a stream should mention --stream, got: {stderr}"
+    );
+}
+
+#[test]
 fn test_no_args_without_tty_prints_help() {
     let mut cmd = cargo_bin_cmd!("mdb");
     cmd.env("NO_COLOR", "1");
@@ -342,7 +373,13 @@ async fn test_db_flow_via_cli() {
     let mut last_status = None::<String>;
     while std::time::Instant::now() < deadline {
         let ds_get = mdb_cmd(&token, url.as_deref())
-            .args(["dataset", &stream_name, "get", &dataset_id.to_string()])
+            .args([
+                "dataset",
+                "get",
+                &dataset_id.to_string(),
+                "--stream",
+                &stream_name,
+            ])
             .assert()
             .success();
         let ds_obj = parse_json_stdout(&ds_get);
@@ -364,7 +401,13 @@ async fn test_db_flow_via_cli() {
     );
 
     let ds_get = mdb_cmd(&token, url.as_deref())
-        .args(["dataset", &stream_name, "get", &dataset_id.to_string()])
+        .args([
+            "dataset",
+            "get",
+            &dataset_id.to_string(),
+            "--stream",
+            &stream_name,
+        ])
         .assert()
         .success();
     let ds_obj = parse_json_stdout(&ds_get);
@@ -385,9 +428,25 @@ async fn test_db_flow_via_cli() {
         "dataset metadata missing Foo value"
     );
 
+    let dataset_path = csv_path
+        .file_name()
+        .expect("csv file name")
+        .to_string_lossy()
+        .into_owned();
+    let ds_by_path = mdb_cmd(&token, url.as_deref())
+        .args(["dataset", "get", &dataset_path, "--stream", &stream_name])
+        .assert()
+        .success();
+    let ds_by_path = parse_json_stdout(&ds_by_path);
+    assert_eq!(
+        ds_by_path.get("id").and_then(|v| v.as_i64()),
+        Some(dataset_id),
+        "get by path should return the same dataset"
+    );
+
     // List datasets in the default short/table format
     let ds_short_list = mdb_cmd(&token, url.as_deref())
-        .args(["dataset", &stream_name, "list"])
+        .args(["dataset", "list", "--stream", &stream_name])
         .assert()
         .success();
     let ds_short_stdout = String::from_utf8_lossy(&ds_short_list.get_output().stdout);
@@ -404,7 +463,14 @@ async fn test_db_flow_via_cli() {
 
     // List datasets in JSON format
     let ds_list = mdb_cmd(&token, url.as_deref())
-        .args(["dataset", &stream_name, "list", "--format", "long"])
+        .args([
+            "dataset",
+            "list",
+            "--stream",
+            &stream_name,
+            "--format",
+            "long",
+        ])
         .assert()
         .success();
     let datasets = parse_json_stdout(&ds_list);
@@ -472,11 +538,12 @@ async fn test_db_flow_via_cli() {
     mdb_cmd(&token, url.as_deref())
         .args([
             "dataset",
-            &stream_name,
             "download",
             "--output-dir",
             tmp.path().to_str().unwrap(),
             &dataset_id.to_string(),
+            "--stream",
+            &stream_name,
         ])
         .assert()
         .success();
@@ -540,7 +607,13 @@ async fn test_db_flow_via_cli() {
     }
 
     mdb_cmd(&token, url.as_deref())
-        .args(["dataset", &stream_name, "delete", &dataset_id.to_string()])
+        .args([
+            "dataset",
+            "delete",
+            &dataset_id.to_string(),
+            "--stream",
+            &stream_name,
+        ])
         .assert()
         .success();
 
