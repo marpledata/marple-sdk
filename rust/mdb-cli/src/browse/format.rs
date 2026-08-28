@@ -24,6 +24,14 @@ pub(super) fn kv_styled(key: &str, value: impl std::fmt::Display, style: Style) 
     ])
 }
 
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(super) struct ImportMix {
+    pub finished: usize,
+    pub live: usize,
+    pub failed: usize,
+    pub total: usize,
+}
+
 pub(super) fn stream_info(
     stream: Option<&Stream>,
     expanded: bool,
@@ -55,6 +63,34 @@ pub(super) fn stream_info(
         lines.push(kv("pool", stream.datapool.clone()));
     }
     (format!("stream  {}", stream.name), lines)
+}
+
+pub(super) fn stream_card(
+    stream: Option<&Stream>,
+    import: Option<ImportMix>,
+    width: usize,
+) -> (String, Vec<Line<'static>>) {
+    let Some(stream) = stream else {
+        return (
+            "stream".to_string(),
+            vec![card_line("no stream selected", width)],
+        );
+    };
+    let title = ellipsis(&format!("stream  {}", stream.name), width);
+    let mut lines = vec![card_line(stream_plugin_line(stream, width), width)];
+    if let Some(mix) = import_mix_line(import) {
+        lines.push(card_line(mix, width));
+    }
+    lines.push(card_line(
+        format!("cold {}", opt_bytes(stream.cold_bytes)),
+        width,
+    ));
+    lines.push(card_line(
+        format!("hot {}", opt_bytes(stream.hot_bytes)),
+        width,
+    ));
+    lines.truncate(4);
+    (title, lines)
 }
 
 pub(super) fn dataset_info(
@@ -99,6 +135,50 @@ pub(super) fn dataset_info(
     }
     push_metadata(&mut lines, &dataset.metadata, false);
     (format!("dataset  {}", dataset.path), lines)
+}
+
+pub(super) fn dataset_card(
+    dataset: Option<&Dataset>,
+    width: usize,
+) -> (String, Vec<Line<'static>>) {
+    let Some(dataset) = dataset else {
+        return (
+            "dataset".to_string(),
+            vec![card_line("no dataset selected", width)],
+        );
+    };
+    let title = ellipsis(&format!("dataset  {}", dataset.path), width);
+    let status = crate::format_import_status(dataset.import_status);
+    let mut lines = vec![card_line(status, width)];
+    if !dataset.import_status.is_success() {
+        let message = dataset
+            .import_message
+            .as_deref()
+            .filter(|message| !message.is_empty())
+            .unwrap_or(MISSING);
+        lines.push(card_line(message, width));
+        lines.push(card_line(dataset_points_archive(dataset), width));
+        lines.push(card_line(
+            format!(
+                "cold {}  hot {}",
+                opt_bytes(dataset.cold_bytes),
+                opt_bytes(dataset.hot_bytes)
+            ),
+            width,
+        ));
+    } else {
+        lines.push(card_line(dataset_points_archive(dataset), width));
+        lines.push(card_line(
+            format!("cold {}", opt_bytes(dataset.cold_bytes)),
+            width,
+        ));
+        lines.push(card_line(
+            format!("hot {}", opt_bytes(dataset.hot_bytes)),
+            width,
+        ));
+    }
+    lines.truncate(4);
+    (title, lines)
 }
 
 pub(super) fn signal_info(signal: Option<&Signal>) -> (String, Vec<Line<'static>>) {
@@ -390,14 +470,59 @@ fn push_metadata(
     }
 }
 
+fn card_line(text: impl AsRef<str>, width: usize) -> Line<'static> {
+    Line::from(Span::styled(ellipsis(text.as_ref(), width), body_style()))
+}
+
+fn stream_plugin_line(stream: &Stream, width: usize) -> String {
+    match (
+        stream.plugin.as_deref().filter(|plugin| !plugin.is_empty()),
+        stream
+            .plugin_args
+            .as_deref()
+            .filter(|args| !args.is_empty()),
+    ) {
+        (Some(plugin), Some(args)) => ellipsis(&format!("{plugin} {args}"), width),
+        (Some(plugin), None) => ellipsis(plugin, width),
+        _ => stream_kind(stream).to_string(),
+    }
+}
+
+fn import_mix_line(import: Option<ImportMix>) -> Option<String> {
+    let mix = import?;
+    if mix.total > 0 && mix.failed == 0 && mix.live == 0 && mix.finished == mix.total {
+        return None;
+    }
+    let mut parts = Vec::new();
+    if mix.finished > 0 {
+        parts.push(format!("{} finished", mix.finished));
+    }
+    if mix.live > 0 {
+        parts.push(format!("{} live", mix.live));
+    }
+    if mix.failed > 0 {
+        parts.push(format!("{} failed", mix.failed));
+    }
+    (!parts.is_empty()).then(|| parts.join("  "))
+}
+
+fn dataset_points_archive(dataset: &Dataset) -> String {
+    format!(
+        "{} pts  {} archive",
+        compact_count(dataset.n_datapoints),
+        opt_bytes(dataset.backup_size)
+    )
+}
+
 #[cfg(test)]
 mod tests {
     use super::{
-        bar_color, ellipsis, format_expiry, format_usage, host_from_url, license_color,
-        license_type, storage_status, usage_bar, usage_ratio,
+        ImportMix, bar_color, dataset_card, ellipsis, format_expiry, format_usage, host_from_url,
+        license_color, license_type, storage_status, stream_card, usage_bar, usage_ratio,
     };
-    use marple_db::{LicenseType, StorageQuota, StorageStatus};
+    use marple_db::{Dataset, LicenseType, StorageQuota, StorageStatus, Stream};
     use ratatui::style::Color;
+    use serde_json::json;
 
     #[test]
     fn ellipsis_keeps_short_text() {
@@ -412,6 +537,129 @@ mod tests {
         );
         assert_eq!(ellipsis("ab", 1), "…");
         assert_eq!(ellipsis("hello", 0), "");
+    }
+
+    #[test]
+    fn stream_card_omits_id_name_and_hides_finished_mix() {
+        let stream: Stream = serde_json::from_value(json!({
+            "id": 3,
+            "name": "IMC",
+            "type": "files",
+            "datapool": "default",
+            "plugin": "imc",
+            "plugin_args": "--unzip",
+            "cold_bytes": 1024,
+            "hot_bytes": 2048
+        }))
+        .expect("stream JSON");
+        let (title, lines) = stream_card(
+            Some(&stream),
+            Some(ImportMix {
+                finished: 4,
+                live: 0,
+                failed: 0,
+                total: 4,
+            }),
+            40,
+        );
+        let texts: Vec<String> = lines.iter().map(ToString::to_string).collect();
+        assert_eq!(title, "stream  IMC");
+        assert_eq!(texts, vec!["imc --unzip", "cold 1.0 KiB", "hot 2.0 KiB"]);
+    }
+
+    #[test]
+    fn stream_card_clips_args_and_shows_failed_mix() {
+        let stream: Stream = serde_json::from_value(json!({
+            "id": 3,
+            "name": "IMC",
+            "type": "files",
+            "datapool": "default",
+            "plugin": "imc",
+            "plugin_args": "--unzip --time-factor 1 --extra"
+        }))
+        .expect("stream JSON");
+        let (title, lines) = stream_card(
+            Some(&stream),
+            Some(ImportMix {
+                finished: 2,
+                live: 0,
+                failed: 1,
+                total: 4,
+            }),
+            18,
+        );
+        let texts: Vec<String> = lines.iter().map(ToString::to_string).collect();
+        assert_eq!(title, "stream  IMC");
+        assert_eq!(
+            texts[0],
+            ellipsis("imc --unzip --time-factor 1 --extra", 18)
+        );
+        assert_eq!(texts[1], ellipsis("2 finished  1 failed", 18));
+    }
+
+    #[test]
+    fn stream_card_uses_kind_when_plugin_missing() {
+        let stream: Stream = serde_json::from_value(json!({
+            "id": 1,
+            "name": "Live",
+            "type": "realtime",
+            "datapool": "default"
+        }))
+        .expect("stream JSON");
+        let (_, lines) = stream_card(Some(&stream), None, 40);
+        let texts: Vec<String> = lines.iter().map(ToString::to_string).collect();
+        assert_eq!(texts[0], "realtime");
+    }
+
+    #[test]
+    fn dataset_card_shows_status_sizes_not_path() {
+        let dataset: Dataset = serde_json::from_value(json!({
+            "id": 42,
+            "datastream_id": 3,
+            "path": "race-001.mf4",
+            "import_status": "FINISHED",
+            "n_datapoints": 1_234_567_u64,
+            "cold_bytes": 1536,
+            "hot_bytes": 0,
+            "backup_size": 4096
+        }))
+        .expect("dataset JSON");
+        let (title, lines) = dataset_card(Some(&dataset), 40);
+        let texts: Vec<String> = lines.iter().map(ToString::to_string).collect();
+        assert_eq!(title, "dataset  race-001.mf4");
+        assert_eq!(
+            texts,
+            vec![
+                "FINISHED",
+                "1.2M pts  4.0 KiB archive",
+                "cold 1.5 KiB",
+                "hot 0 B"
+            ]
+        );
+        assert!(texts.iter().all(|line| !line.contains("race-001.mf4")));
+        assert!(texts.iter().all(|line| !line.contains("42")));
+    }
+
+    #[test]
+    fn dataset_card_failed_status_shows_message() {
+        let dataset: Dataset = serde_json::from_value(json!({
+            "id": 42,
+            "datastream_id": 3,
+            "path": "race-001.mf4",
+            "import_status": "FAILED",
+            "import_message": "Parsing signals",
+            "n_datapoints": 1_234_567_u64,
+            "cold_bytes": 1536,
+            "hot_bytes": 0,
+            "backup_size": 4096
+        }))
+        .expect("dataset JSON");
+        let (_, lines) = dataset_card(Some(&dataset), 40);
+        let texts: Vec<String> = lines.iter().map(ToString::to_string).collect();
+        assert_eq!(texts[0], "FAILED");
+        assert_eq!(texts[1], "Parsing signals");
+        assert_eq!(texts[2], "1.2M pts  4.0 KiB archive");
+        assert_eq!(texts[3], "cold 1.5 KiB  hot 0 B");
     }
 
     #[test]

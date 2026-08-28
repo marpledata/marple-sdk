@@ -1,7 +1,7 @@
 use super::format::{
-    clip_args, compact_count, count_cell, ellipsis, format_expiry, format_usage, host_from_url, kv,
-    kv_styled, license_color, license_type, now_epoch, opt_bytes, opt_count, opt_text, signal_kind,
-    signal_source, stream_kind, sum_bytes, usage_bar,
+    clip_args, compact_count, count_cell, dataset_card, ellipsis, format_expiry, format_usage,
+    host_from_url, kv, kv_styled, license_color, license_type, now_epoch, opt_bytes, opt_count,
+    opt_text, signal_kind, signal_source, stream_card, stream_kind, sum_bytes, usage_bar,
 };
 use super::picker::FilePicker;
 use super::session::settings_path;
@@ -45,16 +45,17 @@ pub(super) fn draw(frame: &mut Frame, app: &mut App) {
             .direction(Direction::Horizontal)
             .constraints(LEFT_PANE)
             .split(root[1]);
-        draw_list(frame, app, body[0]);
         if app.info_expanded {
+            draw_list(frame, app, body[0]);
             draw_info(frame, app, body[1]);
         } else {
-            let right = Layout::default()
+            let left = Layout::default()
                 .direction(Direction::Vertical)
-                .constraints([Constraint::Length(11), Constraint::Min(8)])
-                .split(body[1]);
-            draw_info(frame, app, right[0]);
-            draw_table(frame, app, right[1]);
+                .constraints([Constraint::Min(8), Constraint::Length(6)])
+                .split(body[0]);
+            draw_list(frame, app, left[0]);
+            draw_card(frame, app, left[1]);
+            draw_table(frame, app, body[1]);
         }
     }
     draw_help(frame, app, root[2]);
@@ -375,21 +376,28 @@ fn draw_table(frame: &mut Frame, app: &App, area: Rect) {
     }
 }
 
-fn draw_info(frame: &mut Frame, app: &mut App, area: Rect) {
-    app.info_view = area.height;
-    let (title, lines) = if app.info_expanded {
-        app.info_for_inspect()
-    } else {
-        app.info_for_highlight()
-    };
-    let title = if app.info_expanded {
-        format!("{title}  i close")
-    } else {
-        title
+fn draw_card(frame: &mut Frame, app: &App, area: Rect) {
+    let width = usize::from(area.width.saturating_sub(2));
+    let (title, lines) = match app.browse_level {
+        BrowseLevel::Streams => stream_card(app.selected_stream(), app.loaded_import_mix(), width),
+        BrowseLevel::Datasets => dataset_card(app.selected_dataset(), width),
+        BrowseLevel::Root => return,
     };
     frame.render_widget(
         Paragraph::new(Text::from(lines))
-            .block(block(&title, app.info_expanded))
+            .block(block(&title, false))
+            .wrap(Wrap { trim: false }),
+        area,
+    );
+}
+
+fn draw_info(frame: &mut Frame, app: &mut App, area: Rect) {
+    app.info_view = area.height;
+    let (title, lines) = app.info_for_inspect();
+    let title = format!("{title}  i close");
+    frame.render_widget(
+        Paragraph::new(Text::from(lines))
+            .block(block(&title, true))
             .wrap(Wrap { trim: false })
             .scroll((app.info_scroll, 0)),
         area,

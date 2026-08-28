@@ -11,7 +11,9 @@ use crate::table::{
 use anyhow::Result;
 use crossterm::event::{self, Event, KeyCode, KeyEvent, KeyEventKind, KeyModifiers};
 use draw::draw;
-use format::{dataset_info, signal_info, signal_kind, signal_source, stream_info, stream_kind};
+use format::{
+    ImportMix, dataset_info, signal_info, signal_kind, signal_source, stream_info, stream_kind,
+};
 use marple_db::{CurrentWorkspace, Dataset, ImportStatus, MarpleDB, Signal, Stream};
 use picker::FilePicker;
 use ratatui::text::Line;
@@ -985,37 +987,36 @@ impl App {
             .unwrap_or_else(|| "env".to_string())
     }
 
-    fn loaded_import_counts(&self) -> Option<(usize, usize)> {
+    fn loaded_import_mix(&self) -> Option<ImportMix> {
         let id = self.selected_stream()?.id;
         (self.loaded_stream_id == Some(id)).then(|| {
-            let finished = self
-                .datasets
-                .iter()
-                .filter(|dataset| dataset.import_status == ImportStatus::Finished)
-                .count();
-            let live = self
-                .datasets
-                .iter()
-                .filter(|dataset| dataset.import_status == ImportStatus::Live)
-                .count();
-            (finished, live)
-        })
-    }
-
-    fn info_for_highlight(&self) -> (String, Vec<Line<'static>>) {
-        match self.browse_level {
-            BrowseLevel::Root | BrowseLevel::Streams => {
-                stream_info(self.selected_stream(), false, self.loaded_import_counts())
+            let mut finished = 0;
+            let mut live = 0;
+            let mut failed = 0;
+            for dataset in &self.datasets {
+                match dataset.import_status {
+                    ImportStatus::Finished => finished += 1,
+                    ImportStatus::Live => live += 1,
+                    status if status.is_failure() => failed += 1,
+                    _ => {}
+                }
             }
-            BrowseLevel::Datasets => dataset_info(self.selected_dataset(), false),
-        }
+            ImportMix {
+                finished,
+                live,
+                failed,
+                total: self.datasets.len(),
+            }
+        })
     }
 
     fn info_for_inspect(&self) -> (String, Vec<Line<'static>>) {
         match (self.browse_level, self.focus) {
-            (BrowseLevel::Root, _) | (BrowseLevel::Streams, Focus::List) => {
-                stream_info(self.selected_stream(), true, self.loaded_import_counts())
-            }
+            (BrowseLevel::Root, _) | (BrowseLevel::Streams, Focus::List) => stream_info(
+                self.selected_stream(),
+                true,
+                self.loaded_import_mix().map(|mix| (mix.finished, mix.live)),
+            ),
             (BrowseLevel::Streams, Focus::Table) | (BrowseLevel::Datasets, Focus::List) => {
                 dataset_info(self.selected_dataset(), true)
             }
