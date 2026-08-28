@@ -2,6 +2,7 @@ mod draw;
 mod format;
 mod picker;
 mod session;
+pub(crate) mod style;
 
 use crate::connect;
 use crate::table::{

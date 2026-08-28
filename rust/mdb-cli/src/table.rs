@@ -1,9 +1,9 @@
+use crate::browse::style::{block, body_style, highlight};
 use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
 use ratatui::Frame;
 use ratatui::layout::{Constraint, Rect};
-use ratatui::style::{Color, Modifier, Style};
-use ratatui::text::Span;
-use ratatui::widgets::{Block, Borders, Cell, Row, Table, TableState};
+use ratatui::style::{Modifier, Style};
+use ratatui::widgets::{Cell, Row, Table, TableState};
 
 #[derive(Clone, Debug, Default)]
 pub(crate) struct TableSearch {
@@ -180,33 +180,8 @@ pub(crate) fn search_title(base: &str, search: &TableSearch) -> String {
 }
 
 pub(crate) fn header_row<'a>(cells: &'a [&str]) -> Row<'a> {
-    Row::new(cells.iter().copied().map(Cell::from).collect::<Vec<_>>()).style(
-        Style::default()
-            .fg(Color::DarkGray)
-            .add_modifier(Modifier::BOLD),
-    )
-}
-
-pub(crate) fn block(title: &str, focused: bool) -> Block<'_> {
-    Block::default()
-        .title(Span::styled(title, Style::default().fg(Color::White)))
-        .borders(Borders::ALL)
-        .border_style(if focused {
-            Style::default().fg(Color::Cyan)
-        } else {
-            Style::default().fg(Color::DarkGray)
-        })
-}
-
-pub(crate) fn highlight() -> Style {
-    Style::default()
-        .fg(Color::Black)
-        .bg(Color::Cyan)
-        .add_modifier(Modifier::BOLD)
-}
-
-pub(crate) fn body_style() -> Style {
-    Style::default().fg(Color::Gray)
+    Row::new(cells.iter().copied().map(Cell::from).collect::<Vec<_>>())
+        .style(Style::default().add_modifier(Modifier::BOLD))
 }
 
 pub(crate) fn text_col(area: Rect, reserved: u16, gaps: u16) -> usize {

@@ -14,6 +14,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- Browse TUI inherits the terminal foreground instead of grey/white, so text stays readable in light terminals.
 - Dataset commands take `--stream` (or `MDB_STREAM`) instead of a leading stream name: `mdb dataset list --stream Metrics`, `mdb dataset get xyz.metrics --stream Metrics`.
 - Dataset `get`, `download`, `reingest`, `debug`, and `delete` accept a dataset path or numeric id.
 - Dataset status output uses SDK `ImportStatus` names, including `UNKNOWN`.

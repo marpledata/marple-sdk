@@ -10,6 +10,7 @@ the Rust SDK crate `marple-db`.
 - `src/browse/`: stream / dataset / signal browser started by `mdb` (TTY) or
   `mdb browse`. Session (env file and last stream) is saved in
   `$XDG_CONFIG_HOME/mdb/browse.toml`. The env-file modal lives in `picker.rs`.
+  TUI palette and bordered chrome live in `style.rs`.
 - `src/table.rs`: shared windowed table draw plus `/` substring row search used
   by browse.
 - `tests/integration.rs`: CLI tests using `assert_cmd`.
@@ -35,3 +36,6 @@ the Rust SDK crate `marple-db`.
   the `mdb` binary and assert on stdout, stderr, and exit status.
 - Keep progress bars and colored output out of JSON stdout paths so scripts can
   parse command responses reliably.
+- TUI palette lives in `src/browse/style.rs`. Body text inherits the terminal
+  foreground; do not use Gray, DarkGray, White, or Dim (they vanish on light
+  terminals). Black only with a painted background (row highlight).

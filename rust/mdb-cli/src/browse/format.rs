@@ -1,3 +1,4 @@
+use super::style::body_style;
 use marple_db::{Dataset, LicenseType, Signal, StorageQuota, StorageStatus, Stream, StreamType};
 use ratatui::style::{Color, Style};
 use ratatui::text::{Line, Span};
@@ -12,17 +13,13 @@ const META_UPLOADED_AT: &str = "_mdb_uploaded_at";
 const META_RESERVED_PREFIX: &str = "_mdb_";
 const MISSING: &str = "—";
 
-pub(super) fn body_style() -> Style {
-    Style::default().fg(Color::White)
-}
-
 pub(super) fn kv(key: &str, value: impl std::fmt::Display) -> Line<'static> {
     kv_styled(key, value, body_style())
 }
 
 pub(super) fn kv_styled(key: &str, value: impl std::fmt::Display, style: Style) -> Line<'static> {
     Line::from(vec![
-        Span::styled(format!("{key:<18}"), Style::default().fg(Color::DarkGray)),
+        Span::styled(format!("{key:<18}"), body_style()),
         Span::styled(value.to_string(), style),
     ])
 }
@@ -247,16 +244,16 @@ pub(super) fn usage_bar(
     width: u16,
 ) -> Line<'static> {
     let width = usize::from(width).max(4);
-    let (filled, color) = match usage_ratio(used, quota) {
+    let (filled, style) = match usage_ratio(used, quota) {
         Some(ratio) => (
             ((ratio * width as f64).round() as usize).min(width),
-            bar_color(ratio),
+            Style::default().fg(bar_color(ratio)),
         ),
-        None => (0, Color::DarkGray),
+        None => (0, body_style()),
     };
     Line::from(Span::styled(
         format!("{}{}", "█".repeat(filled), "░".repeat(width - filled)),
-        Style::default().fg(color),
+        style,
     ))
 }
 
@@ -266,7 +263,7 @@ pub(super) fn license_color(license_type: LicenseType) -> Color {
         LicenseType::Sponsorship => Color::Yellow,
         LicenseType::Poc => Color::Magenta,
         LicenseType::Dev => Color::LightMagenta,
-        _ => Color::Gray,
+        _ => Color::Reset,
     }
 }
 
@@ -301,7 +298,7 @@ pub(super) fn now_epoch() -> i64 {
 
 pub(super) fn format_expiry(expiry: Option<i64>, now: i64) -> (String, Color) {
     let Some(secs) = expiry else {
-        return ("no expiry".to_string(), Color::Gray);
+        return ("no expiry".to_string(), Color::Reset);
     };
     let date = crate::format_epoch_utc(secs as f64)
         .chars()
@@ -312,7 +309,7 @@ pub(super) fn format_expiry(expiry: Option<i64>, now: i64) -> (String, Color) {
     } else if secs - now < 30 * 86_400 {
         (format!("expires {date}"), Color::Yellow)
     } else {
-        (format!("expires {date}"), Color::Gray)
+        (format!("expires {date}"), Color::Reset)
     }
 }
 
@@ -447,8 +444,8 @@ mod tests {
         assert_eq!(license_color(LicenseType::Sponsorship), Color::Yellow);
         assert_eq!(license_color(LicenseType::Poc), Color::Magenta);
         assert_eq!(license_color(LicenseType::Dev), Color::LightMagenta);
-        assert_eq!(license_color(LicenseType::Trial), Color::Gray);
-        assert_eq!(license_color(LicenseType::Free), Color::Gray);
+        assert_eq!(license_color(LicenseType::Trial), Color::Reset);
+        assert_eq!(license_color(LicenseType::Free), Color::Reset);
     }
 
     #[test]
@@ -484,7 +481,7 @@ mod tests {
         let now = 1_800_000_000;
         assert_eq!(
             format_expiry(Some(now + 60 * 86_400), now),
-            ("expires 2027-03-16".to_string(), Color::Gray)
+            ("expires 2027-03-16".to_string(), Color::Reset)
         );
         assert_eq!(
             format_expiry(Some(now + 10 * 86_400), now),
@@ -496,7 +493,7 @@ mod tests {
         );
         assert_eq!(
             format_expiry(None, now),
-            ("no expiry".to_string(), Color::Gray)
+            ("no expiry".to_string(), Color::Reset)
         );
     }
 }

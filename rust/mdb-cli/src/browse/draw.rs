@@ -5,12 +5,13 @@ use super::format::{
 };
 use super::picker::FilePicker;
 use super::session::settings_path;
+use super::style::{accent, accent_bold, block, body_style, highlight};
 use super::{AUTO_LOAD_LIMIT, App, BrowseLevel, Focus};
-use crate::table::{block, body_style, highlight, render_table, search_title, text_col};
+use crate::table::{render_table, search_title, text_col};
 use marple_db::{CurrentWorkspace, StorageQuota};
 use ratatui::Frame;
 use ratatui::layout::{Alignment, Constraint, Direction, Layout, Rect};
-use ratatui::style::{Color, Modifier, Style};
+use ratatui::style::{Modifier, Style};
 use ratatui::text::{Line, Span, Text};
 use ratatui::widgets::{Cell, List, ListItem, ListState, Paragraph, Row, Wrap};
 
@@ -67,9 +68,7 @@ fn draw_breadcrumb(frame: &mut Frame, app: &App, area: Rect) {
     frame.render_widget(
         Paragraph::new(Line::from(vec![Span::styled(
             app.breadcrumb_path(),
-            Style::default()
-                .fg(Color::Cyan)
-                .add_modifier(Modifier::BOLD),
+            accent_bold(),
         )])),
         area,
     );
@@ -419,13 +418,7 @@ fn draw_workspace(frame: &mut Frame, app: &App, area: Rect) {
     };
     frame.render_widget(
         Paragraph::new(vec![
-            kv_styled(
-                "name",
-                name,
-                Style::default()
-                    .fg(Color::Cyan)
-                    .add_modifier(Modifier::BOLD),
-            ),
+            kv_styled("name", name, accent_bold()),
             kv("id", slug),
             kv("host", host_from_url(&app.url)),
             kv("streams", app.streams.len()),
@@ -488,10 +481,7 @@ fn metric_cols(area: Rect) -> [Rect; 3] {
 
 fn draw_license_row(frame: &mut Frame, area: Rect, workspace: Option<&CurrentWorkspace>) {
     let [label, middle, value] = metric_cols(area);
-    frame.render_widget(
-        Paragraph::new("license").style(Style::default().fg(Color::DarkGray)),
-        label,
-    );
+    frame.render_widget(Paragraph::new("license").style(body_style()), label);
     let Some(license) = workspace.and_then(|workspace| workspace.license.as_ref()) else {
         frame.render_widget(Paragraph::new("—").style(body_style()), middle);
         return;
@@ -523,10 +513,7 @@ fn draw_usage_row(
     quota: Option<StorageQuota>,
 ) {
     let [label, middle, value] = metric_cols(area);
-    frame.render_widget(
-        Paragraph::new(name).style(Style::default().fg(Color::DarkGray)),
-        label,
-    );
+    frame.render_widget(Paragraph::new(name).style(body_style()), label);
     frame.render_widget(Paragraph::new(usage_bar(used, quota, middle.width)), middle);
     frame.render_widget(
         Paragraph::new(format_usage(used, quota))
@@ -572,10 +559,7 @@ fn draw_help(frame: &mut Frame, app: &App, area: Rect) {
             "tab list|table  j/k  S-↓/↑ page  gg/G  / filter  → open  i info  ← back  v env ({env})  q quit"
         )
     };
-    frame.render_widget(
-        Paragraph::new(help).style(Style::default().fg(Color::DarkGray)),
-        area,
-    );
+    frame.render_widget(Paragraph::new(help).style(body_style()), area);
 }
 
 fn draw_file_picker(frame: &mut Frame, picker: &FilePicker) {
@@ -604,10 +588,7 @@ fn draw_file_picker(frame: &mut Frame, picker: &FilePicker) {
 
     let mut index = 0;
     if !picker.recents.is_empty() {
-        frame.render_widget(
-            Paragraph::new("recent").style(Style::default().fg(Color::DarkGray)),
-            chunks[index],
-        );
+        frame.render_widget(Paragraph::new("recent").style(body_style()), chunks[index]);
         index += 1;
         let items: Vec<ListItem> = picker
             .recents
@@ -615,8 +596,8 @@ fn draw_file_picker(frame: &mut Frame, picker: &FilePicker) {
             .map(|entry| {
                 let workspace = entry.workspace.as_deref().unwrap_or("—");
                 ListItem::new(Line::from(vec![
-                    Span::styled(format!("{workspace:<22}"), Style::default().fg(Color::Cyan)),
-                    Span::styled(entry.name.clone(), Style::default().fg(Color::DarkGray)),
+                    Span::styled(format!("{workspace:<22}"), accent()),
+                    Span::styled(entry.name.clone(), body_style()),
                 ]))
             })
             .collect();
@@ -628,16 +609,14 @@ fn draw_file_picker(frame: &mut Frame, picker: &FilePicker) {
         frame.render_stateful_widget(list, chunks[index], &mut state);
         index += 1;
         frame.render_widget(
-            Paragraph::new("─".repeat(chunks[index].width as usize))
-                .style(Style::default().fg(Color::DarkGray)),
+            Paragraph::new("─".repeat(chunks[index].width as usize)).style(body_style()),
             chunks[index],
         );
         index += 1;
     }
 
     frame.render_widget(
-        Paragraph::new(picker.dir.display().to_string())
-            .style(Style::default().fg(Color::DarkGray)),
+        Paragraph::new(picker.dir.display().to_string()).style(body_style()),
         chunks[index],
     );
     index += 1;
@@ -665,11 +644,7 @@ fn draw_file_picker(frame: &mut Frame, picker: &FilePicker) {
     index += 1;
     if picker.editing {
         frame.render_widget(
-            Paragraph::new(format!("path  {}", picker.input)).style(
-                Style::default()
-                    .fg(Color::Cyan)
-                    .add_modifier(Modifier::BOLD),
-            ),
+            Paragraph::new(format!("path  {}", picker.input)).style(accent_bold()),
             chunks[index],
         );
     }
