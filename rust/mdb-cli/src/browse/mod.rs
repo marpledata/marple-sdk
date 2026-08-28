@@ -189,6 +189,7 @@ enum Message {
     Loaded(u64, PendingLoad, Box<Result<LoadResult, String>>),
     DebugLoaded(u64, i64, Result<Vec<String>, String>),
     Upload(Box<upload::UploadEvent>),
+    Statuses(u64, Box<upload::StatusPollResult>),
     Download(Result<(), String>),
     Batch(batch::BatchEvent),
     Tick,
@@ -310,14 +311,14 @@ async fn event_loop(
         tokio::select! {
             biased;
             Some(message) = events.recv() => {
-                if apply_message(app, message).await {
+                if apply_message(app, message) {
                     break;
                 }
             }
             event = input.next() => {
                 match event {
                     Some(Ok(event)) => {
-                        if apply_message(app, Message::Input(event)).await {
+                        if apply_message(app, Message::Input(event)) {
                             break;
                         }
                     }
@@ -326,14 +327,14 @@ async fn event_loop(
                 }
             }
             _ = tokio::time::sleep(SPINNER_TICK), if app.needs_tick() => {
-                apply_message(app, Message::Tick).await;
+                apply_message(app, Message::Tick);
             }
         }
     }
     Ok(())
 }
 
-async fn apply_message(app: &mut App, message: Message) -> bool {
+fn apply_message(app: &mut App, message: Message) -> bool {
     match message {
         Message::Input(Event::Key(key))
             if matches!(key.kind, KeyEventKind::Press | KeyEventKind::Repeat) =>
@@ -353,6 +354,10 @@ async fn apply_message(app: &mut App, message: Message) -> bool {
             app.apply_upload_event(*event);
             false
         }
+        Message::Statuses(poll_gen, result) => {
+            app.apply_status_poll(poll_gen, *result);
+            false
+        }
         Message::Download(result) => {
             app.apply_download_result(result);
             false
@@ -363,7 +368,7 @@ async fn apply_message(app: &mut App, message: Message) -> bool {
         }
         Message::Tick => {
             app.load_tick = app.load_tick.wrapping_add(1);
-            app.on_upload_tick().await;
+            app.on_upload_tick();
             app.on_download_tick();
             app.on_batch_tick();
             false

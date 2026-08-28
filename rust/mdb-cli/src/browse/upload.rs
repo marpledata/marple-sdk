@@ -3,7 +3,8 @@ use super::{App, BrowseLevel, Focus, Pane};
 use crate::table::{Visible, window_indices};
 use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
 use marple_db::{
-    Dataset, DatasetStatus, ImportStatus, Metadata, ProgressReporter, PushFileOptions, StreamType,
+    Dataset, DatasetStatus, ImportStatus, MarpleDB, Metadata, ProgressReporter, PushFileOptions,
+    StreamType,
 };
 use serde_json::Value;
 use std::collections::{HashMap, HashSet, VecDeque};
@@ -30,6 +31,8 @@ pub(super) struct UploadState {
     running: Option<RunningUpload>,
     watch: Vec<Watch>,
     last_poll: Option<Instant>,
+    poll_gen: u64,
+    poll_pending: bool,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -81,10 +84,18 @@ pub(super) enum UploadEvent {
     Finished(Result<Dataset, String>),
 }
 
+pub(super) struct StatusPollResult {
+    batches: Vec<(i64, Result<Vec<DatasetStatus>, String>)>,
+    hydrated: Vec<Dataset>,
+}
+
 impl UploadState {
     pub(super) fn clear(&mut self) {
         self.watch.clear();
         self.queue.clear();
+        self.poll_pending = false;
+        self.poll_gen = self.poll_gen.wrapping_add(1);
+        self.last_poll = None;
     }
 
     pub(super) fn needs_tick(&self) -> bool {
@@ -184,10 +195,10 @@ impl App {
         self.upload.form.as_ref().is_some_and(UploadForm::typing)
     }
 
-    pub(super) async fn on_upload_tick(&mut self) {
+    pub(super) fn on_upload_tick(&mut self) {
         self.patch_upload_progress();
         self.start_next_upload();
-        self.poll_import_statuses().await;
+        self.maybe_poll_statuses();
     }
 
     pub(super) fn handle_upload_key(&mut self, key: KeyEvent) {
@@ -565,9 +576,8 @@ impl App {
         });
     }
 
-    async fn poll_import_statuses(&mut self) {
-        let by_stream = self.poll_targets();
-        if by_stream.is_empty() {
+    fn maybe_poll_statuses(&mut self) {
+        if self.upload.poll_pending {
             return;
         }
         if self
@@ -577,14 +587,21 @@ impl App {
         {
             return;
         }
-        self.upload.last_poll = Some(Instant::now());
-        let db = self.db.clone();
-        for (stream_id, ids) in by_stream {
-            match db.get_dataset_statuses(stream_id, &ids).await {
-                Ok(statuses) => self.apply_status_batch(stream_id, statuses).await,
-                Err(error) => self.status = error.to_string(),
-            }
+        let by_stream = self.poll_targets();
+        if by_stream.is_empty() {
+            return;
         }
+        self.upload.poll_gen = self.upload.poll_gen.wrapping_add(1);
+        let poll_gen = self.upload.poll_gen;
+        self.upload.poll_pending = true;
+        self.upload.last_poll = Some(Instant::now());
+        let hydrate_stream = self.loaded_stream_id();
+        let db = self.db.clone();
+        let tx = self.events.clone();
+        tokio::spawn(async move {
+            let result = fetch_status_poll(db, by_stream, hydrate_stream).await;
+            let _ = tx.send(super::Message::Statuses(poll_gen, Box::new(result)));
+        });
     }
 
     fn poll_targets(&self) -> HashMap<i64, Vec<i64>> {
@@ -613,23 +630,29 @@ impl App {
         inflight_in_window(self.datasets(), &visible, selected, VIEW_POLL)
     }
 
-    async fn apply_status_batch(&mut self, stream_id: i64, statuses: Vec<DatasetStatus>) {
-        let mut done = Vec::new();
-        for status in statuses {
-            self.patch_dataset_status(&status);
-            if !status.import_status.is_terminal() {
-                continue;
-            }
-            done.push(status.dataset_id);
-            if status.import_status.is_success()
-                && let Ok(dataset) = self.db.get_dataset(stream_id, status.dataset_id).await
-            {
-                self.upsert_dataset(dataset);
-            }
+    pub(super) fn apply_status_poll(&mut self, poll_gen: u64, result: StatusPollResult) {
+        if poll_gen != self.upload.poll_gen {
+            return;
         }
-        self.upload
-            .watch
-            .retain(|watch| !(watch.stream_id == stream_id && done.contains(&watch.dataset_id)));
+        self.upload.poll_pending = false;
+        for (stream_id, batch) in result.batches {
+            let Ok(statuses) = batch else {
+                continue;
+            };
+            let mut done = Vec::new();
+            for status in statuses {
+                self.patch_dataset_status(&status);
+                if status.import_status.is_terminal() {
+                    done.push(status.dataset_id);
+                }
+            }
+            self.upload.watch.retain(|watch| {
+                !(watch.stream_id == stream_id && done.contains(&watch.dataset_id))
+            });
+        }
+        for dataset in result.hydrated {
+            self.upsert_dataset(dataset);
+        }
     }
 
     fn patch_dataset_status(&mut self, status: &DatasetStatus) {
@@ -639,6 +662,33 @@ impl App {
             dataset.import_message = status.import_message.clone();
         });
     }
+}
+
+async fn fetch_status_poll(
+    db: MarpleDB,
+    by_stream: HashMap<i64, Vec<i64>>,
+    hydrate_stream: Option<i64>,
+) -> StatusPollResult {
+    let mut batches = Vec::new();
+    let mut hydrated = Vec::new();
+    for (stream_id, ids) in by_stream {
+        match db.get_dataset_statuses(stream_id, &ids).await {
+            Ok(statuses) => {
+                if Some(stream_id) == hydrate_stream {
+                    for status in &statuses {
+                        if status.import_status.is_success()
+                            && let Ok(dataset) = db.get_dataset(stream_id, status.dataset_id).await
+                        {
+                            hydrated.push(dataset);
+                        }
+                    }
+                }
+                batches.push((stream_id, Ok(statuses)));
+            }
+            Err(error) => batches.push((stream_id, Err(error.to_string()))),
+        }
+    }
+    StatusPollResult { batches, hydrated }
 }
 
 fn merge_poll_ids(
@@ -882,8 +932,8 @@ fn collect_files(path: &Path, extension: Option<&str>) -> Result<Vec<PathBuf>, S
 #[cfg(test)]
 mod tests {
     use super::{
-        FormFocus, UploadForm, collect_files, inflight_in_window, merge_poll_ids, parse_meta,
-        selected_summary,
+        FormFocus, UploadForm, UploadState, collect_files, inflight_in_window, merge_poll_ids,
+        parse_meta, selected_summary,
     };
     use crate::table::Visible;
     use marple_db::Dataset;
@@ -1046,5 +1096,19 @@ mod tests {
         stream_7.sort();
         assert_eq!(stream_7, vec![11, 13]);
         assert_eq!(merged.get(&8).map(Vec::as_slice), Some([12].as_slice()));
+    }
+
+    #[test]
+    fn clear_invalidates_in_flight_status_poll() {
+        let mut state = UploadState {
+            poll_gen: 3,
+            poll_pending: true,
+            ..Default::default()
+        };
+        state.watch_dataset(1, 2);
+        state.clear();
+        assert!(state.watch.is_empty());
+        assert!(!state.poll_pending);
+        assert_eq!(state.poll_gen, 4);
     }
 }

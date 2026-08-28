@@ -15,6 +15,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - A saved env file that fails to load now shows the error in the status line.
 - Browse upload and download Enter on `../` goes up a folder.
 - Browse polls import status for the painted dataset window (and this-session uploads), so `PROCESSING` keeps updating after switching workspace or opening a stream with in-flight imports.
+- Browse import-status polling no longer blocks keyboard input when the status endpoint is slow.
 - Browse debug view splits ingest log strings on newlines so multi-line messages scroll as separate rows.
 
 ### Changed
