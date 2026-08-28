@@ -1,13 +1,11 @@
 use super::picker::FilePicker;
-use super::{App, BrowseLevel, Focus, PAGE_SIZE, Pane};
-use crate::table::visible_span;
+use super::{App, Pane};
 use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
 use marple_db::{Dataset, ProgressReporter};
 use std::collections::{HashSet, VecDeque};
 use std::path::PathBuf;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicU64, Ordering};
-use std::sync::mpsc::{self, Receiver, TryRecvError};
 
 #[derive(Default)]
 pub(super) struct DownloadState {
@@ -34,7 +32,6 @@ struct RunningDownload {
     dataset_id: i64,
     bytes: Arc<AtomicU64>,
     total: u64,
-    rx: Receiver<Result<(), String>>,
 }
 
 impl DownloadState {
@@ -101,74 +98,6 @@ pub(super) fn dataset_count_label(n: usize) -> String {
 }
 
 impl App {
-    pub(super) fn is_dataset_checked(&self, dataset_id: i64) -> bool {
-        self.selected_datasets.contains(&dataset_id)
-    }
-
-    pub(super) fn dataset_table_focused(&self) -> bool {
-        self.browse_level == BrowseLevel::Streams && self.focus == Focus::Table
-    }
-
-    pub(super) fn toggle_dataset_selection(&mut self) {
-        if !self.dataset_table_focused() {
-            return;
-        }
-        let Some(id) = self.selected_dataset().map(|dataset| dataset.id) else {
-            return;
-        };
-        self.selection_anchor = self
-            .loaded_datasets
-            .as_ref()
-            .and_then(|loaded| loaded.selected_index());
-        if !self.selected_datasets.remove(&id) {
-            self.selected_datasets.insert(id);
-        }
-    }
-
-    pub(super) fn select_dataset_range(&mut self) {
-        if !self.dataset_table_focused() {
-            return;
-        }
-        let Some(current) = self
-            .loaded_datasets
-            .as_ref()
-            .and_then(|loaded| loaded.selected_index())
-        else {
-            return;
-        };
-        let visible = self.dataset_indices(true);
-        for index in visible_span(&visible, self.selection_anchor, current) {
-            if let Some(id) = self.datasets().get(index).map(|dataset| dataset.id) {
-                self.selected_datasets.insert(id);
-            }
-        }
-        if self.selection_anchor.is_none() {
-            self.selection_anchor = Some(current);
-        }
-    }
-
-    pub(super) fn select_all_datasets(&mut self) {
-        if !self.dataset_table_focused() {
-            return;
-        }
-        let visible = self.dataset_indices(true);
-        let ids: Vec<i64> = (0..visible.len())
-            .filter_map(|pos| visible.get(pos))
-            .map(|index| self.datasets()[index].id)
-            .collect();
-        if ids.is_empty() {
-            return;
-        }
-        let all_checked = ids.iter().all(|id| self.selected_datasets.contains(id));
-        if all_checked {
-            for id in ids {
-                self.selected_datasets.remove(&id);
-            }
-        } else {
-            self.selected_datasets.extend(ids);
-        }
-    }
-
     pub(super) fn open_download(&mut self) {
         if self.download.picker.is_some() || self.upload.form.is_some() {
             return;
@@ -216,7 +145,6 @@ impl App {
     }
 
     pub(super) fn on_download_tick(&mut self) {
-        self.apply_download_events();
         self.start_next_download();
     }
 
@@ -295,16 +223,8 @@ impl App {
     }
 
     pub(super) fn apply_download_motion(&mut self, motion: super::Motion) {
-        let Some(picker) = self.download.picker.as_mut() else {
-            return;
-        };
-        let last = picker.len().saturating_sub(1);
-        match motion {
-            super::Motion::Delta(delta) => picker.move_sel(delta),
-            super::Motion::Page(pages) => picker.move_sel(pages * PAGE_SIZE),
-            super::Motion::First => picker.goto(0),
-            super::Motion::Last => picker.goto(last),
-            super::Motion::Goto(index) => picker.goto(index),
+        if let Some(picker) = self.download.picker.as_mut() {
+            picker.apply_motion(motion);
         }
     }
 
@@ -350,21 +270,6 @@ impl App {
         self.request_datasets(stream_id);
     }
 
-    pub(super) fn show_dataset_table(&mut self, stream_id: i64) {
-        if self.selected_stream().map(|stream| stream.id) != Some(stream_id)
-            && let Some(index) = self
-                .streams
-                .iter()
-                .position(|stream| stream.id == stream_id)
-        {
-            self.stream_state.select(Some(index));
-        }
-        if matches!(self.browse_level, BrowseLevel::Root | BrowseLevel::Datasets) {
-            self.browse_level = BrowseLevel::Streams;
-        }
-        self.focus = Focus::Table;
-    }
-
     fn queue_datasets(&mut self, datasets: Vec<Dataset>, dest: PathBuf) {
         let mut queued = 0usize;
         let mut skipped = 0usize;
@@ -404,7 +309,7 @@ impl App {
         };
         let total = queued.dataset.backup_size.unwrap_or(0);
         let bytes = Arc::new(AtomicU64::new(0));
-        let (tx, rx) = mpsc::channel();
+        let tx = self.events.clone();
         let db = self.db.clone();
         let dataset = queued.dataset.clone();
         let dest = queued.dest;
@@ -415,35 +320,21 @@ impl App {
                 .await
                 .map(|_| ())
                 .map_err(|error| error.to_string());
-            let _ = tx.send(result);
+            let _ = tx.send(super::Message::Download(result));
         });
         self.download.running = Some(RunningDownload {
             dataset_id: queued.dataset.id,
             bytes,
             total,
-            rx,
         });
     }
 
-    fn apply_download_events(&mut self) {
-        let result = {
-            let Some(running) = self.download.running.as_mut() else {
-                return;
-            };
-            match running.rx.try_recv() {
-                Ok(result) => result,
-                Err(TryRecvError::Empty) => return,
-                Err(TryRecvError::Disconnected) => {
-                    self.status = "download task ended unexpectedly".to_string();
-                    self.download.running = None;
-                    return;
-                }
-            }
-        };
+    pub(super) fn apply_download_result(&mut self, result: Result<(), String>) {
         self.download.running = None;
         if let Err(error) = result {
             self.status = error;
         }
+        self.start_next_download();
     }
 }
 
@@ -525,7 +416,6 @@ mod tests {
         DatasetTargets, DownloadState, FilePicker, Pane, as_dir, dataset_count_label,
         dataset_targets, destination_from, take_download_dest,
     };
-    use crate::table::{Visible, visible_span};
     use marple_db::Dataset;
     use serde_json::json;
     use std::collections::HashSet;
@@ -619,24 +509,6 @@ mod tests {
     }
 
     #[test]
-    fn range_select_covers_visible_rows_between_anchor_and_cursor() {
-        let rows = vec![
-            dataset(1, "a.csv", None),
-            dataset(2, "b.csv", None),
-            dataset(3, "c.csv", None),
-            dataset(4, "d.csv", None),
-        ];
-        let visible = Visible::filtered(4, vec![0, 2, 3]);
-        let mut checked = HashSet::new();
-        for index in visible_span(&visible, Some(0), 3) {
-            checked.insert(rows[index].id);
-        }
-        let mut ids: Vec<_> = checked.into_iter().collect();
-        ids.sort();
-        assert_eq!(ids, vec![1, 3, 4]);
-    }
-
-    #[test]
     fn overlay_tracks_queued_and_running_ids() {
         let mut state = DownloadState::default();
         assert!(!state.is_active(1));
@@ -651,7 +523,6 @@ mod tests {
             dataset_id: 1,
             bytes: Arc::new(AtomicU64::new(40)),
             total: 100,
-            rx: std::sync::mpsc::channel().1,
         });
         state.queue.clear();
         assert!(state.is_active(1));

@@ -20,13 +20,13 @@ pub(crate) fn accent_bold() -> Style {
 pub(crate) fn highlight() -> Style {
     Style::default()
         .fg(Color::Black)
-        .bg(Color::Blue)
+        .bg(Color::LightBlue)
         .add_modifier(Modifier::BOLD)
 }
 
 /// Unfocused row: white on blue — both ends are painted, so neither theme washes out.
 pub(crate) fn idle_highlight() -> Style {
-    Style::default().fg(Color::Black).bg(Color::Gray)
+    Style::default().fg(Color::White).bg(Color::Blue)
 }
 
 pub(crate) fn block(title: &str, focused: bool) -> Block<'_> {

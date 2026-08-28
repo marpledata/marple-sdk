@@ -11,7 +11,7 @@ the Rust SDK crate `marple-db`.
   `mdb browse`. Session (env file, recents, last upload folder) is saved in
   `$XDG_CONFIG_HOME/mdb/browse.toml`. Key handling and vim motion live in
   `input.rs`. Opening a dataset cycles right-pane views with `→` (info, debug
-  messages, signals); `←` returns to the dataset list. Debug logs are fetched
+  messages, signals) and focuses that pane; `←` returns to the dataset list. Debug logs are fetched
   with `MarpleDB::get_debug_messages` off the main `PendingLoad` slot. The
   env-file modal lives in `picker.rs`. Upload from a stream
   (`u`) lives in `upload.rs`. Download of original files (`d`) lives in

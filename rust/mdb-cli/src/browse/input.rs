@@ -2,8 +2,7 @@ use super::picker::FilePicker;
 use super::upload::FormFocus;
 use super::{App, BrowseLevel, Motion, PAGE_SIZE, cycle_focus};
 use crate::table::{SearchAction, handle_search_key};
-use crossterm::event::{self, Event, KeyCode, KeyEvent, KeyEventKind, KeyModifiers};
-use std::time::Duration;
+use crossterm::event::{KeyCode, KeyEvent, KeyEventKind, KeyModifiers};
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(super) enum InputMode {
@@ -141,68 +140,65 @@ enum MotionRead {
     None,
 }
 
-pub(super) async fn handle_key(app: &mut App, mut key: KeyEvent) -> bool {
-    loop {
-        if matches!(key.code, KeyCode::Esc) && app.motion.pending() {
-            app.motion.clear();
-            return false;
+pub(super) fn handle_key(app: &mut App, key: KeyEvent) -> bool {
+    if key.kind == KeyEventKind::Repeat {
+        if let MotionRead::Act(motion @ (Motion::Delta(_) | Motion::Page(_))) =
+            read_motion(&mut MotionState::default(), key)
+        {
+            apply_motion(app, motion);
         }
-        match app.input_mode() {
-            InputMode::Env { editing: true } => {
-                handle_env_input(app, key).await;
-                return false;
+        return false;
+    }
+    if matches!(key.code, KeyCode::Esc) && app.motion.pending() {
+        app.motion.clear();
+        return false;
+    }
+    match app.input_mode() {
+        InputMode::Env { editing: true } => {
+            handle_env_input(app, key);
+            false
+        }
+        InputMode::Upload { editing: true, .. } => {
+            app.handle_upload_input(key);
+            false
+        }
+        InputMode::Download { editing: true } => {
+            app.handle_download_input(key);
+            false
+        }
+        InputMode::Search => {
+            if app.debug.search.editing {
+                handle_search_key(&mut app.debug.search, key);
+                app.debug.scroll = 0;
+            } else if handle_search_key(&mut app.search, key) != SearchAction::Ignored {
+                app.snap_search();
             }
-            InputMode::Upload { editing: true, .. } => {
-                app.handle_upload_input(key);
-                return false;
-            }
-            InputMode::Download { editing: true } => {
-                app.handle_download_input(key);
-                return false;
-            }
-            InputMode::Search => {
-                if app.debug.search.editing {
-                    handle_search_key(&mut app.debug.search, key);
-                    app.debug.scroll = 0;
-                } else if handle_search_key(&mut app.search, key) != SearchAction::Ignored {
-                    app.snap_search();
+            false
+        }
+        mode => {
+            match read_motion(&mut app.motion, key) {
+                MotionRead::Pending => return false,
+                MotionRead::Act(motion) => {
+                    apply_motion(app, motion);
+                    return false;
                 }
-                return false;
+                MotionRead::None => {}
             }
-            mode => {
-                if !matches!(mode, InputMode::Upload { editing: true, .. }) {
-                    match read_motion(&mut app.motion, key) {
-                        MotionRead::Pending => return false,
-                        MotionRead::Act(motion) => {
-                            let (motion, leftover) = coalesce_motion(motion);
-                            apply_motion(app, motion);
-                            match leftover {
-                                Some(next) => {
-                                    key = next;
-                                    continue;
-                                }
-                                None => return false,
-                            }
-                        }
-                        MotionRead::None => {}
-                    }
+            match mode {
+                InputMode::Env { .. } => {
+                    handle_env_key(app, key);
+                    false
                 }
-                return match mode {
-                    InputMode::Env { .. } => {
-                        handle_env_key(app, key).await;
-                        false
-                    }
-                    InputMode::Upload { .. } => {
-                        app.handle_upload_key(key);
-                        false
-                    }
-                    InputMode::Download { .. } => {
-                        app.handle_download_key(key);
-                        false
-                    }
-                    InputMode::Info | InputMode::Browse => handle_browse_key(app, key),
-                    InputMode::Search => unreachable!(),
-                };
+                InputMode::Upload { .. } => {
+                    app.handle_upload_key(key);
+                    false
+                }
+                InputMode::Download { .. } => {
+                    app.handle_download_key(key);
+                    false
+                }
+                InputMode::Info | InputMode::Browse => handle_browse_key(app, key),
+                InputMode::Search => unreachable!(),
             }
         }
     }
@@ -260,7 +256,7 @@ fn handle_browse_key(app: &mut App, key: KeyEvent) -> bool {
     false
 }
 
-async fn handle_env_key(app: &mut App, key: KeyEvent) {
+fn handle_env_key(app: &mut App, key: KeyEvent) {
     match key.code {
         KeyCode::Esc | KeyCode::Char('q') => app.env_picker = None,
         KeyCode::Enter => {
@@ -287,7 +283,7 @@ async fn handle_env_key(app: &mut App, key: KeyEvent) {
     }
 }
 
-async fn handle_env_input(app: &mut App, key: KeyEvent) {
+fn handle_env_input(app: &mut App, key: KeyEvent) {
     match key.code {
         KeyCode::Enter => {
             let result = app
@@ -369,40 +365,6 @@ fn read_motion(state: &mut MotionState, key: KeyEvent) -> MotionRead {
     MotionRead::Act(motion)
 }
 
-fn arrow_delta(key: KeyEvent) -> Option<i32> {
-    if !matches!(key.kind, KeyEventKind::Press | KeyEventKind::Repeat) {
-        return None;
-    }
-    match key.code {
-        KeyCode::Down => Some(1),
-        KeyCode::Up => Some(-1),
-        _ => None,
-    }
-}
-
-fn coalesce_motion(motion: Motion) -> (Motion, Option<KeyEvent>) {
-    let Motion::Delta(mut delta) = motion else {
-        return (motion, None);
-    };
-    let leftover = drain_arrow_delta(&mut delta);
-    (Motion::Delta(delta), leftover)
-}
-
-fn drain_arrow_delta(delta: &mut i32) -> Option<KeyEvent> {
-    while event::poll(Duration::ZERO).ok()? {
-        match event::read() {
-            Ok(Event::Key(key)) => match arrow_delta(key) {
-                Some(step) => *delta += step,
-                None if key.kind != KeyEventKind::Press => {}
-                None => return Some(key),
-            },
-            Ok(_) => {}
-            Err(_) => break,
-        }
-    }
-    None
-}
-
 fn apply_motion(app: &mut App, motion: Motion) {
     match app.input_mode() {
         InputMode::Env { .. } => apply_env_motion(app, motion),
@@ -415,16 +377,8 @@ fn apply_motion(app: &mut App, motion: Motion) {
 }
 
 fn apply_env_motion(app: &mut App, motion: Motion) {
-    let Some(picker) = app.env_picker.as_mut() else {
-        return;
-    };
-    let last = picker.len().saturating_sub(1);
-    match motion {
-        Motion::Delta(delta) => picker.move_sel(delta),
-        Motion::Page(pages) => picker.move_sel(pages * PAGE_SIZE),
-        Motion::First => picker.goto(0),
-        Motion::Last => picker.goto(last),
-        Motion::Goto(index) => picker.goto(index),
+    if let Some(picker) = app.env_picker.as_mut() {
+        picker.apply_motion(motion);
     }
 }
 
@@ -454,7 +408,7 @@ fn apply_info_motion(app: &mut App, motion: Motion) {
 #[cfg(test)]
 mod tests {
     use super::{Motion, MotionRead, MotionState, read_motion};
-    use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
+    use crossterm::event::{KeyCode, KeyEvent, KeyEventKind, KeyModifiers};
 
     fn key(code: KeyCode) -> KeyEvent {
         KeyEvent::new(code, KeyModifiers::NONE)
@@ -551,5 +505,16 @@ mod tests {
             MotionRead::None
         ));
         assert!(!state.pending());
+    }
+
+    #[test]
+    fn key_repeat_of_arrows_is_still_delta() {
+        let mut state = MotionState::default();
+        let mut down = key(KeyCode::Down);
+        down.kind = KeyEventKind::Repeat;
+        assert!(matches!(
+            read_motion(&mut state, down),
+            MotionRead::Act(Motion::Delta(1))
+        ));
     }
 }

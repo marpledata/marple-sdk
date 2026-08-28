@@ -1,4 +1,5 @@
 use super::session::RecentEnv;
+use super::{Motion, PAGE_SIZE};
 use crate::table::wrap_index;
 use std::cell::Cell;
 use std::fs;
@@ -80,6 +81,17 @@ impl FilePicker {
         self.selected = index.min(self.len() - 1);
         if !self.editing {
             self.sync_input();
+        }
+    }
+
+    pub(crate) fn apply_motion(&mut self, motion: Motion) {
+        let last = self.len().saturating_sub(1);
+        match motion {
+            Motion::Delta(delta) => self.move_sel(delta),
+            Motion::Page(pages) => self.move_sel(pages * PAGE_SIZE),
+            Motion::First => self.goto(0),
+            Motion::Last => self.goto(last),
+            Motion::Goto(index) => self.goto(index),
         }
     }
 
@@ -493,5 +505,23 @@ mod tests {
         assert!(browsing.selected < browsing.recents.len());
         browsing.cycle_section();
         assert!(browsing.selected >= browsing.recents.len());
+    }
+
+    #[test]
+    fn apply_motion_moves_pages_and_jumps() {
+        let tmp = tempfile::tempdir().unwrap();
+        for name in ["a", "b", "c", "d", "e"] {
+            fs::write(tmp.path().join(name), "x").unwrap();
+        }
+        let mut picker = FilePicker::open(Some(tmp.path()), &[]);
+        let start = picker.selected;
+        picker.apply_motion(super::Motion::Delta(2));
+        assert_eq!(picker.selected, start + 2);
+        picker.apply_motion(super::Motion::First);
+        assert_eq!(picker.selected, 0);
+        picker.apply_motion(super::Motion::Last);
+        assert_eq!(picker.selected, picker.len() - 1);
+        picker.apply_motion(super::Motion::Goto(1));
+        assert_eq!(picker.selected, 1);
     }
 }

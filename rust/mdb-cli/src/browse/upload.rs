@@ -10,7 +10,6 @@ use std::collections::{HashMap, HashSet, VecDeque};
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use std::sync::atomic::{AtomicU64, Ordering};
-use std::sync::mpsc::{self, Receiver, TryRecvError};
 use std::time::{Duration, Instant};
 use walkdir::WalkDir;
 
@@ -70,7 +69,6 @@ struct RunningUpload {
     dataset_id: Option<i64>,
     bytes: Arc<AtomicU64>,
     total: u64,
-    rx: Receiver<UploadEvent>,
 }
 
 struct Watch {
@@ -78,7 +76,7 @@ struct Watch {
     dataset_id: i64,
 }
 
-enum UploadEvent {
+pub(super) enum UploadEvent {
     Created(Dataset),
     Finished(Result<Dataset, String>),
 }
@@ -187,7 +185,6 @@ impl App {
     }
 
     pub(super) async fn on_upload_tick(&mut self) {
-        self.apply_upload_events();
         self.patch_upload_progress();
         self.start_next_upload();
         self.poll_import_statuses().await;
@@ -350,14 +347,7 @@ impl App {
             return;
         };
         if form.focus.is_files() {
-            let last = form.picker.len().saturating_sub(1);
-            match motion {
-                super::Motion::Delta(delta) => form.picker.move_sel(delta),
-                super::Motion::Page(pages) => form.picker.move_sel(pages * super::PAGE_SIZE),
-                super::Motion::First => form.picker.goto(0),
-                super::Motion::Last => form.picker.goto(last),
-                super::Motion::Goto(index) => form.picker.goto(index),
-            }
+            form.picker.apply_motion(motion);
             return;
         }
         match motion {
@@ -472,7 +462,7 @@ impl App {
         self.start_next_upload();
     }
 
-    fn start_next_upload(&mut self) {
+    pub(super) fn start_next_upload(&mut self) {
         if self.upload.running.is_some() {
             return;
         }
@@ -488,7 +478,7 @@ impl App {
             .map(|metadata| metadata.len())
             .unwrap_or(0);
         let bytes = Arc::new(AtomicU64::new(0));
-        let (tx, rx) = mpsc::channel();
+        let tx = self.events.clone();
         let db = self.db.clone();
         let progress = Arc::new(AtomicProgress(Arc::clone(&bytes)));
         tokio::spawn(async move {
@@ -501,12 +491,18 @@ impl App {
                 .await
             {
                 Ok(session) => {
-                    let _ = tx.send(UploadEvent::Created(session.dataset().clone()));
+                    let _ = tx.send(super::Message::Upload(Box::new(UploadEvent::Created(
+                        session.dataset().clone(),
+                    ))));
                     let result = session.send().await.map_err(|error| error.to_string());
-                    let _ = tx.send(UploadEvent::Finished(result));
+                    let _ = tx.send(super::Message::Upload(Box::new(UploadEvent::Finished(
+                        result,
+                    ))));
                 }
                 Err(error) => {
-                    let _ = tx.send(UploadEvent::Finished(Err(error.to_string())));
+                    let _ = tx.send(super::Message::Upload(Box::new(UploadEvent::Finished(
+                        Err(error.to_string()),
+                    ))));
                 }
             }
         });
@@ -514,60 +510,43 @@ impl App {
             dataset_id: None,
             bytes,
             total,
-            rx,
         });
     }
 
-    fn apply_upload_events(&mut self) {
-        loop {
-            let event = {
-                let Some(running) = self.upload.running.as_mut() else {
-                    return;
-                };
-                match running.rx.try_recv() {
-                    Ok(event) => event,
-                    Err(TryRecvError::Empty) => return,
-                    Err(TryRecvError::Disconnected) => {
-                        self.status = "upload task ended unexpectedly".to_string();
-                        self.upload.running = None;
-                        return;
-                    }
+    pub(super) fn apply_upload_event(&mut self, event: UploadEvent) {
+        match event {
+            UploadEvent::Created(dataset) => {
+                if let Some(running) = self.upload.running.as_mut() {
+                    running.dataset_id = Some(dataset.id);
                 }
-            };
-            match event {
-                UploadEvent::Created(dataset) => {
-                    if let Some(running) = self.upload.running.as_mut() {
-                        running.dataset_id = Some(dataset.id);
-                    }
-                    self.upsert_dataset(dataset);
-                }
-                UploadEvent::Finished(Ok(dataset)) => {
-                    let stream_id = dataset.datastream_id;
-                    let dataset_id = dataset.id;
-                    self.upsert_dataset(dataset);
-                    self.upload.watch.push(Watch {
-                        stream_id,
-                        dataset_id,
+                self.upsert_dataset(dataset);
+            }
+            UploadEvent::Finished(Ok(dataset)) => {
+                let stream_id = dataset.datastream_id;
+                let dataset_id = dataset.id;
+                self.upsert_dataset(dataset);
+                self.upload.watch.push(Watch {
+                    stream_id,
+                    dataset_id,
+                });
+                self.upload.running = None;
+                self.start_next_upload();
+            }
+            UploadEvent::Finished(Err(error)) => {
+                if let Some(id) = self
+                    .upload
+                    .running
+                    .as_ref()
+                    .and_then(|running| running.dataset_id)
+                {
+                    self.patch_dataset(id, |dataset| {
+                        dataset.import_status = ImportStatus::Failed;
+                        dataset.import_message = Some(error.clone());
                     });
-                    self.upload.running = None;
-                    return;
                 }
-                UploadEvent::Finished(Err(error)) => {
-                    if let Some(id) = self
-                        .upload
-                        .running
-                        .as_ref()
-                        .and_then(|running| running.dataset_id)
-                    {
-                        self.patch_dataset(id, |dataset| {
-                            dataset.import_status = ImportStatus::Failed;
-                            dataset.import_message = Some(error.clone());
-                        });
-                    }
-                    self.status = error;
-                    self.upload.running = None;
-                    return;
-                }
+                self.status = error;
+                self.upload.running = None;
+                self.start_next_upload();
             }
         }
     }

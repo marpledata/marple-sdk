@@ -3,7 +3,6 @@ use super::{App, BrowseLevel, Focus};
 use crossterm::event::{KeyCode, KeyEvent};
 use marple_db::{Dataset, ImportStatus};
 use std::collections::VecDeque;
-use std::sync::mpsc::{self, Receiver, TryRecvError};
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 enum BatchKind {
@@ -27,10 +26,9 @@ struct BatchItem {
 struct RunningBatch {
     kind: BatchKind,
     dataset_id: i64,
-    rx: Receiver<BatchEvent>,
 }
 
-enum BatchEvent {
+pub(super) enum BatchEvent {
     Deleted(i64),
     Reingested(i64, i64, Option<Box<Dataset>>),
     Failed(String),
@@ -63,7 +61,6 @@ impl BatchState {
 
 impl App {
     pub(super) fn on_batch_tick(&mut self) {
-        self.apply_batch_events();
         self.start_next_batch();
     }
 
@@ -213,7 +210,7 @@ impl App {
         let Some(item) = self.batch.queue.pop_front() else {
             return;
         };
-        let (tx, rx) = mpsc::channel();
+        let tx = self.events.clone();
         let db = self.db.clone();
         let kind = item.kind;
         let stream_id = item.dataset.datastream_id;
@@ -236,30 +233,12 @@ impl App {
                     Err(error) => BatchEvent::Failed(error.to_string()),
                 },
             };
-            let _ = tx.send(event);
+            let _ = tx.send(super::Message::Batch(event));
         });
-        self.batch.running = Some(RunningBatch {
-            kind,
-            dataset_id,
-            rx,
-        });
+        self.batch.running = Some(RunningBatch { kind, dataset_id });
     }
 
-    fn apply_batch_events(&mut self) {
-        let event = {
-            let Some(running) = self.batch.running.as_mut() else {
-                return;
-            };
-            match running.rx.try_recv() {
-                Ok(event) => event,
-                Err(TryRecvError::Empty) => return,
-                Err(TryRecvError::Disconnected) => {
-                    self.status = "batch task ended unexpectedly".to_string();
-                    self.batch.running = None;
-                    return;
-                }
-            }
-        };
+    pub(super) fn apply_batch_event(&mut self, event: BatchEvent) {
         self.batch.running = None;
         match event {
             BatchEvent::Deleted(id) => self.remove_dataset(id),
@@ -275,6 +254,7 @@ impl App {
             }
             BatchEvent::Failed(error) => self.status = error,
         }
+        self.start_next_batch();
     }
 
     fn remove_dataset(&mut self, id: i64) {
@@ -342,11 +322,9 @@ mod tests {
         assert!(state.is_deleting(1));
         assert!(!state.is_deleting(2));
         state.queue.clear();
-        let rx = std::sync::mpsc::channel().1;
         state.running = Some(RunningBatch {
             kind: BatchKind::Delete,
             dataset_id: 3,
-            rx,
         });
         assert!(state.is_deleting(3));
         assert!(!state.is_deleting(1));
