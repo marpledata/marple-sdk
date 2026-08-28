@@ -14,13 +14,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Browse inspect (`i`) scrolls with `j`/`k` and `gg`/`G` instead of moving the table selection.
 - A saved env file that fails to load now shows the error in the status line.
 - Browse upload and download Enter on `../` goes up a folder.
+- Browse polls import status for the painted dataset window (and this-session uploads), so `PROCESSING` keeps updating after switching workspace or opening a stream with in-flight imports.
 
 ### Changed
 
 - Browse TUI inherits the terminal foreground instead of grey/white, so text stays readable in light terminals.
 - Browse no longer restores the last open stream; restarting `mdb browse` lands on the workspace stream list.
 - Browse stream and dataset details sit under the left list; the child table uses the full right column. Opening a dataset shows info, then `→` cycles debug messages and signals. `←` returns to the dataset list. Press `i` to expand inspect on a stream, or jump to dataset info.
-- Opening a dataset keeps focus on that dataset in the left list; back returns to the datasets table. Only the focused pane uses the cyan row cursor.
+- Opening a dataset keeps focus on that dataset in the left list; back returns to the datasets table. Only the focused pane uses the light-blue row cursor.
 - Dataset commands take `--stream` (or `MDB_STREAM`) instead of a leading stream name: `mdb dataset list --stream Metrics`, `mdb dataset get xyz.metrics --stream Metrics`.
 - Dataset `get`, `download`, `reingest`, `debug`, and `delete` accept a dataset path or numeric id.
 - Dataset status output uses SDK `ImportStatus` names, including `UNKNOWN`.

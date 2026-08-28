@@ -92,26 +92,26 @@ impl App {
                 "j/k  tab recent|files  enter open/use  ← parent  / path  esc close".to_string()
             }
             InputMode::Info if self.info_expanded => {
-                format!("j/k scroll  S-↓/↑ page  gg/G  i/esc close  v env ({env})  q quit")
+                format!("j/k scroll  S-↓/↑ page  gg/G  i/esc close  w env ({env})  q quit")
             }
             InputMode::Info => {
                 format!(
-                    "j/k scroll  S-↓/↑ page  gg/G  → view  ← back  / filter  i info  v env ({env})  q quit"
+                    "j/k scroll  S-↓/↑ page  gg/G  → view  ← back  / filter  i info  w env ({env})  q quit"
                 )
             }
             InputMode::Browse if self.browse_level == BrowseLevel::Root => {
                 format!(
-                    "j/k  S-↓/↑ page  gg/G  / filter  → open  i info  u upload  d download  x delete  r reingest  v env ({env})  q quit"
+                    "j/k  S-↓/↑ page  gg/G  / filter  → open  i info  u upload  d download  x delete  r reingest  w env ({env})  q quit"
                 )
             }
             InputMode::Browse if self.browse_level == BrowseLevel::Datasets => {
                 format!(
-                    "tab list|table  j/k  S-↓/↑ page  gg/G  / filter  → view  ← back  i info  u upload  d download  x delete  r reingest  v env ({env})  q quit"
+                    "tab list|table  j/k  S-↓/↑ page  gg/G  / filter  → view  ← back  i info  u upload  d download  x delete  r reingest  w env ({env})  q quit"
                 )
             }
             InputMode::Browse => {
                 format!(
-                    "tab list|table  j/k  S-↓/↑ page  gg/G  / filter  enter select  S-enter range  a all  → open  i info  u upload  d download  x delete  r reingest  ← back  v env ({env})  q quit"
+                    "tab list|table  j/k  S-↓/↑ page  gg/G  / filter  enter select  S-enter range  a all  → open  i info  u upload  d download  x delete  r reingest  ← back  w env ({env})  q quit"
                 )
             }
         }
@@ -248,7 +248,7 @@ fn handle_browse_key(app: &mut App, key: KeyEvent) -> bool {
         }
         KeyCode::Char('l') | KeyCode::Right | KeyCode::Enter => app.activate(),
         KeyCode::Char('i') => app.toggle_info(),
-        KeyCode::Char('v') => app.open_env(),
+        KeyCode::Char('w') => app.open_env(),
         KeyCode::Char('u') => app.open_upload(),
         KeyCode::Char('d') => app.open_download(),
         KeyCode::Char('x') => app.request_delete(),

@@ -248,6 +248,16 @@ fn table_view_rows(height: u16) -> usize {
     height.saturating_sub(3).max(1) as usize
 }
 
+pub(crate) fn window_indices(
+    visible: &Visible,
+    selected: Option<usize>,
+    view: usize,
+) -> impl Iterator<Item = usize> + '_ {
+    let pos = selected.and_then(|index| visible.position(index));
+    let (start, end) = visible_range(visible.len(), pos, view);
+    (start..end).filter_map(move |pos| visible.get(pos))
+}
+
 fn window_title(title: &str, start: usize, end: usize, len: usize) -> String {
     if len == 0 {
         title.to_string()
@@ -256,7 +266,7 @@ fn window_title(title: &str, start: usize, end: usize, len: usize) -> String {
     }
 }
 
-fn visible_range(len: usize, selected: Option<usize>, view: usize) -> (usize, usize) {
+pub(crate) fn visible_range(len: usize, selected: Option<usize>, view: usize) -> (usize, usize) {
     if len == 0 {
         return (0, 0);
     }
@@ -271,7 +281,8 @@ fn visible_range(len: usize, selected: Option<usize>, view: usize) -> (usize, us
 mod tests {
     use super::{
         TableSearch, Visible, goto_visible, handle_search_key, row_matches, search_title,
-        snap_visible, step_visible, visible_range, visible_span, window_title, wrap_index,
+        snap_visible, step_visible, visible_range, visible_span, window_indices, window_title,
+        wrap_index,
     };
     use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
 
@@ -379,6 +390,19 @@ mod tests {
         assert_eq!(visible_range(20, Some(0), 5), (0, 5));
         assert_eq!(visible_range(20, Some(19), 5), (15, 20));
         assert_eq!(visible_range(20, Some(10), 5), (8, 13));
+    }
+
+    #[test]
+    fn window_indices_maps_visible_positions_to_source_rows() {
+        let visible = Visible::filtered(10, vec![1, 3, 5, 7, 9]);
+        assert_eq!(
+            window_indices(&visible, Some(5), 3).collect::<Vec<_>>(),
+            vec![3, 5, 7]
+        );
+        assert_eq!(
+            window_indices(&Visible::All(5), Some(1), 3).collect::<Vec<_>>(),
+            vec![0, 1, 2]
+        );
     }
 
     #[test]

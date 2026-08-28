@@ -2,7 +2,8 @@ use ratatui::style::{Color, Modifier, Style};
 use ratatui::text::Span;
 use ratatui::widgets::{Block, Borders};
 
-/// Inherit the terminal foreground. Gray, DarkGray, White, and Dim vanish on light terminals.
+/// Inherit the terminal foreground. Gray, DarkGray, White, and Dim vanish on light
+/// terminals unless the background is also painted.
 pub(crate) fn body_style() -> Style {
     Style::default()
 }
@@ -15,17 +16,17 @@ pub(crate) fn accent_bold() -> Style {
     accent().add_modifier(Modifier::BOLD)
 }
 
-/// Blue row highlight paints both fg and bg so it does not depend on the terminal theme.
+/// Focused row: black on light blue reads on light and dark terminals.
 pub(crate) fn highlight() -> Style {
     Style::default()
-        .fg(Color::White)
+        .fg(Color::Black)
         .bg(Color::Blue)
         .add_modifier(Modifier::BOLD)
 }
 
-/// Unfocused row selection: painted background so it stays visible on light terminals.
+/// Unfocused row: white on blue — both ends are painted, so neither theme washes out.
 pub(crate) fn idle_highlight() -> Style {
-    Style::default().fg(Color::White).bg(Color::Gray)
+    Style::default().fg(Color::Black).bg(Color::Gray)
 }
 
 pub(crate) fn block(title: &str, focused: bool) -> Block<'_> {
@@ -44,9 +45,9 @@ mod tests {
     fn palette_inherits_terminal_foreground() {
         assert_eq!(body_style(), Style::default());
         assert_eq!(accent().fg, Some(Color::Blue));
-        assert_eq!(highlight().fg, Some(Color::White));
-        assert_eq!(highlight().bg, Some(Color::Blue));
+        assert_eq!(highlight().fg, Some(Color::Black));
+        assert_eq!(highlight().bg, Some(Color::LightBlue));
         assert_eq!(idle_highlight().fg, Some(Color::White));
-        assert_eq!(idle_highlight().bg, Some(Color::Gray));
+        assert_eq!(idle_highlight().bg, Some(Color::Blue));
     }
 }

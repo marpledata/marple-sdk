@@ -1,5 +1,6 @@
 use super::picker::FilePicker;
-use super::{App, BrowseLevel, Focus};
+use super::{App, BrowseLevel, Focus, Pane};
+use crate::table::{Visible, window_indices};
 use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
 use marple_db::{
     Dataset, DatasetStatus, ImportStatus, Metadata, ProgressReporter, PushFileOptions, StreamType,
@@ -14,6 +15,7 @@ use std::time::{Duration, Instant};
 use walkdir::WalkDir;
 
 const STATUS_POLL: Duration = Duration::from_millis(500);
+const VIEW_POLL: usize = 48;
 const FOOTER: [FormFocus; 5] = [
     FormFocus::Overwrite,
     FormFocus::SkipExisting,
@@ -585,7 +587,8 @@ impl App {
     }
 
     async fn poll_import_statuses(&mut self) {
-        if self.upload.watch.is_empty() {
+        let by_stream = self.poll_targets();
+        if by_stream.is_empty() {
             return;
         }
         if self
@@ -596,13 +599,6 @@ impl App {
             return;
         }
         self.upload.last_poll = Some(Instant::now());
-        let mut by_stream: HashMap<i64, Vec<i64>> = HashMap::new();
-        for watch in &self.upload.watch {
-            by_stream
-                .entry(watch.stream_id)
-                .or_default()
-                .push(watch.dataset_id);
-        }
         let db = self.db.clone();
         for (stream_id, ids) in by_stream {
             match db.get_dataset_statuses(stream_id, &ids).await {
@@ -610,6 +606,32 @@ impl App {
                 Err(error) => self.status = error.to_string(),
             }
         }
+    }
+
+    fn poll_targets(&self) -> HashMap<i64, Vec<i64>> {
+        merge_poll_ids(
+            self.upload
+                .watch
+                .iter()
+                .map(|watch| (watch.stream_id, watch.dataset_id)),
+            self.loaded_stream_id(),
+            &self.viewport_inflight(),
+        )
+    }
+
+    pub(super) fn viewport_inflight(&self) -> Vec<i64> {
+        if !matches!(
+            self.browse_level,
+            BrowseLevel::Streams | BrowseLevel::Datasets
+        ) {
+            return Vec::new();
+        }
+        let selected = self
+            .loaded_datasets
+            .as_ref()
+            .and_then(|loaded| loaded.selected_index());
+        let visible = self.dataset_indices(self.focused_pane() == Pane::Datasets);
+        inflight_in_window(self.datasets(), &visible, selected, VIEW_POLL)
     }
 
     async fn apply_status_batch(&mut self, stream_id: i64, statuses: Vec<DatasetStatus>) {
@@ -638,6 +660,41 @@ impl App {
             dataset.import_message = status.import_message.clone();
         });
     }
+}
+
+fn merge_poll_ids(
+    watches: impl IntoIterator<Item = (i64, i64)>,
+    stream_id: Option<i64>,
+    viewport: &[i64],
+) -> HashMap<i64, Vec<i64>> {
+    let mut by_stream: HashMap<i64, Vec<i64>> = HashMap::new();
+    let mut seen = HashSet::new();
+    for (stream_id, dataset_id) in watches {
+        if seen.insert(dataset_id) {
+            by_stream.entry(stream_id).or_default().push(dataset_id);
+        }
+    }
+    if let Some(stream_id) = stream_id {
+        for &dataset_id in viewport {
+            if seen.insert(dataset_id) {
+                by_stream.entry(stream_id).or_default().push(dataset_id);
+            }
+        }
+    }
+    by_stream
+}
+
+fn inflight_in_window(
+    datasets: &[Dataset],
+    visible: &Visible,
+    selected: Option<usize>,
+    view: usize,
+) -> Vec<i64> {
+    window_indices(visible, selected, view)
+        .filter_map(|index| datasets.get(index))
+        .filter(|dataset| !dataset.import_status.is_terminal())
+        .map(|dataset| dataset.id)
+        .collect()
 }
 
 impl UploadForm {
@@ -845,10 +902,25 @@ fn collect_files(path: &Path, extension: Option<&str>) -> Result<Vec<PathBuf>, S
 
 #[cfg(test)]
 mod tests {
-    use super::{FormFocus, UploadForm, collect_files, parse_meta, selected_summary};
+    use super::{
+        FormFocus, UploadForm, collect_files, inflight_in_window, merge_poll_ids, parse_meta,
+        selected_summary,
+    };
+    use crate::table::Visible;
+    use marple_db::Dataset;
     use serde_json::json;
     use std::collections::HashSet;
     use std::fs;
+
+    fn dataset(id: i64, status: &str) -> Dataset {
+        serde_json::from_value(json!({
+            "id": id,
+            "datastream_id": 7,
+            "path": format!("{id}.csv"),
+            "import_status": status
+        }))
+        .unwrap()
+    }
 
     #[test]
     fn collect_files_walks_a_folder_and_filters_extension() {
@@ -959,5 +1031,41 @@ mod tests {
         assert!(summary.contains("1 folder"));
         selected.clear();
         assert_eq!(selected_summary(&selected), "");
+    }
+
+    #[test]
+    fn inflight_in_window_skips_terminal_rows() {
+        let rows = vec![
+            dataset(1, "WAITING"),
+            dataset(2, "FINISHED"),
+            dataset(3, "POSTPROCESSING"),
+            dataset(4, "FAILED"),
+            dataset(5, "IMPORTING"),
+        ];
+        let ids = inflight_in_window(&rows, &Visible::All(5), Some(4), 3);
+        assert_eq!(ids, vec![3, 5]);
+    }
+
+    #[test]
+    fn inflight_in_window_follows_filtered_visible_rows() {
+        let rows = vec![
+            dataset(1, "WAITING"),
+            dataset(2, "FINISHED"),
+            dataset(3, "POSTPROCESSING"),
+            dataset(4, "IMPORTING"),
+            dataset(5, "WAITING"),
+        ];
+        let visible = Visible::filtered(5, vec![0, 2, 4]);
+        let ids = inflight_in_window(&rows, &visible, Some(4), 2);
+        assert_eq!(ids, vec![3, 5]);
+    }
+
+    #[test]
+    fn merge_poll_ids_unions_watch_and_viewport() {
+        let merged = merge_poll_ids([(7, 11), (8, 12)], Some(7), &[11, 13]);
+        let mut stream_7 = merged.get(&7).cloned().unwrap();
+        stream_7.sort();
+        assert_eq!(stream_7, vec![11, 13]);
+        assert_eq!(merged.get(&8).map(Vec::as_slice), Some([12].as_slice()));
     }
 }

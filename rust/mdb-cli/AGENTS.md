@@ -44,4 +44,5 @@ the Rust SDK crate `marple-db`.
   parse command responses reliably.
 - TUI palette lives in `src/browse/style.rs`. Body text inherits the terminal
   foreground; do not use Gray, DarkGray, White, or Dim (they vanish on light
-  terminals). Black only with a painted background (row highlight).
+  terminals). Row highlight paints both ends: black on LightBlue when focused,
+  white on Blue when idle.

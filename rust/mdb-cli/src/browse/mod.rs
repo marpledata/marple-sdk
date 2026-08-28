@@ -112,7 +112,7 @@ impl DebugState {
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
-enum Pane {
+pub(super) enum Pane {
     Streams,
     Datasets,
     Signals,
@@ -727,6 +727,7 @@ impl App {
             || self.upload.needs_tick()
             || self.download.needs_tick()
             || self.batch.needs_tick()
+            || !self.viewport_inflight().is_empty()
     }
 
     pub(super) fn loading_dots(&self) -> &'static str {
