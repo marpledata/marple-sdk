@@ -1,8 +1,8 @@
 use super::format::{
     clip_args, compact_count, count_cell, dataset_card, ellipsis, format_expiry, format_usage,
     host_from_url, kv, kv_styled, license_color, license_type, now_epoch, opt_bytes, opt_count,
-    opt_text, progress_cell, signal_kind, signal_source, stream_card, stream_kind, sum_bytes,
-    usage_bar,
+    opt_text, progress_cell, shows_progress, signal_kind, signal_source, stream_card, stream_kind,
+    sum_bytes, usage_bar,
 };
 use super::picker::FilePicker;
 use super::session::settings_path;
@@ -16,6 +16,8 @@ use ratatui::layout::{Alignment, Constraint, Direction, Layout, Rect};
 use ratatui::style::{Modifier, Style};
 use ratatui::text::{Line, Span, Text};
 use ratatui::widgets::{Cell, List, ListItem, ListState, Paragraph, Row, Wrap};
+use std::collections::HashSet;
+use std::path::PathBuf;
 
 const LEFT_PANE: [Constraint; 2] = [Constraint::Percentage(24), Constraint::Percentage(76)];
 const ID_COL: u16 = 6;
@@ -69,6 +71,7 @@ pub(super) fn draw(frame: &mut Frame, app: &mut App) {
             frame,
             picker,
             &format!("env file  (saved in {})", settings_path().display()),
+            None,
             None,
         );
     }
@@ -140,7 +143,7 @@ fn draw_list(frame: &mut Frame, app: &App, area: Rect) {
                 &indices,
                 app.dataset_state.selected(),
                 |index| {
-                    let dataset = &app.datasets[index];
+                    let dataset = &app.datasets()[index];
                     Row::new([
                         Cell::from(ellipsis(&dataset.path, path_width)),
                         count_cell(dataset.n_signals, "s"),
@@ -252,7 +255,7 @@ fn draw_table(frame: &mut Frame, app: &App, area: Rect) {
                 .map(|stream| format!("datasets  /{}", stream.name))
                 .unwrap_or_else(|| "datasets".to_string());
             let stream_id = stream.map(|stream| stream.id);
-            let loaded = stream_id.is_some() && app.loaded_stream_id == stream_id;
+            let loaded = stream_id.is_some() && app.loaded_stream_id() == stream_id;
             if !loaded_or_hint(
                 frame,
                 area,
@@ -263,7 +266,7 @@ fn draw_table(frame: &mut Frame, app: &App, area: Rect) {
                 app.loading_dots(),
                 stream.and_then(|stream| stream.n_datasets),
                 "datasets",
-                app.datasets.is_empty(),
+                app.datasets().is_empty(),
             ) {
                 return;
             }
@@ -302,7 +305,7 @@ fn draw_table(frame: &mut Frame, app: &App, area: Rect) {
                 &indices,
                 app.dataset_state.selected(),
                 |index| {
-                    let dataset = &app.datasets[index];
+                    let dataset = &app.datasets()[index];
                     Row::new(vec![
                         Cell::from(dataset.id.to_string()),
                         Cell::from(dataset.path.clone()),
@@ -311,12 +314,13 @@ fn draw_table(frame: &mut Frame, app: &App, area: Rect) {
                         Cell::from(opt_bytes(dataset.backup_size)),
                         Cell::from(opt_bytes(dataset.cold_bytes)),
                         Cell::from(opt_bytes(dataset.hot_bytes)),
-                        Cell::from(crate::format_import_status(dataset.import_status)),
+                        Cell::from(dataset_status_cell(app, dataset)),
                         progress_cell(
                             app.upload
                                 .byte_ratio(dataset.id)
                                 .or(dataset.import_progress),
-                            !dataset.import_status.is_terminal(),
+                            shows_progress(dataset.import_status)
+                                || app.upload.byte_ratio(dataset.id).is_some(),
                         ),
                     ])
                 },
@@ -325,7 +329,7 @@ fn draw_table(frame: &mut Frame, app: &App, area: Rect) {
         BrowseLevel::Datasets => {
             let dataset = app.selected_dataset();
             let dataset_id = dataset.map(|dataset| dataset.id);
-            let loaded = dataset_id.is_some() && app.signals_dataset_id == dataset_id;
+            let loaded = dataset_id.is_some() && app.signals_dataset_id() == dataset_id;
             let title = dataset
                 .map(|dataset| format!("signals  /{}", dataset.path))
                 .unwrap_or_else(|| "signals".to_string());
@@ -339,7 +343,7 @@ fn draw_table(frame: &mut Frame, app: &App, area: Rect) {
                 app.loading_dots(),
                 dataset.and_then(|dataset| dataset.n_signals),
                 "signals",
-                app.signals.is_empty(),
+                app.signals().is_empty(),
             ) {
                 return;
             }
@@ -376,7 +380,7 @@ fn draw_table(frame: &mut Frame, app: &App, area: Rect) {
                 &indices,
                 app.signal_state.selected(),
                 |index| {
-                    let signal = &app.signals[index];
+                    let signal = &app.signals()[index];
                     Row::new(vec![
                         Cell::from(signal_kind(signal)),
                         Cell::from(signal.id.to_string()),
@@ -571,11 +575,11 @@ fn draw_help(frame: &mut Frame, app: &App, area: Rect) {
         app.status.clone()
     } else if let Some(form) = &app.upload.form {
         if form.picker.editing {
-            "enter use file or folder  esc cancel".to_string()
+            "enter add to selection  esc cancel".to_string()
         } else if form.focus == FormFocus::Options {
             "tab files  h/l field  space toggle  enter upload  esc close".to_string()
         } else {
-            "tab options  j/k  enter file or folder  ← parent  / path  esc close".to_string()
+            "tab options  j/k  space select  enter upload  ← parent  / path  esc close".to_string()
         }
     } else if let Some(picker) = &app.env_picker {
         if picker.editing {
@@ -584,7 +588,7 @@ fn draw_help(frame: &mut Frame, app: &App, area: Rect) {
             "j/k  tab recent|files  enter open/use  ← parent  / path  esc close".to_string()
         }
     } else if app.info_expanded {
-        format!("j/k next  S-↓/↑ page  gg/G  i/esc close  v env ({env})  q quit")
+        format!("j/k scroll  S-↓/↑ page  gg/G  i/esc close  v env ({env})  q quit")
     } else if app.browse_level == BrowseLevel::Root {
         format!("j/k  S-↓/↑ page  gg/G  / filter  → open  i info  u upload  v env ({env})  q quit")
     } else {
@@ -595,12 +599,31 @@ fn draw_help(frame: &mut Frame, app: &App, area: Rect) {
     frame.render_widget(Paragraph::new(help).style(body_style()), area);
 }
 
+fn dataset_status_cell(app: &App, dataset: &marple_db::Dataset) -> String {
+    let status = dataset.import_status.as_str();
+    if app.upload.is_active(dataset.id) {
+        format!("{status} {}", app.loading_dots())
+    } else {
+        status.to_string()
+    }
+}
+
 fn draw_upload_picker(frame: &mut Frame, form: &UploadForm) {
+    let title = if form.selected.is_empty() {
+        format!("upload  /{}", form.stream_name)
+    } else {
+        format!(
+            "upload  /{}  ({} selected)",
+            form.stream_name,
+            form.selected.len()
+        )
+    };
     draw_file_picker(
         frame,
         &form.picker,
-        &format!("upload  /{}", form.stream_name),
+        &title,
         Some(upload_options_line(form)),
+        Some(&form.selected),
     );
 }
 
@@ -637,6 +660,7 @@ fn draw_file_picker(
     picker: &FilePicker,
     title: &str,
     header: Option<Line<'static>>,
+    picked: Option<&HashSet<PathBuf>>,
 ) {
     let area = centered(frame.area(), 80, 60);
     let bordered = block(title, true);
@@ -705,10 +729,18 @@ fn draw_file_picker(
         .entries
         .iter()
         .map(|entry| {
+            let mark =
+                if picked.is_some_and(|set| set.contains(&super::picker::path_key(&entry.path))) {
+                    "[x] "
+                } else if picked.is_some() && entry.name != ".." {
+                    "[ ] "
+                } else {
+                    ""
+                };
             let label = if entry.is_dir {
-                format!("{}/", entry.name)
+                format!("{mark}{}/", entry.name)
             } else {
-                entry.name.clone()
+                format!("{mark}{}", entry.name)
             };
             ListItem::new(label)
         })

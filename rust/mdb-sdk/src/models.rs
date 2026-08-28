@@ -473,13 +473,13 @@ impl ImportStatus {
             Self::Uploading => "UPLOADING",
             Self::Waiting => "WAITING",
             Self::Importing => "IMPORTING",
-            Self::Postprocessing => "POSTPROCESSING",
-            Self::PostprocessingFailed => "POSTPROCESSING_FAILED",
+            Self::Postprocessing => "PROCESSING",
+            Self::PostprocessingFailed => "FAILED (PROCESSING)",
             Self::Finished => "FINISHED",
             Self::Live => "LIVE",
-            Self::Failed => "FAILED",
+            Self::Failed => "FAILED (IMPORT)",
             Self::Cooling => "COOLING",
-            Self::CoolingFailed => "COOLING_FAILED",
+            Self::CoolingFailed => "FAILED (COOLING)",
             Self::Unknown => "UNKNOWN",
         }
     }

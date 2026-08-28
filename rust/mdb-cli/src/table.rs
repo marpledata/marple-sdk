@@ -95,14 +95,8 @@ pub(crate) fn row_matches(query: &str, fields: impl IntoIterator<Item = impl AsR
     })
 }
 
-pub(crate) fn filter_indices(
-    len: usize,
-    query: &str,
-    mut fields_at: impl FnMut(usize) -> Vec<String>,
-) -> Vec<usize> {
-    (0..len)
-        .filter(|&index| row_matches(query, fields_at(index)))
-        .collect()
+pub(crate) fn filter_indices(len: usize, mut keep: impl FnMut(usize) -> bool) -> Vec<usize> {
+    (0..len).filter(|&index| keep(index)).collect()
 }
 
 pub(crate) fn step_visible(
@@ -236,15 +230,11 @@ mod tests {
     fn filter_indices_keeps_matching_rows() {
         let rows = [["alpha"], ["beta traffic"], ["gamma"]];
         assert_eq!(
-            filter_indices(rows.len(), "tra", |index| {
-                rows[index].iter().map(|field| field.to_string()).collect()
-            }),
+            filter_indices(rows.len(), |index| row_matches("tra", rows[index])),
             vec![1]
         );
         assert_eq!(
-            filter_indices(rows.len(), "", |index| {
-                rows[index].iter().map(|field| field.to_string()).collect()
-            }),
+            filter_indices(rows.len(), |index| row_matches("", rows[index])),
             vec![0, 1, 2]
         );
     }

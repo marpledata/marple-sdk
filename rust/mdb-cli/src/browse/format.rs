@@ -1,5 +1,7 @@
 use super::style::body_style;
-use marple_db::{Dataset, LicenseType, Signal, StorageQuota, StorageStatus, Stream, StreamType};
+use marple_db::{
+    Dataset, ImportStatus, LicenseType, Signal, StorageQuota, StorageStatus, Stream, StreamType,
+};
 use ratatui::style::{Color, Style};
 use ratatui::text::{Line, Span};
 use ratatui::widgets::Cell;
@@ -102,7 +104,7 @@ pub(super) fn dataset_info(
     };
     let mut lines = vec![
         kv("id", dataset.id),
-        kv("status", crate::format_import_status(dataset.import_status)),
+        kv("status", dataset.import_status.as_str()),
         kv("signals", opt_count(dataset.n_signals)),
         kv("points", compact_count(dataset.n_datapoints)),
         kv("plugin", opt_text(dataset.plugin.as_deref())),
@@ -148,10 +150,10 @@ pub(super) fn dataset_card(
         );
     };
     let title = ellipsis(&format!("dataset  {}", dataset.path), width);
-    let status = crate::format_import_status(dataset.import_status);
+    let status = dataset.import_status.as_str();
     let status_line = match dataset
         .import_progress
-        .filter(|_| !dataset.import_status.is_terminal())
+        .filter(|_| shows_progress(dataset.import_status))
     {
         Some(_) => format!(
             "{status}  {}",
@@ -354,6 +356,13 @@ pub(super) fn progress_cell(value: Option<f64>, in_flight: bool) -> Cell<'static
     Cell::from(ratio_bar(normalize_progress(value), 8))
 }
 
+pub(super) fn shows_progress(status: ImportStatus) -> bool {
+    matches!(
+        status,
+        ImportStatus::Uploading | ImportStatus::Importing | ImportStatus::Postprocessing
+    )
+}
+
 fn normalize_progress(value: Option<f64>) -> Option<f64> {
     value.map(|value| {
         let ratio = if value > 1.0 { value / 100.0 } else { value };
@@ -551,10 +560,10 @@ fn dataset_points_archive(dataset: &Dataset) -> String {
 mod tests {
     use super::{
         ImportMix, bar_color, dataset_card, ellipsis, format_expiry, format_usage, host_from_url,
-        license_color, license_type, progress_cell, storage_status, stream_card, usage_bar,
-        usage_ratio,
+        license_color, license_type, progress_cell, shows_progress, storage_status, stream_card,
+        usage_bar, usage_ratio,
     };
-    use marple_db::{Dataset, LicenseType, StorageQuota, StorageStatus, Stream};
+    use marple_db::{Dataset, ImportStatus, LicenseType, StorageQuota, StorageStatus, Stream};
     use ratatui::style::Color;
     use ratatui::widgets::Cell;
     use serde_json::json;
@@ -680,6 +689,9 @@ mod tests {
         let cell = progress_cell(Some(0.5), true);
         assert_eq!(cell, Cell::from("████░░░░"));
         assert_eq!(progress_cell(Some(0.5), false), Cell::from("—"));
+        assert!(!shows_progress(ImportStatus::Waiting));
+        assert!(shows_progress(ImportStatus::Importing));
+        assert!(shows_progress(ImportStatus::Postprocessing));
     }
 
     #[test]

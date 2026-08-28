@@ -1,7 +1,7 @@
 use anyhow::Result;
 use clap::ValueEnum;
 use indicatif::{ProgressBar, ProgressStyle};
-use marple_db::{Dataset, ImportStatus, MarpleDB, ProgressReporter, Stream};
+use marple_db::{Dataset, MarpleDB, ProgressReporter, Stream};
 
 pub mod browse;
 pub(crate) mod table;
@@ -53,7 +53,7 @@ pub fn format_dataset_table_row(dataset: &Dataset) -> String {
     [
         dataset.id.to_string(),
         dataset.path.clone(),
-        format_import_status(dataset.import_status).to_string(),
+        dataset.import_status.as_str().to_string(),
         format_compact_count(dataset.n_datapoints),
         format_count(dataset.n_signals),
         format_bytes(dataset.cold_bytes),
@@ -73,7 +73,7 @@ pub fn format_dataset_queue_table_row(dataset: &Dataset) -> String {
     [
         dataset.id.to_string(),
         dataset.path.clone(),
-        format_import_status(dataset.import_status).to_string(),
+        dataset.import_status.as_str().to_string(),
         format_progress(dataset.import_progress),
         format_compact_count(dataset.n_datapoints),
         format_count(dataset.n_signals),
@@ -120,10 +120,6 @@ pub fn connect(url: &str, token: &str) -> Result<MarpleDB> {
         .token(token)
         .request_source(concat!("cli/rust:", env!("CARGO_PKG_VERSION")))
         .build()?)
-}
-
-pub(crate) fn format_import_status(status: ImportStatus) -> &'static str {
-    status.as_str()
 }
 
 fn format_count(value: Option<u64>) -> String {

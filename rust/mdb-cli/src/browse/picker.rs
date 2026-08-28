@@ -285,9 +285,12 @@ fn expand_path(input: &str) -> PathBuf {
     PathBuf::from(input)
 }
 
+pub(crate) fn path_key(path: &Path) -> PathBuf {
+    fs::canonicalize(path).unwrap_or_else(|_| path.to_path_buf())
+}
+
 fn same_path(left: &Path, right: &Path) -> bool {
-    let canon = |path: &Path| fs::canonicalize(path).unwrap_or_else(|_| path.to_path_buf());
-    canon(left) == canon(right)
+    path_key(left) == path_key(right)
 }
 
 #[cfg(test)]

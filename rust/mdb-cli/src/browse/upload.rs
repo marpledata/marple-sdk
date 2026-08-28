@@ -44,6 +44,7 @@ pub(super) struct UploadForm {
     pub option: OptionField,
     pub picker: FilePicker,
     pub stream_name: String,
+    pub selected: HashSet<PathBuf>,
     stream_id: i64,
 }
 
@@ -71,8 +72,35 @@ enum UploadEvent {
 }
 
 impl UploadState {
+    pub(super) fn clear(&mut self) {
+        self.watch.clear();
+        self.queue.clear();
+    }
+
     pub(super) fn needs_tick(&self) -> bool {
         self.running.is_some() || !self.queue.is_empty() || !self.watch.is_empty()
+    }
+
+    pub(super) fn is_active(&self, dataset_id: i64) -> bool {
+        self.running
+            .as_ref()
+            .is_some_and(|running| running.dataset_id == Some(dataset_id))
+            || self
+                .watch
+                .iter()
+                .any(|watch| watch.dataset_id == dataset_id)
+    }
+
+    pub(super) fn seed_watch(&mut self, stream_id: i64, datasets: &[Dataset]) {
+        self.watch.retain(|watch| watch.stream_id != stream_id);
+        for dataset in datasets {
+            if !dataset.import_status.is_terminal() {
+                self.watch.push(Watch {
+                    stream_id,
+                    dataset_id: dataset.id,
+                });
+            }
+        }
     }
 
     pub(super) fn byte_ratio(&self, dataset_id: i64) -> Option<f64> {
@@ -136,6 +164,9 @@ impl App {
     }
 
     pub(super) async fn on_upload_tick(&mut self) {
+        if self.upload.needs_tick() {
+            self.load_tick = self.load_tick.wrapping_add(1);
+        }
         self.apply_upload_events();
         self.patch_upload_progress();
         self.start_next_upload();
@@ -149,13 +180,21 @@ impl App {
                 return false;
             }
             KeyCode::Char('q')
+                if !self.upload.form.as_ref().is_some_and(|form| {
+                    form.focus == FormFocus::Options && form.option == OptionField::Extension
+                }) =>
+            {
+                self.upload.form = None;
+                return false;
+            }
+            KeyCode::Enter
                 if self
                     .upload
                     .form
                     .as_ref()
-                    .is_none_or(|form| form.option != OptionField::Extension) =>
+                    .is_some_and(|form| form.focus == FormFocus::Files) =>
             {
-                self.upload.form = None;
+                self.confirm_upload();
                 return false;
             }
             _ => {}
@@ -174,12 +213,8 @@ impl App {
                 };
             }
             KeyCode::Enter if form.focus == FormFocus::Options => form.toggle_option(),
-            KeyCode::Enter => {
-                if let Some(path) = form.picker.take_selected(true) {
-                    self.queue_upload_path(path);
-                }
-            }
             KeyCode::Char(' ') if form.focus == FormFocus::Options => form.toggle_option(),
+            KeyCode::Char(' ') if form.focus == FormFocus::Files => form.toggle_pick(),
             KeyCode::Char('/') if form.focus == FormFocus::Files => form.picker.start_editing(),
             KeyCode::Char('h') | KeyCode::Left if form.focus == FormFocus::Options => {
                 form.option = form.option.prev();
@@ -229,7 +264,11 @@ impl App {
                     .map(|form| form.picker.submit_typed(true))
                     .unwrap_or(Err("no picker".to_string()));
                 match result {
-                    Ok(Some(path)) => self.queue_upload_path(path),
+                    Ok(Some(path)) => {
+                        if let Some(form) = self.upload.form.as_mut() {
+                            form.selected.insert(super::picker::path_key(&path));
+                        }
+                    }
                     Ok(None) => {}
                     Err(error) => self.status = error,
                 }
@@ -274,27 +313,43 @@ impl App {
         }
     }
 
-    fn queue_upload_path(&mut self, path: PathBuf) {
-        let Some(form) = self.upload.form.take() else {
+    fn confirm_upload(&mut self) {
+        let Some(form) = self.upload.form.as_ref() else {
             return;
         };
-        let extension = form.extension.trim();
-        let extension = (!extension.is_empty()).then_some(extension);
-        let files = match collect_files(&path, extension) {
-            Ok(files) => files,
-            Err(error) => {
-                self.status = error;
-                self.upload.form = Some(form);
-                return;
-            }
-        };
-        if files.is_empty() {
-            self.status = "no files to upload".to_string();
-            self.upload.form = Some(form);
+        if form.selected.is_empty() {
+            self.status = "space to select, enter to upload".to_string();
             return;
         }
-        let existing: HashSet<String> = if form.skip_existing {
-            self.datasets
+        let paths: Vec<PathBuf> = form.selected.iter().cloned().collect();
+        self.queue_upload_paths(paths);
+    }
+
+    fn queue_upload_paths(&mut self, paths: Vec<PathBuf>) {
+        let Some(form) = self.upload.form.as_ref() else {
+            return;
+        };
+        let extension = form.extension.trim().to_string();
+        let extension = (!extension.is_empty()).then_some(extension.as_str());
+        let skip_existing = form.skip_existing;
+        let overwrite = form.overwrite;
+        let stream_id = form.stream_id;
+        let mut files = Vec::new();
+        for path in &paths {
+            match collect_files(path, extension) {
+                Ok(found) => files.extend(found),
+                Err(error) => {
+                    self.status = error;
+                    return;
+                }
+            }
+        }
+        if files.is_empty() {
+            self.status = "no files to upload".to_string();
+            return;
+        }
+        let existing: HashSet<String> = if skip_existing {
+            self.datasets()
                 .iter()
                 .map(|dataset| dataset.path.clone())
                 .collect()
@@ -307,13 +362,13 @@ impl App {
                 .file_name()
                 .map(|name| name.to_string_lossy().into_owned())
                 .unwrap_or_default();
-            if form.skip_existing && existing.contains(&name) {
+            if skip_existing && existing.contains(&name) {
                 continue;
             }
             self.upload.queue.push_back(QueuedFile {
-                stream_id: form.stream_id,
+                stream_id,
                 path: file,
-                overwrite: form.overwrite,
+                overwrite,
             });
             queued += 1;
         }
@@ -321,6 +376,7 @@ impl App {
             self.status = "all files already exist".to_string();
             return;
         }
+        self.upload.form = None;
         self.search.clear();
         self.status.clear();
         self.start_next_upload();
@@ -333,7 +389,7 @@ impl App {
         let Some(front) = self.upload.queue.front() else {
             return;
         };
-        if self.loaded_stream_id != Some(front.stream_id) {
+        if self.loaded_stream_id() != Some(front.stream_id) {
             self.request_datasets(front.stream_id);
             return;
         }
@@ -411,11 +467,11 @@ impl App {
                         .running
                         .as_ref()
                         .and_then(|running| running.dataset_id)
-                        && let Some(dataset) =
-                            self.datasets.iter_mut().find(|dataset| dataset.id == id)
                     {
-                        dataset.import_status = ImportStatus::Failed;
-                        dataset.import_message = Some(error.clone());
+                        self.patch_dataset(id, |dataset| {
+                            dataset.import_status = ImportStatus::Failed;
+                            dataset.import_message = Some(error.clone());
+                        });
                     }
                     self.status = error;
                     self.upload.running = None;
@@ -433,10 +489,10 @@ impl App {
             return;
         };
         let ratio = self.upload.byte_ratio(id);
-        if let Some(dataset) = self.datasets.iter_mut().find(|dataset| dataset.id == id) {
+        self.patch_dataset(id, |dataset| {
             dataset.import_status = ImportStatus::Uploading;
             dataset.import_progress = ratio;
-        }
+        });
     }
 
     async fn poll_import_statuses(&mut self) {
@@ -487,28 +543,11 @@ impl App {
     }
 
     fn patch_dataset_status(&mut self, status: &DatasetStatus) {
-        let Some(dataset) = self
-            .datasets
-            .iter_mut()
-            .find(|dataset| dataset.id == status.dataset_id)
-        else {
-            return;
-        };
-        dataset.import_status = status.import_status;
-        dataset.import_progress = status.import_progress;
-        dataset.import_message = status.import_message.clone();
-    }
-
-    fn upsert_dataset(&mut self, dataset: Dataset) {
-        if self.loaded_stream_id.is_some() && self.loaded_stream_id != Some(dataset.datastream_id) {
-            return;
-        }
-        if let Some(index) = self.datasets.iter().position(|row| row.id == dataset.id) {
-            self.datasets[index] = dataset;
-            return;
-        }
-        self.datasets.insert(0, dataset);
-        self.dataset_state.select(Some(0));
+        self.patch_dataset(status.dataset_id, |dataset| {
+            dataset.import_status = status.import_status;
+            dataset.import_progress = status.import_progress;
+            dataset.import_message = status.import_message.clone();
+        });
     }
 }
 
@@ -522,7 +561,21 @@ impl UploadForm {
             option: OptionField::Overwrite,
             picker: FilePicker::open(None, &[]),
             stream_name,
+            selected: HashSet::new(),
             stream_id,
+        }
+    }
+
+    fn toggle_pick(&mut self) {
+        let Some(entry) = self.picker.selected_entry() else {
+            return;
+        };
+        if entry.name == ".." {
+            return;
+        }
+        let key = super::picker::path_key(&entry.path);
+        if !self.selected.remove(&key) {
+            self.selected.insert(key);
         }
     }
 
@@ -591,7 +644,9 @@ fn collect_files(path: &Path, extension: Option<&str>) -> Result<Vec<PathBuf>, S
 
 #[cfg(test)]
 mod tests {
-    use super::collect_files;
+    use super::{UploadState, collect_files};
+    use marple_db::Dataset;
+    use serde_json::json;
     use std::fs;
 
     #[test]
@@ -608,5 +663,28 @@ mod tests {
                 .iter()
                 .all(|path| path.extension().and_then(|ext| ext.to_str()) == Some("csv"))
         );
+    }
+
+    #[test]
+    fn seed_watch_follows_non_terminal_datasets() {
+        let waiting: Dataset = serde_json::from_value(json!({
+            "id": 1,
+            "datastream_id": 7,
+            "path": "a.csv",
+            "import_status": "WAITING"
+        }))
+        .unwrap();
+        let finished: Dataset = serde_json::from_value(json!({
+            "id": 2,
+            "datastream_id": 7,
+            "path": "b.csv",
+            "import_status": "FINISHED"
+        }))
+        .unwrap();
+        let mut state = UploadState::default();
+        state.seed_watch(7, &[waiting, finished]);
+        assert!(state.is_active(1));
+        assert!(!state.is_active(2));
+        assert!(state.needs_tick());
     }
 }

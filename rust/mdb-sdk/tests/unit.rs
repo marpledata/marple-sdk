@@ -377,16 +377,20 @@ fn import_status_exposes_api_names_and_terminal_helpers() {
     assert_eq!(ImportStatus::Finished.to_string(), "FINISHED");
     assert!(ImportStatus::Finished.is_success());
     assert!(!ImportStatus::Finished.is_failure());
+    assert!(ImportStatus::Finished.is_terminal());
 
     assert!(ImportStatus::Live.is_success());
     assert!(ImportStatus::Failed.is_failure());
+    assert!(ImportStatus::Failed.is_terminal());
     assert!(ImportStatus::PostprocessingFailed.is_failure());
     assert!(ImportStatus::CoolingFailed.is_failure());
     assert!(!ImportStatus::Cooling.is_success());
     assert!(!ImportStatus::Cooling.is_failure());
+    assert!(!ImportStatus::Cooling.is_terminal());
     assert_eq!(ImportStatus::Unknown.as_str(), "UNKNOWN");
     assert!(!ImportStatus::Unknown.is_success());
     assert!(!ImportStatus::Unknown.is_failure());
+    assert!(!ImportStatus::Unknown.is_terminal());
 }
 
 #[test]
