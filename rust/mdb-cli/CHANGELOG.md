@@ -17,6 +17,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Browse polls import status for the painted dataset window (and this-session uploads), so `PROCESSING` keeps updating after switching workspace or opening a stream with in-flight imports.
 - Browse import-status polling no longer blocks keyboard input when the status endpoint is slow.
 - Browse debug view splits ingest log strings on newlines so multi-line messages scroll as separate rows.
+- Browse env-file picker is `w`; the status line and README previously said `v`.
 
 ### Changed
 
@@ -35,7 +36,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - `mdb stream delete`, `mdb dataset … delete`, `mdb dataset … reingest`, and `mdb dataset … debug`.
 - Optional `native-tls` Cargo feature for SChannel / Secure Transport / OpenSSL (the SDK default already uses rustls with OS certificate roots).
 
-- `mdb` and `mdb browse` open a stream / dataset / signal browser (bare `mdb` only when stdin and stdout are a terminal; otherwise help is printed). Press `v` for an env-file picker (folders, typed path, recent files labeled by workspace). Session is saved in `$XDG_CONFIG_HOME/mdb/browse.toml`. The workspace card shows license and usage.
+- `mdb` and `mdb browse` open a stream / dataset / signal browser (bare `mdb` only when stdin and stdout are a terminal; otherwise help is printed). Press `w` for an env-file picker (folders, typed path, recent files labeled by workspace). Session is saved in `$XDG_CONFIG_HOME/mdb/browse.toml`. The workspace card shows license and usage.
 - Browse `u` uploads files or folders into the selected file stream. Enter/space selects, Shift+Enter selects the range from the last Enter/space, `a` selects all in the current folder. Enter on `../` goes up a folder. The modal counts files vs folders, and has overwrite, skip-existing, and extension options. The dataset table shows upload then import progress until the dataset is ready. `POSTPROCESSING` is shown as `PROCESSING`.
 - Browse `d` downloads original files: enter/space select datasets, Shift+Enter selects the range from the last Enter/space, `a` selects all visible rows, `d` on a stream downloads the whole stream. A folder picker chooses the destination (Enter on `../` goes up); the dataset table shows a `DOWNLOADING` progress overlay.
 - Browse `x` deletes the selected datasets (enter confirms). Browse `r` re-queues them for ingest from the original file.

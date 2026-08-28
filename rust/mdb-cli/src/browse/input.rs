@@ -78,7 +78,7 @@ impl App {
                 "tab files  h/l field  enter toggle/edit  esc close".to_string()
             }
             InputMode::Upload { .. } => {
-                "tab footer  j/k  enter select  S-enter range  a all  → open  ← parent  / path  esc close"
+                "tab footer  j/k  enter/space select  S-enter range  a all  → open  ← parent  / path  esc close"
                     .to_string()
             }
             InputMode::Download { editing: true } => "enter download here  esc cancel".to_string(),
@@ -110,7 +110,7 @@ impl App {
             }
             InputMode::Browse => {
                 format!(
-                    "tab list|table  j/k  S-↓/↑ page  gg/G  / filter  enter select  S-enter range  a all  → open  i info  u upload  d download  x delete  r reingest  ← back  w env ({env})  q quit"
+                    "tab list|table  j/k  S-↓/↑ page  gg/G  / filter  enter/space select  S-enter range  a all  → open  i info  u upload  d download  x delete  r reingest  ← back  w env ({env})  q quit"
                 )
             }
         }

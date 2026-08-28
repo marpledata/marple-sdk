@@ -61,7 +61,26 @@ Exported shell variables take precedence over values in dotenv files, and explic
 - `mdb dataset delete <dataset> --stream <stream-name>` deletes a dataset.
 - `mdb datapool datasets [--pool POOL] [--queue] [--format short|long]` lists datapool datasets.
 - `mdb get`, `mdb post`, and `mdb delete` call raw API endpoints.
-- `mdb` (no subcommand) opens a stream / dataset / signal browser when stdin and stdout are a terminal; otherwise it prints help. `mdb browse` opens the same browser explicitly. It loads `./.env` from the current directory, or the path last saved in `$XDG_CONFIG_HOME/mdb/browse.toml` (typically `~/.config/mdb/browse.toml`). Pass `--env-file` to choose another file, or press `v` to browse local folders, type a path, or pick a recently used file (shown with its workspace name). The chosen file is saved for the next session. Press `u` on a file stream to upload files or folders: enter/space selects, Shift+Enter selects from the last enter/space to the cursor, `a` selects all in the folder, enter on `../` goes up, enter on the upload button starts the transfer (overwrite, skip existing, and an optional extension filter). Press enter/space to select datasets in the dataset table (Shift+Enter for the range from the last enter/space, `a` for all visible rows), then `d` to download original files, `x` to delete (enter confirms), or `r` to reingest. `d`/`x`/`r` on a stream apply to every dataset in it. Press `/` to filter the focused table. Stream and dataset details sit under the left list; the child table uses the full right column. Opening a dataset shows info and focuses that pane; `→` cycles to debug messages and then signals. `←` returns to the dataset list. Press `i` to expand inspect on a stream, or jump to dataset info; `j`/`k` then scroll the details. `/` on the debug view filters log lines.
+- `mdb` (no subcommand) opens a stream / dataset / signal browser when stdin and stdout are a terminal; otherwise it prints help. `mdb browse` opens the same browser explicitly.
+
+## Browse
+
+Session (env file, recents, last upload folder) is saved in `$XDG_CONFIG_HOME/mdb/browse.toml` (typically `~/.config/mdb/browse.toml`). Browse loads `./.env` from the current directory, or that saved path. Pass `--env-file` to choose another file.
+
+Stream and dataset details sit under the left list; the child table uses the full right column. Opening a dataset shows info and focuses that pane; `→` cycles debug messages and then signals. `←` returns to the dataset list.
+
+Keys (the footer repeats the current mode):
+
+- Move: `j`/`k`, Shift+↓/↑ page, `gg`/`G`, Tab list|table
+- Open / back: `→` (or `l`) opens or cycles the right pane; `←`, `h`, or Esc go back. Enter opens too, except on the dataset table (see select)
+- Filter: `/` on the focused table, or on debug lines when that view is focused. Enter keeps the filter, Esc cancels the edit, Esc again clears it
+- Inspect: `i` expands stream details, or jumps to dataset info; `j`/`k` then scroll
+- Select datasets (dataset table): Enter or space toggles the row, Shift+Enter selects the range from the last toggle, `a` toggles all visible rows
+- Actions: `u` upload, `d` download, `x` delete (Enter confirms), `r` reingest. `d`/`x`/`r` on a stream apply to every dataset in it
+- Env: `w` opens a folder picker (type a path, or pick a recent file labeled by workspace). The chosen file is saved for the next session
+- Quit: `q`
+
+Upload (`u` on a file stream): Enter/space selects, Shift+Enter selects the range from the last Enter/space, `a` selects all in the folder, Enter on `../` goes up, Enter on the upload button starts the transfer (overwrite, skip existing, optional extension filter). Download (`d`) uses the same folder navigation to pick a destination.
 
 ## Examples
 

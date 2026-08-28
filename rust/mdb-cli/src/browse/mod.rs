@@ -38,7 +38,7 @@ use upload::UploadState;
 
 pub(super) const AUTO_LOAD_LIMIT: u64 = 100;
 pub(super) const PAGE_SIZE: i32 = 10;
-const NOT_CONNECTED: &str = "not connected — pick an env file (v)";
+const NOT_CONNECTED: &str = "not connected — pick an env file (w)";
 const SPINNER: [&str; 3] = [".", "..", "..."];
 const SPINNER_TICK: std::time::Duration = std::time::Duration::from_millis(200);
 
