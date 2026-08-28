@@ -30,6 +30,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Dataset status output uses SDK `ImportStatus` names, including `UNKNOWN`.
 - Dataset downloads use `MarpleDB::download_original_with_progress` instead of the SDK storage client.
 - Browse `/` filter matches id, name/path, status, and plugin text instead of formatted table cells, and import totals are cached so large dataset lists stay responsive.
+- Browse dataset table: Enter opens the dataset (same as `→`). Space toggles a check. `v` starts a live visual range (Esc cancels); `Nv` checks N rows from the cursor. `A` clears checks. The upload picker uses the same space/`v`/`a`/`A` keys.
 
 ### Added
 
@@ -38,8 +39,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Optional `native-tls` Cargo feature for SChannel / Secure Transport / OpenSSL (the SDK default already uses rustls with OS certificate roots).
 
 - `mdb` and `mdb browse` open a stream / dataset / signal browser (bare `mdb` only when stdin and stdout are a terminal; otherwise help is printed). Press `w` for an env-file picker (folders, typed path, recent files labeled by workspace). Session is saved in `$XDG_CONFIG_HOME/mdb/browse.toml`. The workspace card shows license and usage.
-- Browse `u` uploads files or folders into the selected file stream. Enter/space selects, Shift+Enter selects the range from the last Enter/space, `a` selects all in the current folder. Enter on `../` goes up a folder. The modal counts files vs folders, and has overwrite, skip-existing, and extension options. The dataset table shows upload then import progress until the dataset is ready. `POSTPROCESSING` is shown as `PROCESSING`.
-- Browse `d` downloads original files: enter/space select datasets, Shift+Enter selects the range from the last Enter/space, `a` selects all visible rows, `d` on a stream downloads the whole stream. A folder picker chooses the destination (Enter on `../` goes up); the dataset table shows a `DOWNLOADING` progress overlay.
+- Browse `u` uploads files or folders into the selected file stream. Space toggles, `v` selects a live range, `a` selects all in the current folder. Enter on `../` goes up a folder. The modal counts files vs folders, and has overwrite, skip-existing, and extension options. The dataset table shows upload then import progress until the dataset is ready. `POSTPROCESSING` is shown as `PROCESSING`.
+- Browse `d` downloads original files: space toggles datasets, `v` selects a live range, `a` selects all visible rows, `d` on a stream downloads the whole stream. A folder picker chooses the destination (Enter on `../` goes up); the dataset table shows a `DOWNLOADING` progress overlay.
 - Browse `x` deletes the selected datasets (enter confirms). Browse `r` re-queues them for ingest from the original file.
 - Opening a dataset in browse shows general info and focuses that pane; `→` cycles through ingest debug messages and signals. `←` returns to the dataset list. `/` filters debug lines when that view is focused.
 - `/` filters the focused table (case-insensitive substring of id, name/path, status, and plugin). The `/` prompt is visible while editing; Enter keeps the filter, Esc cancels the edit, Esc again clears it. Long tables window the visible rows (`1–20 of 180`).

@@ -6,7 +6,7 @@ use super::format::{
 };
 use super::picker::FilePicker;
 use super::session::settings_path;
-use super::style::{accent, accent_bold, block, body_style, highlight};
+use super::style::{accent, accent_bold, block, body_style, highlight, idle_highlight};
 use super::upload::{FormFocus, UploadForm, selected_summary};
 use super::{AUTO_LOAD_LIMIT, App, BrowseLevel, DatasetView, Focus};
 use crate::table::{render_table, search_title, text_col};
@@ -80,12 +80,14 @@ pub(super) fn draw(frame: &mut Frame, app: &App) -> u16 {
             &app.download.title(),
             Some(vec![Line::from(app.download.footer())]),
             None,
+            None,
         );
     } else if let Some(picker) = &app.env_picker {
         draw_file_picker(
             frame,
             picker,
             &format!("env file  (saved in {})", settings_path().display()),
+            None,
             None,
             None,
         );
@@ -281,7 +283,7 @@ fn draw_table(frame: &mut Frame, app: &App, area: Rect) {
                 return;
             }
             let indices = app.dataset_indices(focused);
-            let title = selection_title(&title, app.selected_datasets.len());
+            let title = selection_title(&title, app.selected_datasets.len(), app.in_visual());
             let mut headers = vec![""];
             headers.extend(col_headers(DATASET_COLS, &DATASET_EXTRA));
             let mut widths = vec![Constraint::Length(4)];
@@ -301,22 +303,33 @@ fn draw_table(frame: &mut Frame, app: &App, area: Rect) {
                 app.loaded_datasets
                     .as_ref()
                     .and_then(|loaded| loaded.selected_index()),
-                |index| {
-                    let dataset = &app.datasets()[index];
-                    let mut cells =
-                        vec![Cell::from(dataset_mark(app.is_dataset_checked(dataset.id)))];
-                    cells.extend(col_cells(DATASET_COLS, dataset));
-                    cells.push(Cell::from(dataset_status_cell(app, dataset)));
-                    cells.push(progress_cell(
-                        app.download
-                            .byte_ratio(dataset.id)
-                            .or_else(|| app.upload.byte_ratio(dataset.id))
-                            .or(dataset.import_progress),
-                        shows_progress(dataset.import_status)
-                            || app.download.byte_ratio(dataset.id).is_some()
-                            || app.upload.byte_ratio(dataset.id).is_some(),
-                    ));
-                    Row::new(cells)
+                {
+                    let selected = app
+                        .loaded_datasets
+                        .as_ref()
+                        .and_then(|loaded| loaded.selected_index());
+                    let visual_rows = app.visual_rows();
+                    move |index| {
+                        let dataset = &app.datasets()[index];
+                        let mut cells =
+                            vec![Cell::from(dataset_mark(app.is_dataset_checked(dataset.id)))];
+                        cells.extend(col_cells(DATASET_COLS, dataset));
+                        cells.push(Cell::from(dataset_status_cell(app, dataset)));
+                        cells.push(progress_cell(
+                            app.download
+                                .byte_ratio(dataset.id)
+                                .or_else(|| app.upload.byte_ratio(dataset.id))
+                                .or(dataset.import_progress),
+                            shows_progress(dataset.import_status)
+                                || app.download.byte_ratio(dataset.id).is_some()
+                                || app.upload.byte_ratio(dataset.id).is_some(),
+                        ));
+                        let mut row = Row::new(cells);
+                        if selected != Some(index) && visual_rows.contains(&index) {
+                            row = row.style(idle_highlight());
+                        }
+                        row
+                    }
                 },
             );
         }
@@ -591,27 +604,35 @@ fn dataset_mark(checked: bool) -> &'static str {
     if checked { "[x]" } else { "[ ]" }
 }
 
-fn selection_title(title: &str, selected: usize) -> String {
-    if selected == 0 {
+fn selection_title(title: &str, selected: usize, visual: bool) -> String {
+    let mut title = if selected == 0 {
         title.to_string()
     } else {
         format!("{title}  ({selected} selected)")
+    };
+    if visual {
+        title.push_str("  visual");
     }
+    title
 }
 
 fn draw_upload_picker(frame: &mut Frame, form: &UploadForm) {
     let summary = selected_summary(&form.selected);
-    let title = if summary.is_empty() {
+    let mut title = if summary.is_empty() {
         format!("upload  /{}", form.stream_name)
     } else {
         format!("upload  /{}  ({summary})", form.stream_name)
     };
+    if form.in_visual() {
+        title.push_str("  visual");
+    }
     draw_file_picker(
         frame,
         &form.picker,
         &title,
         Some(upload_footer(form)),
         Some(&form.selected),
+        form.visual_span(),
     );
 }
 
@@ -705,6 +726,7 @@ fn draw_file_picker(
     title: &str,
     footer: Option<Vec<Line<'static>>>,
     picked: Option<&HashSet<PathBuf>>,
+    visual: Option<(usize, usize)>,
 ) {
     let area = centered(frame.area(), 80, 70);
     let bordered = block(title, true);
@@ -740,12 +762,18 @@ fn draw_file_picker(
         let items: Vec<ListItem> = picker
             .recents
             .iter()
-            .map(|entry| {
+            .enumerate()
+            .map(|(index, entry)| {
                 let workspace = entry.workspace.as_deref().unwrap_or("—");
-                ListItem::new(Line::from(vec![
-                    Span::styled(format!("{workspace:<22}"), accent()),
-                    Span::styled(entry.name.clone(), body_style()),
-                ]))
+                visual_item(
+                    ListItem::new(Line::from(vec![
+                        Span::styled(format!("{workspace:<22}"), accent()),
+                        Span::styled(entry.name.clone(), body_style()),
+                    ])),
+                    visual,
+                    index,
+                    picker.selected,
+                )
             })
             .collect();
         let in_recents = picker.selected < picker.recents.len();
@@ -773,7 +801,8 @@ fn draw_file_picker(
     let items: Vec<ListItem> = picker
         .entries
         .iter()
-        .map(|entry| {
+        .enumerate()
+        .map(|(pos, entry)| {
             let mark =
                 if picked.is_some_and(|set| set.contains(&super::picker::path_key(&entry.path))) {
                     "[x] "
@@ -787,7 +816,12 @@ fn draw_file_picker(
             } else {
                 format!("{mark}{}", entry.name)
             };
-            ListItem::new(label)
+            visual_item(
+                ListItem::new(label),
+                visual,
+                picker.recents.len() + pos,
+                picker.selected,
+            )
         })
         .collect();
     let file_selected = picker
@@ -817,6 +851,19 @@ fn draw_file_picker(
         );
         index += 1;
         frame.render_widget(Paragraph::new(lines).style(body_style()), chunks[index]);
+    }
+}
+
+fn visual_item(
+    item: ListItem<'static>,
+    visual: Option<(usize, usize)>,
+    index: usize,
+    selected: usize,
+) -> ListItem<'static> {
+    if selected != index && visual.is_some_and(|(lo, hi)| (lo..=hi).contains(&index)) {
+        item.style(idle_highlight())
+    } else {
+        item
     }
 }
 

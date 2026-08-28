@@ -57,8 +57,13 @@ pub(super) struct UploadForm {
     pub picker: FilePicker,
     pub stream_name: String,
     pub selected: HashSet<PathBuf>,
-    selection_anchor: Option<usize>,
+    visual: Option<VisualPick>,
     stream_id: i64,
+}
+
+struct VisualPick {
+    anchor: usize,
+    snapshot: HashSet<PathBuf>,
 }
 
 struct QueuedFile {
@@ -207,11 +212,28 @@ impl App {
                 if self.cancel_upload_edit() {
                     return;
                 }
+                if self
+                    .upload
+                    .form
+                    .as_mut()
+                    .is_some_and(UploadForm::cancel_visual)
+                {
+                    return;
+                }
                 self.close_upload();
                 return;
             }
             KeyCode::Char('q') if !self.upload_typing() => {
                 self.close_upload();
+                return;
+            }
+            KeyCode::Char('v') => {
+                let count = self.motion.take_count();
+                if let Some(form) = self.upload.form.as_mut()
+                    && form.focus.is_files()
+                {
+                    form.visual_or_select_n(count);
+                }
                 return;
             }
             _ => {}
@@ -225,6 +247,7 @@ impl App {
                 KeyCode::Tab => {
                     form.picker.cancel_editing();
                     form.stop_edits();
+                    form.commit_visual();
                     form.focus = if form.focus.is_files() {
                         FormFocus::Overwrite
                     } else {
@@ -234,25 +257,29 @@ impl App {
                 KeyCode::BackTab => {
                     form.picker.cancel_editing();
                     form.stop_edits();
+                    form.commit_visual();
                     form.focus = if form.focus.is_files() {
                         FormFocus::Upload
                     } else {
                         FormFocus::Files
                     };
                 }
-                KeyCode::Enter
-                    if !confirm
-                        && form.focus.is_files()
-                        && key.modifiers.contains(KeyModifiers::SHIFT) =>
-                {
-                    form.toggle_range();
+                KeyCode::Enter if !confirm && form.focus.is_files() && form.in_visual() => {
+                    form.commit_visual();
                 }
                 KeyCode::Enter if !confirm => form.activate(),
+                KeyCode::Char(' ') if form.focus.is_files() && form.in_visual() => {
+                    form.commit_visual();
+                }
                 KeyCode::Char(' ') if form.focus.is_files() || form.is_checkbox() => {
                     form.activate()
                 }
                 KeyCode::Char('a') if form.focus.is_files() => form.toggle_all(),
-                KeyCode::Char('/') if form.focus.is_files() => form.picker.start_editing(),
+                KeyCode::Char('A') if form.focus.is_files() => form.clear_selected(),
+                KeyCode::Char('/') if form.focus.is_files() => {
+                    form.commit_visual();
+                    form.picker.start_editing();
+                }
                 KeyCode::Char('h') | KeyCode::Left if !form.focus.is_files() => {
                     form.focus = form.focus.prev_footer();
                 }
@@ -262,8 +289,8 @@ impl App {
                 KeyCode::Char('h') | KeyCode::Left | KeyCode::Backspace
                     if form.focus.is_files() =>
                 {
+                    form.commit_visual();
                     form.picker.go_parent();
-                    form.selection_anchor = None;
                 }
                 KeyCode::Char('l') | KeyCode::Right
                     if form.focus.is_files()
@@ -272,8 +299,8 @@ impl App {
                             .selected_entry()
                             .is_some_and(|entry| entry.is_dir) =>
                 {
+                    form.commit_visual();
                     form.picker.enter_selected();
-                    form.selection_anchor = None;
                 }
                 KeyCode::Backspace if form.focus == FormFocus::Metadata && !form.meta_editing => {
                     form.metadata.pop();
@@ -358,7 +385,12 @@ impl App {
             return;
         };
         if form.focus.is_files() {
-            form.picker.apply_motion(motion);
+            if form.in_visual() {
+                form.picker.apply_motion_clamped(motion);
+            } else {
+                form.picker.apply_motion(motion);
+            }
+            form.sync_visual();
             return;
         }
         match motion {
@@ -740,9 +772,23 @@ impl UploadForm {
             picker: FilePicker::open(start, &[]),
             stream_name,
             selected: HashSet::new(),
-            selection_anchor: None,
+            visual: None,
             stream_id,
         }
+    }
+
+    pub(super) fn in_visual(&self) -> bool {
+        self.visual.is_some()
+    }
+
+    pub(super) fn visual_span(&self) -> Option<(usize, usize)> {
+        let visual = self.visual.as_ref()?;
+        let current = self.picker.selected;
+        Some(if visual.anchor <= current {
+            (visual.anchor, current)
+        } else {
+            (current, visual.anchor)
+        })
     }
 
     fn typing(&self) -> bool {
@@ -792,8 +838,8 @@ impl UploadForm {
             .selected_entry()
             .is_some_and(|entry| entry.name == "..")
         {
+            self.commit_visual();
             self.picker.enter_selected();
-            self.selection_anchor = None;
             return;
         }
         let Some(entry) = self.picker.selected_entry() else {
@@ -803,32 +849,37 @@ impl UploadForm {
         if !self.selected.remove(&key) {
             self.selected.insert(key);
         }
-        self.selection_anchor = Some(self.picker.selected);
     }
 
-    fn toggle_range(&mut self) {
-        let current = self.picker.selected;
-        let start = self.selection_anchor.unwrap_or(current);
-        let (lo, hi) = if start <= current {
-            (start, current)
-        } else {
-            (current, start)
-        };
-        for index in lo..=hi {
-            let Some(entry) = self.picker.item(index) else {
-                continue;
-            };
-            if entry.name == ".." {
-                continue;
-            }
-            self.selected.insert(super::picker::path_key(&entry.path));
+    fn visual_or_select_n(&mut self, count: Option<u32>) {
+        if let Some(n) = count {
+            self.commit_visual();
+            self.select_n(n);
+            return;
         }
-        if self.selection_anchor.is_none() {
-            self.selection_anchor = Some(current);
+        if self.visual.is_some() {
+            self.commit_visual();
+            return;
         }
+        self.visual = Some(VisualPick {
+            anchor: self.picker.selected,
+            snapshot: self.selected.clone(),
+        });
+        self.sync_visual();
+    }
+
+    fn select_n(&mut self, n: u32) {
+        let start = self.picker.selected;
+        let last = self.picker.len().saturating_sub(1);
+        let end = start
+            .saturating_add(n.max(1).saturating_sub(1) as usize)
+            .min(last);
+        self.add_span(start, end);
+        self.picker.goto(end);
     }
 
     fn toggle_all(&mut self) {
+        self.commit_visual();
         let keys: Vec<PathBuf> = self
             .picker
             .entries
@@ -846,6 +897,53 @@ impl UploadForm {
             }
         } else {
             self.selected.extend(keys);
+        }
+    }
+
+    fn clear_selected(&mut self) {
+        self.visual = None;
+        self.selected.clear();
+    }
+
+    fn cancel_visual(&mut self) -> bool {
+        let Some(visual) = self.visual.take() else {
+            return false;
+        };
+        self.selected = visual.snapshot;
+        true
+    }
+
+    fn commit_visual(&mut self) {
+        self.visual = None;
+    }
+
+    fn sync_visual(&mut self) {
+        let Some((anchor, snapshot)) = self
+            .visual
+            .as_ref()
+            .map(|visual| (visual.anchor, visual.snapshot.clone()))
+        else {
+            return;
+        };
+        self.selected = snapshot;
+        let current = self.picker.selected;
+        let (lo, hi) = if anchor <= current {
+            (anchor, current)
+        } else {
+            (current, anchor)
+        };
+        self.add_span(lo, hi);
+    }
+
+    fn add_span(&mut self, lo: usize, hi: usize) {
+        for index in lo..=hi {
+            let Some(entry) = self.picker.item(index) else {
+                continue;
+            };
+            if entry.name == ".." {
+                continue;
+            }
+            self.selected.insert(super::picker::path_key(&entry.path));
         }
     }
 }
@@ -981,7 +1079,7 @@ mod tests {
     }
 
     #[test]
-    fn shift_enter_selects_span_from_anchor() {
+    fn visual_range_grows_shrinks_and_esc_restores() {
         let tmp = tempfile::tempdir().unwrap();
         fs::write(tmp.path().join("a.csv"), "x").unwrap();
         fs::write(tmp.path().join("b.csv"), "x").unwrap();
@@ -989,15 +1087,50 @@ mod tests {
         let mut form = UploadForm::new(1, "demo".into(), Some(tmp.path()));
         goto_named(&mut form, "a.csv");
         form.activate();
+        form.visual_or_select_n(None);
         goto_named(&mut form, "c.csv");
-        form.toggle_range();
-        let mut names: Vec<_> = form
-            .selected
-            .iter()
-            .map(|path| path.file_name().unwrap().to_string_lossy().into_owned())
-            .collect();
+        form.sync_visual();
+        let mut names = selected_names(&form);
         names.sort();
         assert_eq!(names, ["a.csv", "b.csv", "c.csv"]);
+        goto_named(&mut form, "b.csv");
+        form.sync_visual();
+        let mut names = selected_names(&form);
+        names.sort();
+        assert_eq!(names, ["a.csv", "b.csv"]);
+        assert!(form.cancel_visual());
+        let mut names = selected_names(&form);
+        names.sort();
+        assert_eq!(names, ["a.csv"]);
+        assert!(!form.in_visual());
+    }
+
+    #[test]
+    fn count_v_selects_n_rows_from_cursor() {
+        let tmp = tempfile::tempdir().unwrap();
+        fs::write(tmp.path().join("a.csv"), "x").unwrap();
+        fs::write(tmp.path().join("b.csv"), "x").unwrap();
+        fs::write(tmp.path().join("c.csv"), "x").unwrap();
+        let mut form = UploadForm::new(1, "demo".into(), Some(tmp.path()));
+        goto_named(&mut form, "a.csv");
+        form.visual_or_select_n(Some(3));
+        let mut names = selected_names(&form);
+        names.sort();
+        assert_eq!(names, ["a.csv", "b.csv", "c.csv"]);
+        assert!(!form.in_visual());
+        assert_eq!(
+            form.picker
+                .selected_entry()
+                .map(|entry| entry.name.as_str()),
+            Some("c.csv")
+        );
+    }
+
+    fn selected_names(form: &UploadForm) -> Vec<String> {
+        form.selected
+            .iter()
+            .map(|path| path.file_name().unwrap().to_string_lossy().into_owned())
+            .collect()
     }
 
     #[test]

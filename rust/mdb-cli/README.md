@@ -72,15 +72,15 @@ Stream and dataset details sit under the left list; the child table uses the ful
 Keys (the footer repeats the current mode):
 
 - Move: `j`/`k`, Shift+↓/↑ page, `gg`/`G`, Tab list|table
-- Open / back: `→` (or `l`) opens or cycles the right pane; `←`, `h`, or Esc go back. Enter opens too, except on the dataset table (see select)
+- Open / back: `→` (or `l`) or Enter opens or cycles the right pane; `←`, `h`, or Esc go back
 - Filter: `/` on the focused table, or on debug lines when that view is focused. Enter keeps the filter, Esc cancels the edit, Esc again clears it
 - Inspect: `i` expands stream details, or jumps to dataset info; `j`/`k` then scroll
-- Select datasets (dataset table): Enter or space toggles the row, Shift+Enter selects the range from the last toggle, `a` toggles all visible rows
+- Select datasets (dataset table): space toggles the row, `v` starts a live range (move with `j`/`k`/`gg`/`G`; `v`/Enter/space keeps, Esc cancels), `400v` checks 400 rows from the cursor, `a` toggles all visible rows, `A` clears checks
 - Actions: `u` upload, `d` download, `x` delete (Enter confirms), `r` reingest, `p` rerun processing. `d`/`x`/`r`/`p` on a stream apply to every dataset in it
 - Env: `w` opens a folder picker (type a path, or pick a recent file labeled by workspace). The chosen file is saved for the next session
 - Quit: `q`
 
-Upload (`u` on a file stream): Enter/space selects, Shift+Enter selects the range from the last Enter/space, `a` selects all in the folder, Enter on `../` goes up, Enter on the upload button starts the transfer (overwrite, skip existing, optional extension filter). Download (`d`) uses the same folder navigation to pick a destination.
+Upload (`u` on a file stream): space toggles, `v` is a live range, `a` selects all in the folder, `A` clears, Enter on a file toggles, Enter on `../` or a folder opens it. Enter on the upload button starts the transfer (overwrite, skip existing, optional extension filter). Download (`d`) uses the same folder navigation to pick a destination.
 
 ## Examples
 

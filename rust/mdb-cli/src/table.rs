@@ -119,6 +119,10 @@ impl Visible {
         }
     }
 
+    pub fn is_empty(&self) -> bool {
+        self.len() == 0
+    }
+
     pub fn get(&self, pos: usize) -> Option<usize> {
         match self {
             Self::All(len) if pos < *len => Some(pos),
@@ -145,6 +149,23 @@ pub(crate) fn step_visible(
     selected: Option<usize>,
     delta: i32,
 ) -> Option<usize> {
+    step_visible_by(visible, selected, delta, wrap_index)
+}
+
+pub(crate) fn step_visible_clamped(
+    visible: &Visible,
+    selected: Option<usize>,
+    delta: i32,
+) -> Option<usize> {
+    step_visible_by(visible, selected, delta, clamp_index)
+}
+
+fn step_visible_by(
+    visible: &Visible,
+    selected: Option<usize>,
+    delta: i32,
+    step: fn(usize, i32, i32) -> usize,
+) -> Option<usize> {
     let len = visible.len();
     if len == 0 {
         return None;
@@ -152,7 +173,7 @@ pub(crate) fn step_visible(
     let pos = selected
         .and_then(|selected| visible.position(selected))
         .unwrap_or(0) as i32;
-    visible.get(wrap_index(len, pos, delta))
+    visible.get(step(len, pos, delta))
 }
 
 pub(crate) fn wrap_index(len: usize, index: i32, delta: i32) -> usize {
@@ -160,6 +181,13 @@ pub(crate) fn wrap_index(len: usize, index: i32, delta: i32) -> usize {
         return 0;
     }
     (index + delta).rem_euclid(len as i32) as usize
+}
+
+pub(crate) fn clamp_index(len: usize, index: i32, delta: i32) -> usize {
+    if len == 0 {
+        return 0;
+    }
+    (index + delta).clamp(0, len as i32 - 1) as usize
 }
 
 pub(crate) fn goto_visible(visible: &Visible, index: usize) -> Option<usize> {
@@ -190,6 +218,19 @@ pub(crate) fn visible_span(visible: &Visible, anchor: Option<usize>, current: us
         (cur, start)
     };
     (lo..=hi).filter_map(|pos| visible.get(pos)).collect()
+}
+
+pub(crate) fn visible_forward(visible: &Visible, current: usize, n: usize) -> Vec<usize> {
+    let Some(pos) = visible.position(current) else {
+        return Vec::new();
+    };
+    if n == 0 || visible.is_empty() {
+        return Vec::new();
+    }
+    let last = pos
+        .saturating_add(n.saturating_sub(1))
+        .min(visible.len() - 1);
+    (pos..=last).filter_map(|pos| visible.get(pos)).collect()
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -280,9 +321,9 @@ pub(crate) fn visible_range(len: usize, selected: Option<usize>, view: usize) ->
 #[cfg(test)]
 mod tests {
     use super::{
-        TableSearch, Visible, goto_visible, handle_search_key, row_matches, search_title,
-        snap_visible, step_visible, visible_range, visible_span, window_indices, window_title,
-        wrap_index,
+        TableSearch, Visible, clamp_index, goto_visible, handle_search_key, row_matches,
+        search_title, snap_visible, step_visible, step_visible_clamped, visible_forward,
+        visible_range, visible_span, window_indices, window_title, wrap_index,
     };
     use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
 
@@ -371,6 +412,30 @@ mod tests {
         assert_eq!(wrap_index(3, 2, 1), 0);
         assert_eq!(wrap_index(3, 1, -4), 0);
         assert_eq!(wrap_index(0, 0, 1), 0);
+    }
+
+    #[test]
+    fn clamp_index_stops_at_ends() {
+        assert_eq!(clamp_index(5, 0, -1), 0);
+        assert_eq!(clamp_index(5, 4, 1), 4);
+        assert_eq!(clamp_index(5, 2, 10), 4);
+        assert_eq!(clamp_index(0, 0, 1), 0);
+        let visible = Visible::filtered(10, vec![1, 3, 5, 7, 9]);
+        assert_eq!(step_visible_clamped(&visible, Some(1), -1), Some(1));
+        assert_eq!(step_visible_clamped(&visible, Some(9), 1), Some(9));
+        assert_eq!(step_visible_clamped(&visible, Some(5), 1), Some(7));
+        assert_eq!(step_visible_clamped(&Visible::All(5), Some(2), 10), Some(4));
+        assert_eq!(step_visible_clamped(&Visible::All(0), Some(0), 1), None);
+    }
+
+    #[test]
+    fn visible_forward_takes_n_rows_from_cursor() {
+        let visible = Visible::filtered(10, vec![1, 3, 5, 7, 9]);
+        assert_eq!(visible_forward(&visible, 3, 3), vec![3, 5, 7]);
+        assert_eq!(visible_forward(&visible, 7, 8), vec![7, 9]);
+        assert_eq!(visible_forward(&visible, 0, 2), Vec::<usize>::new());
+        assert_eq!(visible_forward(&Visible::All(5), 1, 3), vec![1, 2, 3]);
+        assert_eq!(visible_forward(&Visible::All(5), 1, 0), Vec::<usize>::new());
     }
 
     #[test]

@@ -1,5 +1,5 @@
 use super::picker::FilePicker;
-use super::upload::FormFocus;
+use super::upload::{FormFocus, UploadForm};
 use super::{App, BrowseLevel, Motion, PAGE_SIZE, cycle_focus};
 use crate::table::{SearchAction, handle_search_key};
 use crossterm::event::{KeyCode, KeyEvent, KeyEventKind, KeyModifiers};
@@ -69,6 +69,17 @@ impl App {
             InputMode::Search => {
                 format!("filter  /{}_  enter keep  esc cancel", self.search.query)
             }
+            _ if self.in_visual() => {
+                "visual  j/k  gg/G  v/enter/space keep  esc cancel".to_string()
+            }
+            _ if self
+                .upload
+                .form
+                .as_ref()
+                .is_some_and(UploadForm::in_visual) =>
+            {
+                "visual  j/k  gg/G  v/space keep  esc cancel".to_string()
+            }
             _ if !self.status.is_empty() => self.status.clone(),
             InputMode::Upload { editing: true, .. } => "enter keep  esc cancel".to_string(),
             InputMode::Upload { submit: true, .. } => {
@@ -78,7 +89,7 @@ impl App {
                 "tab files  h/l field  enter toggle/edit  esc close".to_string()
             }
             InputMode::Upload { .. } => {
-                "tab footer  j/k  enter/space select  S-enter range  a all  → open  ← parent  / path  esc close"
+                "tab footer  j/k  space toggle  v range  a all  A clear  → open  ← parent  / path  esc close"
                     .to_string()
             }
             InputMode::Download { editing: true } => "enter download here  esc cancel".to_string(),
@@ -110,7 +121,7 @@ impl App {
             }
             InputMode::Browse => {
                 format!(
-                    "tab list|table  j/k  S-↓/↑ page  gg/G  / filter  enter/space select  S-enter range  a all  → open  i info  u upload  d download  x delete  r reingest  p process  ← back  w env ({env})  q quit"
+                    "tab list|table  j/k  S-↓/↑ page  gg/G  / filter  space toggle  v range  a all  A clear  → open  i info  u upload  d download  x delete  r reingest  p process  ← back  w env ({env})  q quit"
                 )
             }
         }
@@ -130,6 +141,12 @@ impl MotionState {
 
     pub(super) fn clear(&mut self) {
         *self = Self::default();
+    }
+
+    pub(super) fn take_count(&mut self) -> Option<u32> {
+        let count = self.count.take();
+        self.clear();
+        count
     }
 }
 
@@ -215,6 +232,7 @@ fn handle_browse_key(app: &mut App, key: KeyEvent) -> bool {
             return false;
         }
         if !app.info_expanded && !app.view_scrolls() {
+            app.commit_visual();
             app.motion.clear();
             app.search.start();
             return false;
@@ -231,27 +249,61 @@ fn handle_browse_key(app: &mut App, key: KeyEvent) -> bool {
     match key.code {
         KeyCode::Char('q') => return true,
         KeyCode::Tab | KeyCode::BackTab => {
+            app.commit_visual();
             app.focus = cycle_focus(app.browse_level, app.focus);
             app.snap_search();
         }
-        KeyCode::Esc | KeyCode::Char('h') | KeyCode::Left => app.go_back(),
-        KeyCode::Enter if app.dataset_table_focused() && !app.info_expanded => {
-            if key.modifiers.contains(KeyModifiers::SHIFT) {
-                app.select_dataset_range();
+        KeyCode::Esc if app.cancel_visual() => {}
+        KeyCode::Esc | KeyCode::Char('h') | KeyCode::Left => {
+            app.commit_visual();
+            app.go_back();
+        }
+        KeyCode::Enter if app.in_visual() => app.commit_visual(),
+        KeyCode::Char('l') | KeyCode::Right | KeyCode::Enter => {
+            app.commit_visual();
+            app.activate();
+        }
+        KeyCode::Char('i') => {
+            app.commit_visual();
+            app.toggle_info();
+        }
+        KeyCode::Char('w') => {
+            app.commit_visual();
+            app.open_env();
+        }
+        KeyCode::Char('u') => {
+            app.commit_visual();
+            app.open_upload();
+        }
+        KeyCode::Char('d') => {
+            app.commit_visual();
+            app.open_download();
+        }
+        KeyCode::Char('x') => {
+            app.commit_visual();
+            app.request_delete();
+        }
+        KeyCode::Char('r') => {
+            app.commit_visual();
+            app.request_reingest();
+        }
+        KeyCode::Char('p') => {
+            app.commit_visual();
+            app.request_process();
+        }
+        KeyCode::Char(' ') => {
+            if app.in_visual() {
+                app.commit_visual();
             } else {
                 app.toggle_dataset_selection();
             }
         }
-        KeyCode::Char('l') | KeyCode::Right | KeyCode::Enter => app.activate(),
-        KeyCode::Char('i') => app.toggle_info(),
-        KeyCode::Char('w') => app.open_env(),
-        KeyCode::Char('u') => app.open_upload(),
-        KeyCode::Char('d') => app.open_download(),
-        KeyCode::Char('x') => app.request_delete(),
-        KeyCode::Char('r') => app.request_reingest(),
-        KeyCode::Char('p') => app.request_process(),
-        KeyCode::Char(' ') => app.toggle_dataset_selection(),
+        KeyCode::Char('v') => {
+            let count = app.motion.take_count();
+            app.visual_or_select_n(count);
+        }
         KeyCode::Char('a') => app.select_all_datasets(),
+        KeyCode::Char('A') => app.clear_dataset_selection(),
         _ => {}
     }
     false
@@ -357,6 +409,7 @@ fn read_motion(state: &mut MotionState, key: KeyEvent) -> MotionRead {
         KeyCode::Up if shift => Motion::Page(-count),
         KeyCode::Char('j') | KeyCode::Down => Motion::Delta(count),
         KeyCode::Char('k') | KeyCode::Up => Motion::Delta(-count),
+        KeyCode::Char('v') if !shift => return MotionRead::None,
         _ => {
             state.clear();
             return MotionRead::None;
@@ -506,6 +559,24 @@ mod tests {
             MotionRead::None
         ));
         assert!(!state.pending());
+    }
+
+    #[test]
+    fn v_keeps_pending_count_for_select_n() {
+        let mut state = MotionState::default();
+        assert!(matches!(
+            read_motion(&mut state, key(KeyCode::Char('4'))),
+            MotionRead::Pending
+        ));
+        assert!(matches!(
+            read_motion(&mut state, key(KeyCode::Char('0'))),
+            MotionRead::Pending
+        ));
+        assert!(matches!(
+            read_motion(&mut state, key(KeyCode::Char('v'))),
+            MotionRead::None
+        ));
+        assert_eq!(state.count, Some(40));
     }
 
     #[test]

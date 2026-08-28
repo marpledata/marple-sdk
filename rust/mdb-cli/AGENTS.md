@@ -14,7 +14,7 @@ the Rust SDK crate `marple-db`.
   messages, signals) and focuses that pane; `←` returns to the dataset list. Debug
   logs and import-status polls spawn off the main `PendingLoad` slot and the tick
   (messages: `DebugLoaded`, `Statuses`). Debug log fetch and display live in
-  `debug.rs`. Dataset check / range / select-all live in `selection.rs`. The
+  `debug.rs`. Dataset check / visual range (`v`) / select-all live in `selection.rs`. The
   env-file modal (`w`) lives in `picker.rs`.
   Upload from a stream (`u`) lives in `upload.rs`. Download of original files
   (`d`) lives in `download.rs`. Dataset delete (`x`), reingest (`r`), and rerun

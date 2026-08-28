@@ -12,7 +12,9 @@ pub(crate) mod style;
 mod upload;
 
 use crate::connect;
-use crate::table::{TableSearch, Visible, goto_visible, snap_visible, step_visible};
+use crate::table::{
+    TableSearch, Visible, goto_visible, snap_visible, step_visible, step_visible_clamped,
+};
 use anyhow::Result;
 use batch::BatchState;
 use crossterm::event::{Event, EventStream, KeyEventKind};
@@ -242,7 +244,7 @@ pub(super) struct App {
     download: DownloadState,
     batch: BatchState,
     selected_datasets: HashSet<i64>,
-    selection_anchor: Option<usize>,
+    visual: Option<selection::VisualSelection>,
     dataset_mix: Option<ImportMix>,
     upload_dir: Option<PathBuf>,
 }
@@ -419,7 +421,7 @@ impl App {
             download: DownloadState::default(),
             batch: BatchState::default(),
             selected_datasets: HashSet::new(),
-            selection_anchor: None,
+            visual: None,
             dataset_mix: None,
             upload_dir: None,
         }
@@ -792,7 +794,7 @@ impl App {
     fn apply_datasets(&mut self, stream_id: i64, mut datasets: Vec<Dataset>) {
         datasets.sort_by_key(|dataset| std::cmp::Reverse(dataset.id));
         self.selected_datasets.clear();
-        self.selection_anchor = None;
+        self.visual = None;
         self.loaded_datasets = Some(Loaded::new(stream_id, datasets));
         self.loaded_signals = None;
         self.debug.invalidate();
@@ -850,7 +852,7 @@ impl App {
         self.pending = None;
         self.load_gen = self.load_gen.wrapping_add(1);
         self.selected_datasets.clear();
-        self.selection_anchor = None;
+        self.visual = None;
         self.dataset_mix = None;
         self.debug.invalidate();
         self.dataset_view = DatasetView::Info;
@@ -952,8 +954,13 @@ impl App {
 
     fn move_sel(&mut self, delta: i32) {
         let visible = self.focused_visible();
+        let clamp = self.visual.is_some();
         self.apply_selection(|state| {
-            state.select(step_visible(&visible, state.selected(), delta));
+            state.select(if clamp {
+                step_visible_clamped(&visible, state.selected(), delta)
+            } else {
+                step_visible(&visible, state.selected(), delta)
+            });
         });
     }
 
@@ -992,6 +999,7 @@ impl App {
                 }
             }
         }
+        self.sync_visual_selection();
     }
 
     fn breadcrumb_path(&self) -> String {

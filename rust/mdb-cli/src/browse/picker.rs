@@ -61,18 +61,6 @@ impl FilePicker {
         }
     }
 
-    pub(crate) fn move_sel(&mut self, delta: i32) {
-        if self.len() == 0 {
-            self.selected = 0;
-            return;
-        }
-        let current = self.selected as i32;
-        self.selected = wrap_index(self.len(), current, delta);
-        if !self.editing {
-            self.sync_input();
-        }
-    }
-
     pub(crate) fn goto(&mut self, index: usize) {
         if self.len() == 0 {
             self.selected = 0;
@@ -85,13 +73,37 @@ impl FilePicker {
     }
 
     pub(crate) fn apply_motion(&mut self, motion: Motion) {
+        self.apply_motion_wrap(motion, true);
+    }
+
+    pub(crate) fn apply_motion_clamped(&mut self, motion: Motion) {
+        self.apply_motion_wrap(motion, false);
+    }
+
+    fn apply_motion_wrap(&mut self, motion: Motion, wrap: bool) {
         let last = self.len().saturating_sub(1);
         match motion {
-            Motion::Delta(delta) => self.move_sel(delta),
-            Motion::Page(pages) => self.move_sel(pages * PAGE_SIZE),
+            Motion::Delta(delta) => self.shift_sel(delta, wrap),
+            Motion::Page(pages) => self.shift_sel(pages * PAGE_SIZE, wrap),
             Motion::First => self.goto(0),
             Motion::Last => self.goto(last),
             Motion::Goto(index) => self.goto(index),
+        }
+    }
+
+    fn shift_sel(&mut self, delta: i32, wrap: bool) {
+        if self.len() == 0 {
+            self.selected = 0;
+            return;
+        }
+        let current = self.selected as i32;
+        self.selected = if wrap {
+            wrap_index(self.len(), current, delta)
+        } else {
+            crate::table::clamp_index(self.len(), current, delta)
+        };
+        if !self.editing {
+            self.sync_input();
         }
     }
 
@@ -523,5 +535,21 @@ mod tests {
         assert_eq!(picker.selected, picker.len() - 1);
         picker.apply_motion(super::Motion::Goto(1));
         assert_eq!(picker.selected, 1);
+    }
+
+    #[test]
+    fn apply_motion_clamped_stops_at_ends() {
+        let tmp = tempfile::tempdir().unwrap();
+        for name in ["a", "b", "c"] {
+            fs::write(tmp.path().join(name), "x").unwrap();
+        }
+        let mut picker = FilePicker::open(Some(tmp.path()), &[]);
+        picker.apply_motion_clamped(super::Motion::First);
+        picker.apply_motion_clamped(super::Motion::Delta(-5));
+        assert_eq!(picker.selected, 0);
+        picker.apply_motion_clamped(super::Motion::Last);
+        let last = picker.selected;
+        picker.apply_motion_clamped(super::Motion::Delta(5));
+        assert_eq!(picker.selected, last);
     }
 }
