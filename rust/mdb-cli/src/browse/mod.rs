@@ -200,6 +200,7 @@ pub(super) struct App {
     load_tick: u8,
     search: TableSearch,
     upload: UploadState,
+    upload_dir: Option<PathBuf>,
 }
 
 pub async fn run(db: MarpleDB, url: String, env_file: Option<PathBuf>) -> Result<()> {
@@ -219,6 +220,7 @@ pub async fn run(db: MarpleDB, url: String, env_file: Option<PathBuf>) -> Result
     let (tx, rx) = tokio::sync::mpsc::unbounded_channel();
     let mut app = App::new(db, url, env_file, settings.recents.clone(), tx);
     app.restore_stream_id = settings.stream_id;
+    app.upload_dir = settings.upload_dir.filter(|path| path.is_dir());
     if let Some(path) = app.env_file.clone()
         && let Err(error) = app.connect_from_path(&path)
     {
@@ -346,6 +348,7 @@ impl App {
             load_tick: 0,
             search: TableSearch::default(),
             upload: UploadState::default(),
+            upload_dir: None,
         }
     }
 
@@ -405,6 +408,7 @@ impl App {
             env_file: self.env_file.clone(),
             stream_id: self.session_stream_id(),
             recents: self.recents.clone(),
+            upload_dir: self.upload_dir.clone(),
         };
         if let Err(error) = save_settings(&settings) {
             self.status = error.to_string();

@@ -7,7 +7,7 @@ use super::format::{
 use super::picker::FilePicker;
 use super::session::settings_path;
 use super::style::{accent, accent_bold, block, body_style, highlight};
-use super::upload::{FormFocus, OptionField, UploadForm};
+use super::upload::{FormFocus, UploadForm};
 use super::{AUTO_LOAD_LIMIT, App, BrowseLevel, Focus};
 use crate::table::{render_table, search_title, text_col};
 use marple_db::{CurrentWorkspace, StorageQuota};
@@ -533,56 +533,110 @@ fn draw_upload_picker(frame: &mut Frame, form: &UploadForm) {
         frame,
         &form.picker,
         &title,
-        Some(upload_options_line(form)),
+        Some(upload_footer(form)),
         Some(&form.selected),
     );
 }
 
+fn upload_footer(form: &UploadForm) -> Vec<Line<'static>> {
+    vec![
+        upload_options_line(form),
+        upload_metadata_line(form),
+        upload_submit_line(form),
+    ]
+}
+
+fn field_style(form: &UploadForm, field: FormFocus) -> Style {
+    if form.focus == field {
+        highlight()
+    } else {
+        body_style()
+    }
+}
+
 fn upload_options_line(form: &UploadForm) -> Line<'static> {
     let check = |on: bool| if on { "[x]" } else { "[ ]" };
-    let ext = if form.extension.is_empty() {
+    let ext = if form.ext_editing {
+        format!("{}_", form.extension)
+    } else if form.extension.is_empty() {
         "any".to_string()
     } else {
         form.extension.clone()
     };
-    let selected = form.focus == FormFocus::Options;
-    let style = |field: OptionField| {
-        if selected && form.option == field {
-            highlight()
-        } else {
-            body_style()
-        }
-    };
     Line::from(vec![
         Span::styled(
             format!("overwrite {}  ", check(form.overwrite)),
-            style(OptionField::Overwrite),
+            field_style(form, FormFocus::Overwrite),
         ),
         Span::styled(
             format!("skip existing {}  ", check(form.skip_existing)),
-            style(OptionField::SkipExisting),
+            field_style(form, FormFocus::SkipExisting),
         ),
-        Span::styled(format!("ext [{ext}]"), style(OptionField::Extension)),
+        Span::styled(
+            format!("ext [{ext}]"),
+            field_style(form, FormFocus::Extension),
+        ),
     ])
+}
+
+fn upload_metadata_line(form: &UploadForm) -> Line<'static> {
+    let mut spans = vec![Span::styled(
+        "metadata  ",
+        field_style(form, FormFocus::Metadata),
+    )];
+    for (index, (key, value)) in form.metadata.iter().enumerate() {
+        if index > 0 {
+            spans.push(Span::styled("  ", field_style(form, FormFocus::Metadata)));
+        }
+        spans.push(Span::styled(
+            format!("{key}={}", meta_display(value)),
+            field_style(form, FormFocus::Metadata),
+        ));
+    }
+    let add = if form.meta_editing {
+        format!("{}_", form.meta_input)
+    } else {
+        "[+]".to_string()
+    };
+    if !form.metadata.is_empty() || form.meta_editing {
+        spans.push(Span::styled("  ", field_style(form, FormFocus::Metadata)));
+    }
+    spans.push(Span::styled(add, field_style(form, FormFocus::Metadata)));
+    Line::from(spans)
+}
+
+fn upload_submit_line(form: &UploadForm) -> Line<'static> {
+    let n = form.selected.len();
+    let label = if n == 0 {
+        "upload  (select files)".to_string()
+    } else {
+        format!("upload  {n} file{}", if n == 1 { "" } else { "s" })
+    };
+    Line::from(Span::styled(label, field_style(form, FormFocus::Upload)))
+}
+
+fn meta_display(value: &serde_json::Value) -> String {
+    match value {
+        serde_json::Value::String(text) => text.clone(),
+        other => other.to_string(),
+    }
 }
 
 fn draw_file_picker(
     frame: &mut Frame,
     picker: &FilePicker,
     title: &str,
-    header: Option<Line<'static>>,
+    footer: Option<Vec<Line<'static>>>,
     picked: Option<&HashSet<PathBuf>>,
 ) {
-    let area = centered(frame.area(), 80, 60);
+    let area = centered(frame.area(), 80, 70);
     let bordered = block(title, true);
     let inner = bordered.inner(area);
     frame.render_widget(ratatui::widgets::Clear, area);
     frame.render_widget(bordered, area);
 
+    let footer_len = footer.as_ref().map(|lines| lines.len() as u16).unwrap_or(0);
     let mut constraints = Vec::new();
-    if header.is_some() {
-        constraints.push(Constraint::Length(1));
-    }
     if !picker.recents.is_empty() {
         constraints.push(Constraint::Length(1));
         constraints.push(Constraint::Length(picker.recents.len() as u16));
@@ -593,16 +647,16 @@ fn draw_file_picker(
     if picker.editing {
         constraints.push(Constraint::Length(1));
     }
+    if footer_len > 0 {
+        constraints.push(Constraint::Length(1));
+        constraints.push(Constraint::Length(footer_len));
+    }
     let chunks = Layout::default()
         .direction(Direction::Vertical)
         .constraints(constraints)
         .split(inner);
 
     let mut index = 0;
-    if let Some(header) = header {
-        frame.render_widget(Paragraph::new(header), chunks[index]);
-        index += 1;
-    }
     if !picker.recents.is_empty() {
         frame.render_widget(Paragraph::new("recent").style(body_style()), chunks[index]);
         index += 1;
@@ -621,8 +675,11 @@ fn draw_file_picker(
         let list = List::new(items)
             .style(body_style())
             .highlight_style(highlight());
-        let mut state = ListState::default().with_selected(in_recents.then_some(picker.selected));
+        let mut state = ListState::default();
+        state.select(in_recents.then_some(picker.selected));
+        *state.offset_mut() = picker.recents_offset();
         frame.render_stateful_widget(list, chunks[index], &mut state);
+        picker.set_recents_offset(state.offset());
         index += 1;
         frame.render_widget(
             Paragraph::new("─".repeat(chunks[index].width as usize)).style(body_style()),
@@ -663,14 +720,26 @@ fn draw_file_picker(
     let list = List::new(items)
         .style(body_style())
         .highlight_style(highlight());
-    let mut state = ListState::default().with_selected(file_selected);
+    let mut state = ListState::default();
+    state.select(file_selected);
+    *state.offset_mut() = picker.files_offset();
     frame.render_stateful_widget(list, chunks[index], &mut state);
+    picker.set_files_offset(state.offset());
     index += 1;
     if picker.editing {
         frame.render_widget(
             Paragraph::new(format!("path  {}", picker.input)).style(accent_bold()),
             chunks[index],
         );
+        index += 1;
+    }
+    if let Some(lines) = footer {
+        frame.render_widget(
+            Paragraph::new("─".repeat(chunks[index].width as usize)).style(body_style()),
+            chunks[index],
+        );
+        index += 1;
+        frame.render_widget(Paragraph::new(lines).style(body_style()), chunks[index]);
     }
 }
 

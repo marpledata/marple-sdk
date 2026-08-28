@@ -2,8 +2,9 @@ use super::picker::FilePicker;
 use super::{App, BrowseLevel, Focus};
 use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
 use marple_db::{
-    Dataset, DatasetStatus, ImportStatus, ProgressReporter, PushFileOptions, StreamType,
+    Dataset, DatasetStatus, ImportStatus, Metadata, ProgressReporter, PushFileOptions, StreamType,
 };
+use serde_json::Value;
 use std::collections::{HashMap, HashSet, VecDeque};
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
@@ -13,6 +14,13 @@ use std::time::{Duration, Instant};
 use walkdir::WalkDir;
 
 const STATUS_POLL: Duration = Duration::from_millis(500);
+const FOOTER: [FormFocus; 5] = [
+    FormFocus::Overwrite,
+    FormFocus::SkipExisting,
+    FormFocus::Extension,
+    FormFocus::Metadata,
+    FormFocus::Upload,
+];
 
 #[derive(Default)]
 pub(super) struct UploadState {
@@ -23,25 +31,25 @@ pub(super) struct UploadState {
     last_poll: Option<Instant>,
 }
 
-#[derive(Clone, Copy, PartialEq, Eq)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(super) enum FormFocus {
-    Options,
     Files,
-}
-
-#[derive(Clone, Copy, PartialEq, Eq)]
-pub(super) enum OptionField {
     Overwrite,
     SkipExisting,
     Extension,
+    Metadata,
+    Upload,
 }
 
 pub(super) struct UploadForm {
     pub overwrite: bool,
     pub skip_existing: bool,
     pub extension: String,
+    pub ext_editing: bool,
+    pub metadata: Vec<(String, Value)>,
+    pub meta_input: String,
+    pub meta_editing: bool,
     pub focus: FormFocus,
-    pub option: OptionField,
     pub picker: FilePicker,
     pub stream_name: String,
     pub selected: HashSet<PathBuf>,
@@ -52,6 +60,7 @@ struct QueuedFile {
     stream_id: i64,
     path: PathBuf,
     overwrite: bool,
+    metadata: Metadata,
 }
 
 struct RunningUpload {
@@ -115,21 +124,22 @@ impl UploadState {
     }
 }
 
-impl OptionField {
-    fn next(self) -> Self {
-        match self {
-            Self::Overwrite => Self::SkipExisting,
-            Self::SkipExisting => Self::Extension,
-            Self::Extension => Self::Overwrite,
-        }
+impl FormFocus {
+    fn next_footer(self) -> Self {
+        Self::step_footer(self, 1)
     }
 
-    fn prev(self) -> Self {
-        match self {
-            Self::Overwrite => Self::Extension,
-            Self::SkipExisting => Self::Overwrite,
-            Self::Extension => Self::SkipExisting,
-        }
+    fn prev_footer(self) -> Self {
+        Self::step_footer(self, FOOTER.len() - 1)
+    }
+
+    fn step_footer(self, delta: usize) -> Self {
+        let index = FOOTER.iter().position(|&field| field == self).unwrap_or(0);
+        FOOTER[(index + delta) % FOOTER.len()]
+    }
+
+    pub(super) fn is_files(self) -> bool {
+        matches!(self, Self::Files)
     }
 }
 
@@ -160,7 +170,15 @@ impl App {
             self.focus = Focus::Table;
         }
         self.status.clear();
-        self.upload.form = Some(UploadForm::new(stream_id, stream_name));
+        self.upload.form = Some(UploadForm::new(
+            stream_id,
+            stream_name,
+            self.upload_dir.as_deref(),
+        ));
+    }
+
+    pub(super) fn upload_typing(&self) -> bool {
+        self.upload.form.as_ref().is_some_and(UploadForm::typing)
     }
 
     pub(super) async fn on_upload_tick(&mut self) {
@@ -173,107 +191,94 @@ impl App {
     pub(super) fn handle_upload_key(&mut self, key: KeyEvent) {
         match key.code {
             KeyCode::Esc => {
-                self.upload.form = None;
+                if self.cancel_upload_edit() {
+                    return;
+                }
+                self.close_upload();
                 return;
             }
-            KeyCode::Char('q')
-                if !self.upload.form.as_ref().is_some_and(|form| {
-                    form.focus == FormFocus::Options && form.option == OptionField::Extension
-                }) =>
-            {
-                self.upload.form = None;
-                return;
-            }
-            KeyCode::Enter
-                if self
-                    .upload
-                    .form
-                    .as_ref()
-                    .is_some_and(|form| form.focus == FormFocus::Files) =>
-            {
-                self.confirm_upload();
+            KeyCode::Char('q') if !self.upload_typing() => {
+                self.close_upload();
                 return;
             }
             _ => {}
         }
-        let Some(form) = self.upload.form.as_mut() else {
-            return;
+        let confirm = {
+            let Some(form) = self.upload.form.as_mut() else {
+                return;
+            };
+            let confirm = form.focus == FormFocus::Upload && matches!(key.code, KeyCode::Enter);
+            match key.code {
+                KeyCode::Tab => {
+                    form.picker.cancel_editing();
+                    form.stop_edits();
+                    form.focus = if form.focus.is_files() {
+                        FormFocus::Overwrite
+                    } else {
+                        FormFocus::Files
+                    };
+                }
+                KeyCode::BackTab => {
+                    form.picker.cancel_editing();
+                    form.stop_edits();
+                    form.focus = if form.focus.is_files() {
+                        FormFocus::Upload
+                    } else {
+                        FormFocus::Files
+                    };
+                }
+                KeyCode::Enter if !confirm => form.activate(),
+                KeyCode::Char(' ') if form.focus.is_files() || form.is_checkbox() => {
+                    form.activate()
+                }
+                KeyCode::Char('/') if form.focus.is_files() => form.picker.start_editing(),
+                KeyCode::Char('h') | KeyCode::Left if !form.focus.is_files() => {
+                    form.focus = form.focus.prev_footer();
+                }
+                KeyCode::Char('l') | KeyCode::Right if !form.focus.is_files() => {
+                    form.focus = form.focus.next_footer();
+                }
+                KeyCode::Char('h') | KeyCode::Left | KeyCode::Backspace
+                    if form.focus.is_files() =>
+                {
+                    form.picker.go_parent();
+                }
+                KeyCode::Char('l') | KeyCode::Right
+                    if form.focus.is_files()
+                        && form
+                            .picker
+                            .selected_entry()
+                            .is_some_and(|entry| entry.is_dir) =>
+                {
+                    form.picker.enter_selected();
+                }
+                KeyCode::Backspace if form.focus == FormFocus::Metadata && !form.meta_editing => {
+                    form.metadata.pop();
+                }
+                _ => {}
+            }
+            confirm
         };
-        match key.code {
-            KeyCode::Tab | KeyCode::BackTab => {
-                form.focus = match form.focus {
-                    FormFocus::Options => FormFocus::Files,
-                    FormFocus::Files => {
-                        form.picker.cancel_editing();
-                        FormFocus::Options
-                    }
-                };
-            }
-            KeyCode::Enter if form.focus == FormFocus::Options => form.toggle_option(),
-            KeyCode::Char(' ') if form.focus == FormFocus::Options => form.toggle_option(),
-            KeyCode::Char(' ') if form.focus == FormFocus::Files => form.toggle_pick(),
-            KeyCode::Char('/') if form.focus == FormFocus::Files => form.picker.start_editing(),
-            KeyCode::Char('h') | KeyCode::Left if form.focus == FormFocus::Options => {
-                form.option = form.option.prev();
-            }
-            KeyCode::Char('l') | KeyCode::Right if form.focus == FormFocus::Options => {
-                form.option = form.option.next();
-            }
-            KeyCode::Char('h') | KeyCode::Left | KeyCode::Backspace
-                if form.focus == FormFocus::Files =>
-            {
-                form.picker.go_parent();
-            }
-            KeyCode::Char('l') | KeyCode::Right
-                if form.focus == FormFocus::Files
-                    && form
-                        .picker
-                        .selected_entry()
-                        .is_some_and(|entry| entry.is_dir) =>
-            {
-                form.picker.enter_selected();
-            }
-            KeyCode::Backspace
-                if form.focus == FormFocus::Options && form.option == OptionField::Extension =>
-            {
-                form.extension.pop();
-            }
-            KeyCode::Char(ch)
-                if form.focus == FormFocus::Options
-                    && form.option == OptionField::Extension
-                    && !key.modifiers.contains(KeyModifiers::CONTROL)
-                    && (ch.is_ascii_alphanumeric() || ch == '.') =>
-            {
-                form.extension.push(ch);
-            }
-            _ => {}
+        if confirm {
+            self.confirm_upload();
         }
     }
 
-    pub(super) async fn handle_upload_input(&mut self, key: KeyEvent) {
-        match key.code {
-            KeyCode::Enter => {
-                let result = self
-                    .upload
-                    .form
-                    .as_mut()
-                    .map(|form| form.picker.submit_typed(true))
-                    .unwrap_or(Err("no picker".to_string()));
-                match result {
-                    Ok(Some(path)) => {
-                        if let Some(form) = self.upload.form.as_mut() {
+    pub(super) fn handle_upload_input(&mut self, key: KeyEvent) {
+        let mut status = None;
+        {
+            let Some(form) = self.upload.form.as_mut() else {
+                return;
+            };
+            if form.picker.editing {
+                match key.code {
+                    KeyCode::Enter => match form.picker.submit_typed(true) {
+                        Ok(Some(path)) => {
                             form.selected.insert(super::picker::path_key(&path));
                         }
-                    }
-                    Ok(None) => {}
-                    Err(error) => self.status = error,
-                }
-            }
-            other => {
-                let Some(form) = self.upload.form.as_mut() else {
-                    return;
-                };
-                match other {
+                        Ok(None) => {}
+                        Err(error) => status = Some(error),
+                    },
                     KeyCode::Esc => form.picker.cancel_editing(),
                     KeyCode::Backspace => form.picker.backspace(),
                     KeyCode::Char(ch) if !key.modifiers.contains(KeyModifiers::CONTROL) => {
@@ -281,7 +286,47 @@ impl App {
                     }
                     _ => {}
                 }
+            } else if form.ext_editing {
+                match key.code {
+                    KeyCode::Enter | KeyCode::Esc => form.ext_editing = false,
+                    KeyCode::Backspace => {
+                        form.extension.pop();
+                    }
+                    KeyCode::Char(ch)
+                        if !key.modifiers.contains(KeyModifiers::CONTROL)
+                            && (ch.is_ascii_alphanumeric() || ch == '.') =>
+                    {
+                        form.extension.push(ch);
+                    }
+                    _ => {}
+                }
+            } else if form.meta_editing {
+                match key.code {
+                    KeyCode::Enter => match parse_meta(&form.meta_input) {
+                        Ok(pair) => {
+                            form.metadata.retain(|(key, _)| key != &pair.0);
+                            form.metadata.push(pair);
+                            form.meta_input.clear();
+                            form.meta_editing = false;
+                        }
+                        Err(error) => status = Some(error),
+                    },
+                    KeyCode::Esc => {
+                        form.meta_input.clear();
+                        form.meta_editing = false;
+                    }
+                    KeyCode::Backspace => {
+                        form.meta_input.pop();
+                    }
+                    KeyCode::Char(ch) if !key.modifiers.contains(KeyModifiers::CONTROL) => {
+                        form.meta_input.push(ch);
+                    }
+                    _ => {}
+                }
             }
+        }
+        if let Some(error) = status {
+            self.status = error;
         }
     }
 
@@ -289,22 +334,53 @@ impl App {
         let Some(form) = self.upload.form.as_mut() else {
             return;
         };
-        match form.focus {
-            FormFocus::Options => match motion {
-                super::Motion::Delta(delta) if delta > 0 => form.option = form.option.next(),
-                super::Motion::Delta(_) => form.option = form.option.prev(),
-                _ => {}
-            },
-            FormFocus::Files => {
-                let last = form.picker.len().saturating_sub(1);
-                match motion {
-                    super::Motion::Delta(delta) => form.picker.move_sel(delta),
-                    super::Motion::Page(pages) => form.picker.move_sel(pages * super::PAGE_SIZE),
-                    super::Motion::First => form.picker.goto(0),
-                    super::Motion::Last => form.picker.goto(last),
-                    super::Motion::Goto(index) => form.picker.goto(index),
-                }
+        if form.focus.is_files() {
+            let last = form.picker.len().saturating_sub(1);
+            match motion {
+                super::Motion::Delta(delta) => form.picker.move_sel(delta),
+                super::Motion::Page(pages) => form.picker.move_sel(pages * super::PAGE_SIZE),
+                super::Motion::First => form.picker.goto(0),
+                super::Motion::Last => form.picker.goto(last),
+                super::Motion::Goto(index) => form.picker.goto(index),
             }
+            return;
+        }
+        match motion {
+            super::Motion::Delta(delta) if delta > 0 => form.focus = form.focus.next_footer(),
+            super::Motion::Delta(_) => form.focus = form.focus.prev_footer(),
+            _ => {}
+        }
+    }
+
+    fn cancel_upload_edit(&mut self) -> bool {
+        let Some(form) = self.upload.form.as_mut() else {
+            return false;
+        };
+        if form.picker.editing {
+            form.picker.cancel_editing();
+            return true;
+        }
+        if form.ext_editing {
+            form.ext_editing = false;
+            return true;
+        }
+        if form.meta_editing {
+            form.meta_input.clear();
+            form.meta_editing = false;
+            return true;
+        }
+        false
+    }
+
+    fn close_upload(&mut self) {
+        self.remember_upload_dir();
+        self.upload.form = None;
+        self.persist_settings();
+    }
+
+    fn remember_upload_dir(&mut self) {
+        if let Some(form) = &self.upload.form {
+            self.upload_dir = Some(form.picker.dir.clone());
         }
     }
 
@@ -313,11 +389,13 @@ impl App {
             return;
         };
         if form.selected.is_empty() {
-            self.status = "space to select, enter to upload".to_string();
+            self.status = "enter to select files, then tab to upload".to_string();
             return;
         }
         let paths: Vec<PathBuf> = form.selected.iter().cloned().collect();
+        self.remember_upload_dir();
         self.queue_upload_paths(paths);
+        self.persist_settings();
     }
 
     fn queue_upload_paths(&mut self, paths: Vec<PathBuf>) {
@@ -329,6 +407,7 @@ impl App {
         let skip_existing = form.skip_existing;
         let overwrite = form.overwrite;
         let stream_id = form.stream_id;
+        let metadata: Metadata = form.metadata.iter().cloned().collect();
         let mut files = Vec::new();
         for path in &paths {
             match collect_files(path, extension) {
@@ -364,6 +443,7 @@ impl App {
                 stream_id,
                 path: file,
                 overwrite,
+                metadata: metadata.clone(),
             });
             queued += 1;
         }
@@ -398,6 +478,7 @@ impl App {
         let progress = Arc::new(AtomicProgress(Arc::clone(&bytes)));
         tokio::spawn(async move {
             let options = PushFileOptions::default()
+                .metadata(queued.metadata)
                 .overwrite(queued.overwrite)
                 .progress(progress);
             match db
@@ -547,17 +628,61 @@ impl App {
 }
 
 impl UploadForm {
-    fn new(stream_id: i64, stream_name: String) -> Self {
+    fn new(stream_id: i64, stream_name: String, start: Option<&Path>) -> Self {
         Self {
             overwrite: false,
             skip_existing: false,
             extension: String::new(),
+            ext_editing: false,
+            metadata: Vec::new(),
+            meta_input: String::new(),
+            meta_editing: false,
             focus: FormFocus::Files,
-            option: OptionField::Overwrite,
-            picker: FilePicker::open(None, &[]),
+            picker: FilePicker::open(start, &[]),
             stream_name,
             selected: HashSet::new(),
             stream_id,
+        }
+    }
+
+    fn typing(&self) -> bool {
+        self.picker.editing || self.ext_editing || self.meta_editing
+    }
+
+    fn is_checkbox(&self) -> bool {
+        matches!(self.focus, FormFocus::Overwrite | FormFocus::SkipExisting)
+    }
+
+    fn stop_edits(&mut self) {
+        self.ext_editing = false;
+        self.meta_editing = false;
+        self.meta_input.clear();
+    }
+
+    fn activate(&mut self) {
+        match self.focus {
+            FormFocus::Files => self.toggle_pick(),
+            FormFocus::Overwrite => {
+                self.overwrite = !self.overwrite;
+                if self.overwrite {
+                    self.skip_existing = false;
+                }
+            }
+            FormFocus::SkipExisting => {
+                self.skip_existing = !self.skip_existing;
+                if self.skip_existing {
+                    self.overwrite = false;
+                }
+            }
+            FormFocus::Extension => self.ext_editing = !self.ext_editing,
+            FormFocus::Metadata => {
+                if self.meta_editing {
+                    return;
+                }
+                self.meta_editing = true;
+                self.meta_input.clear();
+            }
+            FormFocus::Upload => {}
         }
     }
 
@@ -573,24 +698,6 @@ impl UploadForm {
             self.selected.insert(key);
         }
     }
-
-    fn toggle_option(&mut self) {
-        match self.option {
-            OptionField::Overwrite => {
-                self.overwrite = !self.overwrite;
-                if self.overwrite {
-                    self.skip_existing = false;
-                }
-            }
-            OptionField::SkipExisting => {
-                self.skip_existing = !self.skip_existing;
-                if self.skip_existing {
-                    self.overwrite = false;
-                }
-            }
-            OptionField::Extension => {}
-        }
-    }
 }
 
 struct AtomicProgress(Arc<AtomicU64>);
@@ -601,6 +708,19 @@ impl ProgressReporter for AtomicProgress {
     }
 
     fn finish(&self) {}
+}
+
+fn parse_meta(input: &str) -> Result<(String, Value), String> {
+    let Some((key, value)) = input.split_once('=') else {
+        return Err("metadata needs key=value".to_string());
+    };
+    let key = key.trim();
+    if key.is_empty() {
+        return Err("metadata key is empty".to_string());
+    }
+    let value = value.trim();
+    let parsed = serde_json::from_str(value).unwrap_or_else(|_| Value::String(value.to_string()));
+    Ok((key.to_string(), parsed))
 }
 
 fn collect_files(path: &Path, extension: Option<&str>) -> Result<Vec<PathBuf>, String> {
@@ -639,7 +759,7 @@ fn collect_files(path: &Path, extension: Option<&str>) -> Result<Vec<PathBuf>, S
 
 #[cfg(test)]
 mod tests {
-    use super::{UploadState, collect_files};
+    use super::{FormFocus, UploadForm, UploadState, collect_files, parse_meta};
     use marple_db::Dataset;
     use serde_json::json;
     use std::fs;
@@ -683,5 +803,44 @@ mod tests {
         assert!(state.needs_tick());
         state.clear();
         assert!(!state.needs_tick());
+    }
+
+    #[test]
+    fn footer_focus_cycles_through_upload() {
+        assert_eq!(FormFocus::Overwrite.next_footer(), FormFocus::SkipExisting);
+        assert_eq!(FormFocus::SkipExisting.next_footer(), FormFocus::Extension);
+        assert_eq!(FormFocus::Extension.next_footer(), FormFocus::Metadata);
+        assert_eq!(FormFocus::Metadata.next_footer(), FormFocus::Upload);
+        assert_eq!(FormFocus::Upload.next_footer(), FormFocus::Overwrite);
+        assert_eq!(FormFocus::Upload.prev_footer(), FormFocus::Metadata);
+        assert!(FormFocus::Files.is_files());
+        assert!(!FormFocus::Upload.is_files());
+    }
+
+    #[test]
+    fn overwrite_and_skip_are_exclusive() {
+        let mut form = UploadForm::new(1, "demo".into(), None);
+        form.focus = FormFocus::Overwrite;
+        form.activate();
+        assert!(form.overwrite);
+        assert!(!form.skip_existing);
+        form.focus = FormFocus::SkipExisting;
+        form.activate();
+        assert!(form.skip_existing);
+        assert!(!form.overwrite);
+        form.focus = FormFocus::Files;
+        form.activate();
+        assert!(form.selected.is_empty());
+    }
+
+    #[test]
+    fn parse_metadata_key_value() {
+        assert_eq!(parse_meta("car=17").unwrap(), ("car".into(), json!(17)));
+        assert_eq!(
+            parse_meta("name=qualifying").unwrap(),
+            ("name".into(), json!("qualifying"))
+        );
+        assert!(parse_meta("nocolon").is_err());
+        assert!(parse_meta("=value").is_err());
     }
 }

@@ -1,5 +1,6 @@
 use super::session::RecentEnv;
 use crate::table::wrap_index;
+use std::cell::Cell;
 use std::fs;
 use std::path::{Path, PathBuf};
 
@@ -19,6 +20,8 @@ pub(crate) struct FilePicker {
     pub selected: usize,
     pub input: String,
     pub editing: bool,
+    recents_offset: Cell<usize>,
+    files_offset: Cell<usize>,
 }
 
 impl FilePicker {
@@ -33,6 +36,8 @@ impl FilePicker {
                 .map(|path| path.display().to_string())
                 .unwrap_or_default(),
             editing: false,
+            recents_offset: Cell::new(0),
+            files_offset: Cell::new(0),
         };
         picker.set_dir(dir, start);
         picker
@@ -49,6 +54,7 @@ impl FilePicker {
         self.selected = select
             .and_then(|target| self.index_of(target))
             .unwrap_or_else(|| self.recents.len().min(self.len().saturating_sub(1)));
+        self.files_offset.set(0);
         if !self.editing {
             self.sync_input();
         }
@@ -136,6 +142,22 @@ impl FilePicker {
         } else {
             self.goto(0);
         }
+    }
+
+    pub(crate) fn recents_offset(&self) -> usize {
+        self.recents_offset.get()
+    }
+
+    pub(crate) fn set_recents_offset(&self, offset: usize) {
+        self.recents_offset.set(offset);
+    }
+
+    pub(crate) fn files_offset(&self) -> usize {
+        self.files_offset.get()
+    }
+
+    pub(crate) fn set_files_offset(&self, offset: usize) {
+        self.files_offset.set(offset);
     }
 
     pub(crate) fn start_editing(&mut self) {

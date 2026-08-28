@@ -19,6 +19,8 @@ pub(crate) struct BrowseSettings {
     pub stream_id: Option<i64>,
     #[serde(default)]
     pub recents: Vec<RecentEnv>,
+    #[serde(default)]
+    pub upload_dir: Option<PathBuf>,
 }
 
 pub(crate) fn remember_recent(
@@ -171,6 +173,7 @@ mod tests {
                     path: PathBuf::from("/tmp/custom.env"),
                     workspace: "Staging".to_string(),
                 }],
+                upload_dir: Some(PathBuf::from("/tmp/data")),
             };
             save_settings(&settings).unwrap();
             let loaded = load_settings();
@@ -180,6 +183,7 @@ mod tests {
             );
             assert_eq!(loaded.stream_id, Some(5));
             assert_eq!(loaded.recents[0].workspace, "Staging");
+            assert_eq!(loaded.upload_dir.as_deref(), Some(Path::new("/tmp/data")));
             assert!(tmp.path().join("mdb/browse.toml").is_file());
         });
     }

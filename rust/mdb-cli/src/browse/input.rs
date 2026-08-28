@@ -1,5 +1,5 @@
 use super::picker::FilePicker;
-use super::upload::{FormFocus, OptionField};
+use super::upload::FormFocus;
 use super::{App, BrowseLevel, Motion, PAGE_SIZE, cycle_focus};
 use crate::table::{SearchAction, handle_search_key};
 use crossterm::event::{self, Event, KeyCode, KeyEvent, KeyEventKind, KeyModifiers};
@@ -15,8 +15,8 @@ pub(super) enum InputMode {
     },
     Upload {
         editing: bool,
-        options: bool,
-        extension: bool,
+        files: bool,
+        submit: bool,
     },
 }
 
@@ -28,16 +28,11 @@ impl App {
             .is_some_and(|picker| picker.editing)
         {
             InputMode::Env { editing: true }
-        } else if self
-            .upload
-            .form
-            .as_ref()
-            .is_some_and(|form| form.picker.editing)
-        {
+        } else if self.upload_typing() {
             InputMode::Upload {
                 editing: true,
-                options: false,
-                extension: false,
+                files: false,
+                submit: false,
             }
         } else if self.search.editing {
             InputMode::Search
@@ -46,9 +41,8 @@ impl App {
         } else if let Some(form) = &self.upload.form {
             InputMode::Upload {
                 editing: false,
-                options: form.focus == FormFocus::Options,
-                extension: form.focus == FormFocus::Options
-                    && form.option == OptionField::Extension,
+                files: form.focus.is_files(),
+                submit: form.focus == FormFocus::Upload,
             }
         } else if self.info_expanded {
             InputMode::Info
@@ -64,15 +58,15 @@ impl App {
                 format!("filter  /{}_  enter keep  esc cancel", self.search.query)
             }
             _ if !self.status.is_empty() => self.status.clone(),
-            InputMode::Upload { editing: true, .. } => {
-                "enter add to selection  esc cancel".to_string()
+            InputMode::Upload { editing: true, .. } => "enter keep  esc cancel".to_string(),
+            InputMode::Upload { submit: true, .. } => {
+                "enter upload  tab files  h/l field  esc close".to_string()
             }
-            InputMode::Upload { options: true, .. } => {
-                "tab files  h/l field  space toggle  enter upload  esc close".to_string()
+            InputMode::Upload { files: false, .. } => {
+                "tab files  h/l field  enter toggle/edit  esc close".to_string()
             }
             InputMode::Upload { .. } => {
-                "tab options  j/k  space select  enter upload  ← parent  / path  esc close"
-                    .to_string()
+                "tab footer  j/k  enter select  → open  ← parent  / path  esc close".to_string()
             }
             InputMode::Env { editing: true } => "enter use or open  esc cancel".to_string(),
             InputMode::Env { .. } => {
@@ -130,7 +124,7 @@ pub(super) async fn handle_key(app: &mut App, mut key: KeyEvent) -> bool {
                 return false;
             }
             InputMode::Upload { editing: true, .. } => {
-                app.handle_upload_input(key).await;
+                app.handle_upload_input(key);
                 return false;
             }
             InputMode::Search => {
@@ -140,13 +134,7 @@ pub(super) async fn handle_key(app: &mut App, mut key: KeyEvent) -> bool {
                 return false;
             }
             mode => {
-                if !matches!(
-                    mode,
-                    InputMode::Upload {
-                        extension: true,
-                        ..
-                    }
-                ) {
+                if !matches!(mode, InputMode::Upload { editing: true, .. }) {
                     match read_motion(&mut app.motion, key) {
                         MotionRead::Pending => return false,
                         MotionRead::Act(motion) => {
