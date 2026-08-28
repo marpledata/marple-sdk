@@ -1,7 +1,8 @@
 use super::picker::FilePicker;
+use super::progress::AtomicProgress;
 use super::{App, Pane};
 use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
-use marple_db::{Dataset, ProgressReporter};
+use marple_db::Dataset;
 use std::collections::{HashSet, VecDeque};
 use std::path::PathBuf;
 use std::sync::Arc;
@@ -398,16 +399,6 @@ fn as_dir(path: PathBuf) -> Result<PathBuf, String> {
     } else {
         Err(format!("{} is not a folder", path.display()))
     }
-}
-
-struct AtomicProgress(Arc<AtomicU64>);
-
-impl ProgressReporter for AtomicProgress {
-    fn set_position(&self, position: u64) {
-        self.0.store(position, Ordering::Relaxed);
-    }
-
-    fn finish(&self) {}
 }
 
 #[cfg(test)]

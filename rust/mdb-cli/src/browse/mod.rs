@@ -1,20 +1,22 @@
 mod batch;
+mod debug;
 mod download;
 mod draw;
 mod format;
 mod input;
 mod picker;
+mod progress;
+mod selection;
 mod session;
 pub(crate) mod style;
 mod upload;
 
 use crate::connect;
-use crate::table::{
-    TableSearch, Visible, goto_visible, row_matches, snap_visible, step_visible, visible_span,
-};
+use crate::table::{TableSearch, Visible, goto_visible, snap_visible, step_visible};
 use anyhow::Result;
 use batch::BatchState;
 use crossterm::event::{Event, EventStream, KeyEventKind};
+use debug::DebugState;
 use download::DownloadState;
 use draw::draw;
 use format::{
@@ -92,27 +94,7 @@ impl DatasetView {
     }
 }
 
-#[derive(Default)]
-struct DebugState {
-    load_gen: u64,
-    dataset_id: Option<i64>,
-    pending: bool,
-    messages: Option<Result<Vec<String>, String>>,
-    scroll: u16,
-    search: TableSearch,
-}
-
-impl DebugState {
-    fn invalidate(&mut self) {
-        self.load_gen = self.load_gen.wrapping_add(1);
-        self.dataset_id = None;
-        self.pending = false;
-        self.messages = None;
-        self.scroll = 0;
-        self.search.clear();
-    }
-}
-
+/// Which column the cursor is in. Derived from `(BrowseLevel, Focus)`; not stored.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(super) enum Pane {
     Streams,
@@ -583,12 +565,6 @@ impl App {
             && matches!(self.dataset_view, DatasetView::Info | DatasetView::Debug)
     }
 
-    fn debug_filter_enabled(&self) -> bool {
-        self.browse_level == BrowseLevel::Datasets
-            && self.dataset_view == DatasetView::Debug
-            && self.focus == Focus::Table
-    }
-
     fn scroll_info(&mut self, delta: i32) {
         if self.info_expanded {
             let lines = self.info_for_inspect().1.len() as u16;
@@ -690,47 +666,6 @@ impl App {
             stream_id,
             dataset_id,
         });
-    }
-
-    fn request_debug(&mut self) {
-        let Some(dataset) = self.selected_dataset() else {
-            return;
-        };
-        let stream_id = dataset.datastream_id;
-        let dataset_id = dataset.id;
-        if self.debug.dataset_id == Some(dataset_id)
-            && (self.debug.pending || self.debug.messages.is_some())
-        {
-            return;
-        }
-        self.debug.load_gen = self.debug.load_gen.wrapping_add(1);
-        let load_gen = self.debug.load_gen;
-        self.debug.dataset_id = Some(dataset_id);
-        self.debug.pending = true;
-        self.debug.messages = None;
-        self.debug.scroll = 0;
-        let db = self.db.clone();
-        let tx = self.events.clone();
-        tokio::spawn(async move {
-            let result = db
-                .get_debug_messages(stream_id, dataset_id)
-                .await
-                .map_err(|error| error.to_string());
-            let _ = tx.send(Message::DebugLoaded(load_gen, dataset_id, result));
-        });
-    }
-
-    fn apply_debug_result(
-        &mut self,
-        load_gen: u64,
-        dataset_id: i64,
-        result: Result<Vec<String>, String>,
-    ) {
-        if load_gen != self.debug.load_gen || self.debug.dataset_id != Some(dataset_id) {
-            return;
-        }
-        self.debug.pending = false;
-        self.debug.messages = Some(result);
     }
 
     fn request(&mut self, load: PendingLoad) {
@@ -965,74 +900,6 @@ impl App {
         self.loaded_datasets.as_ref().and_then(Loaded::selected)
     }
 
-    pub(super) fn is_dataset_checked(&self, dataset_id: i64) -> bool {
-        self.selected_datasets.contains(&dataset_id)
-    }
-
-    pub(super) fn dataset_table_focused(&self) -> bool {
-        self.browse_level == BrowseLevel::Streams && self.focus == Focus::Table
-    }
-
-    pub(super) fn toggle_dataset_selection(&mut self) {
-        if !self.dataset_table_focused() {
-            return;
-        }
-        let Some(id) = self.selected_dataset().map(|dataset| dataset.id) else {
-            return;
-        };
-        self.selection_anchor = self
-            .loaded_datasets
-            .as_ref()
-            .and_then(|loaded| loaded.selected_index());
-        if !self.selected_datasets.remove(&id) {
-            self.selected_datasets.insert(id);
-        }
-    }
-
-    pub(super) fn select_dataset_range(&mut self) {
-        if !self.dataset_table_focused() {
-            return;
-        }
-        let Some(current) = self
-            .loaded_datasets
-            .as_ref()
-            .and_then(|loaded| loaded.selected_index())
-        else {
-            return;
-        };
-        let visible = self.dataset_indices(true);
-        for index in visible_span(&visible, self.selection_anchor, current) {
-            if let Some(id) = self.datasets().get(index).map(|dataset| dataset.id) {
-                self.selected_datasets.insert(id);
-            }
-        }
-        if self.selection_anchor.is_none() {
-            self.selection_anchor = Some(current);
-        }
-    }
-
-    pub(super) fn select_all_datasets(&mut self) {
-        if !self.dataset_table_focused() {
-            return;
-        }
-        let visible = self.dataset_indices(true);
-        let ids: Vec<i64> = (0..visible.len())
-            .filter_map(|pos| visible.get(pos))
-            .map(|index| self.datasets()[index].id)
-            .collect();
-        if ids.is_empty() {
-            return;
-        }
-        let all_checked = ids.iter().all(|id| self.selected_datasets.contains(id));
-        if all_checked {
-            for id in ids {
-                self.selected_datasets.remove(&id);
-            }
-        } else {
-            self.selected_datasets.extend(ids);
-        }
-    }
-
     fn selected_signal(&self) -> Option<&Signal> {
         self.loaded_signals.as_ref().and_then(Loaded::selected)
     }
@@ -1169,27 +1036,6 @@ impl App {
             .join("  ")
     }
 
-    pub(super) fn debug_lines(&self) -> Vec<Line<'static>> {
-        if self.debug.pending {
-            return vec![Line::from(format!(
-                "loading debug messages {}",
-                self.loading_dots()
-            ))];
-        }
-        match &self.debug.messages {
-            None => vec![Line::from("no debug messages")],
-            Some(Err(error)) => vec![Line::from(error.clone())],
-            Some(Ok(messages)) if messages.is_empty() => {
-                vec![Line::from("no debug messages")]
-            }
-            Some(Ok(messages)) => debug_message_lines(messages, self.debug.search.query.trim()),
-        }
-    }
-
-    fn debug_line_count(&self) -> u16 {
-        self.debug_lines().len() as u16
-    }
-
     fn info_for_inspect(&self) -> (String, Vec<Line<'static>>) {
         match self.focused_pane() {
             Pane::Streams => stream_info(
@@ -1203,19 +1049,6 @@ impl App {
     }
 }
 
-fn debug_message_lines(messages: &[String], query: &str) -> Vec<Line<'static>> {
-    let lines: Vec<Line<'static>> = messages
-        .iter()
-        .filter(|message| row_matches(query, [message.as_str()]))
-        .flat_map(|message| message.lines().map(|line| Line::from(line.to_string())))
-        .collect();
-    if lines.is_empty() {
-        vec![Line::from("no matches")]
-    } else {
-        lines
-    }
-}
-
 fn clamp_scroll(scroll: u16, delta: i32, lines: u16, view: u16) -> u16 {
     let max = lines.saturating_sub(view.saturating_sub(2).max(1));
     (scroll as i32).saturating_add(delta).clamp(0, max as i32) as u16
@@ -1224,35 +1057,9 @@ fn clamp_scroll(scroll: u16, delta: i32, lines: u16, view: u16) -> u16 {
 #[cfg(test)]
 mod tests {
     use super::{
-        BrowseLevel, DatasetView, Focus, Pane, PendingLoad, clamp_scroll, cycle_focus,
-        debug_message_lines, pane_at, step_back,
+        BrowseLevel, DatasetView, Focus, Pane, PendingLoad, clamp_scroll, cycle_focus, pane_at,
+        step_back,
     };
-
-    #[test]
-    fn debug_messages_split_embedded_newlines() {
-        let lines = debug_message_lines(
-            &[
-                "parser started\nchannel A skipped\r\nok".to_string(),
-                "done".to_string(),
-            ],
-            "",
-        );
-        let texts: Vec<String> = lines.iter().map(ToString::to_string).collect();
-        assert_eq!(
-            texts,
-            vec!["parser started", "channel A skipped", "ok", "done"]
-        );
-    }
-
-    #[test]
-    fn debug_filter_keeps_whole_matching_message() {
-        let lines = debug_message_lines(
-            &["keep\nthis block".to_string(), "ignore me".to_string()],
-            "block",
-        );
-        let texts: Vec<String> = lines.iter().map(ToString::to_string).collect();
-        assert_eq!(texts, vec!["keep", "this block"]);
-    }
 
     #[test]
     fn dataset_view_cycles_info_debug_signals() {

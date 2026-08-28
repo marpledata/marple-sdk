@@ -1,10 +1,10 @@
 use super::picker::FilePicker;
+use super::progress::AtomicProgress;
 use super::{App, BrowseLevel, Focus, Pane};
 use crate::table::{Visible, window_indices};
 use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
 use marple_db::{
-    Dataset, DatasetStatus, ImportStatus, MarpleDB, Metadata, ProgressReporter, PushFileOptions,
-    StreamType,
+    Dataset, DatasetStatus, ImportStatus, MarpleDB, Metadata, PushFileOptions, StreamType,
 };
 use serde_json::Value;
 use std::collections::{HashMap, HashSet, VecDeque};
@@ -870,16 +870,6 @@ pub(super) fn selected_summary(selected: &HashSet<PathBuf>) -> String {
             if folders == 1 { "" } else { "s" }
         ),
     }
-}
-
-struct AtomicProgress(Arc<AtomicU64>);
-
-impl ProgressReporter for AtomicProgress {
-    fn set_position(&self, position: u64) {
-        self.0.store(position, Ordering::Relaxed);
-    }
-
-    fn finish(&self) {}
 }
 
 fn parse_meta(input: &str) -> Result<(String, Value), String> {
