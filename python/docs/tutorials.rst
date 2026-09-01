@@ -78,6 +78,41 @@ For batches, ``add_signals`` returns signal IDs without waiting:
        for signal in dataset.get_signals(signal_ids=ids, refresh=True)
    ]
 
+Processing scripts
+------------------
+
+Write a ``process(dataset)`` function and try it on any imported dataset.
+``run_locally`` runs in your Python process and writes to that dataset.
+
+.. code-block:: python
+
+   source = """
+from marple.db import Dataset
+
+def process(dataset: Dataset) -> None:
+    speed = dataset.get_signal("car.speed").get_data()
+    dataset.add_signal("car.speed_kmh", speed * 3.6, metadata={"unit": "km/h"})
+"""
+
+   dataset = stream.get_dataset(path="lap.csv")
+   dataset.run_locally(source)
+
+Alternatively, pass a path to a file with the script.
+
+When the script looks right, store it and attach it to the stream. New uploads then run it after ingest.
+
+.. code-block:: python
+
+   script = db.create_script("speed_kmh", source, streams=[stream.id])
+
+For files already imported, rerun aliasing and scripts, or start over from
+the original file:
+
+.. code-block:: python
+
+   dataset = dataset.rerun_processing().wait_for_import()
+   # or: dataset = dataset.reingest().wait_for_import()
+
 Filter datasets and get resampled data
 --------------------------------------
 

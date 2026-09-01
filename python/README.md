@@ -89,6 +89,35 @@ samples = pd.DataFrame({"time": [t0, t0 + 1_000_000_000], "value": [1.0, 2.0]})
 dataset.add_signal("car.custom", samples)
 ```
 
+#### Processing scripts
+
+Store a `process(dataset)` script, attach it to a stream, and rerun processing on existing files. New uploads run the pipeline automatically after ingest.
+
+```python
+script = db.create_script(
+    "speed_kmh",
+    """
+from marple.db import Dataset
+
+def process(dataset: Dataset) -> None:
+    speed = dataset.get_signal("car.speed").get_data()
+    dataset.add_signal("car.speed_kmh", speed * 3.6, metadata={"unit": "km/h"})
+""",
+    streams=[stream.id],
+)
+
+# Optional: set explicit pipeline order (replaces attachments)
+stream = stream.update(scripts=[script.id])
+
+dataset = stream.push_file("lap.csv").wait_for_import(timeout=120)
+
+# Existing files: rerun aliasing + scripts, then poll
+dataset = dataset.rerun_processing().wait_for_import(timeout=120)
+speed_kmh = dataset.get_signal("car.speed_kmh").get_data()
+```
+
+Pass a `.py` path or `pathlib.Path` instead of source text to load the script from a file. Use `script.update(...)` to change source or metadata, `stream.update(name=..., description=...)` to edit the stream, and `dataset.get_debug_messages()` to read ingest/script logs.
+
 #### Upload large files
 
 `stream.push_file(...)` starts an ingestion and lets the Marple DB API choose the best upload mode. Depending on the deployment and file size, the SDK can upload through the API server, upload directly to Azure Blob Storage, use a single presigned URL, or split the file into multipart uploads.
@@ -186,6 +215,11 @@ if len(datasets) > 0:
 - **Delete a stream**: `stream.delete()` or `db.delete_stream(stream_key)`
 - **Delete a dataset**: `dataset.delete()` or `db.delete_dataset(dataset_id, dataset_path)`
 - **Delete signals**: `signal.delete()`, `dataset.delete_signal(signal_id)` / `dataset.delete_signals(signal_ids)`, or `db.delete_signals(dataset_id, dataset_path, signal_ids)`
+- **Create a processing script**: `db.create_script(name, script, streams=[stream.id])`
+- **Edit a stream / set script pipeline**: `stream.update(description=..., scripts=[script.id])`
+- **Rerun aliasing + scripts**: `dataset.rerun_processing().wait_for_import()` or `stream.rerun_processing([dataset.id])`
+- **Reingest from the original file**: `dataset.reingest().wait_for_import()`
+- **Read ingest debug logs**: `dataset.get_debug_messages()`
 
 For live streams:
 

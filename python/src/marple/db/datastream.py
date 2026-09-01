@@ -1,14 +1,20 @@
 import warnings
-from collections.abc import Iterator
+from collections.abc import Iterator, Sequence
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from pathlib import Path
 from threading import Lock
-from typing import Literal, Optional
+from typing import Any, Literal, Optional
 
-from pydantic import BaseModel, PrivateAttr
+from pydantic import BaseModel, Field, PrivateAttr, field_validator
 
 from marple.db.dataset import Dataset, DatasetList
-from marple.utils import DBClient, validate_response, validate_storage_response
+from marple.utils import (
+    OMITTED,
+    DBClient,
+    Omitted,
+    validate_response,
+    validate_storage_response,
+)
 
 
 class IngestionInit(BaseModel):
@@ -61,12 +67,30 @@ class DataStream(BaseModel):
     plugin: Optional[str] = None
     plugin_args: Optional[str] = None
     signal_reduction: Optional[list] = None
+    scripts: list[int] = Field(default_factory=list)
+    """IDs of processing scripts in pipeline order. Empty if none are attached."""
 
     _client = PrivateAttr()
 
     def __init__(self, client: DBClient, **kwargs):
         super().__init__(**kwargs)
         self._client = client
+
+    @field_validator("scripts", mode="before")
+    @classmethod
+    def _default_scripts(cls, value: object) -> object:
+        """Default to empty list if scripts is None."""
+        return value or []
+
+    @classmethod
+    def fetch(cls, client: DBClient, stream_id: int) -> "DataStream":
+        """Fetch a datastream by ID."""
+        r = client.get(f"/stream/{stream_id}")
+        return cls(client=client, **validate_response(r, "Get stream failed"))
+
+    def refresh(self) -> "DataStream":
+        """Return a freshly fetched copy of this datastream."""
+        return self.fetch(self._client, self.id)
 
     def get_dataset(self, id: int | None = None, path: str | None = None) -> "Dataset":
         """Get a single dataset in the datastream by ID or path."""
@@ -258,6 +282,69 @@ class DataStream(BaseModel):
             validate_response(r, "Abort upload failed")
         except Exception as e:
             warnings.warn(f"Failed to abort ingestion {ingestion_id}: {e}")
+
+    def update(
+        self,
+        *,
+        name: str | None | Omitted = OMITTED,
+        description: str | None | Omitted = OMITTED,
+        plugin: str | None | Omitted = OMITTED,
+        plugin_args: str | None | Omitted = OMITTED,
+        signal_reduction: list | None | Omitted = OMITTED,
+        insight_workspace: str | None | Omitted = OMITTED,
+        insight_project: str | None | Omitted = OMITTED,
+        scripts: list[int] | None | Omitted = OMITTED,
+    ) -> "DataStream":
+        """
+        Update this datastream. Only provided fields are sent.
+
+        Args:
+            name: The new name for the datastream.
+            description: The new description for the datastream.
+            plugin: The new plugin for the datastream.
+            plugin_args: The new plugin arguments for the datastream.
+            signal_reduction: The new signal reduction for the datastream.
+            insight_workspace: The new insight workspace for the datastream.
+            insight_project: The new insight project for the datastream.
+            scripts: The new script pipeline for the datastream.
+        """
+        payload: dict[str, Any] = {}
+        if name is not OMITTED:
+            payload["name"] = name
+        if description is not OMITTED:
+            payload["description"] = description
+        if plugin is not OMITTED:
+            payload["plugin"] = plugin
+        if plugin_args is not OMITTED:
+            payload["plugin_args"] = plugin_args
+        if signal_reduction is not OMITTED:
+            payload["signal_reduction"] = signal_reduction
+        if insight_workspace is not OMITTED:
+            payload["insight_workspace"] = insight_workspace
+        if insight_project is not OMITTED:
+            payload["insight_project"] = insight_project
+        if scripts is not OMITTED:
+            payload["scripts"] = scripts
+
+        r = self._client.post(f"/stream/update/{self.id}", json=payload)
+        validate_response(r, "Update stream failed")
+        return self.fetch(self._client, self.id)
+
+    def rerun_processing(self, dataset_ids: Sequence[int] | None = None) -> None:
+        """
+        Rerun aliasing and processing scripts.
+
+        Args:
+            dataset_ids: The IDs of the datasets to rerun processing for. If omitted, every eligible dataset in the stream is processed.
+        """
+        if dataset_ids is None:
+            r = self._client.post(f"/stream/{self.id}/processing")
+        else:
+            ids = list(dataset_ids)
+            if not ids:
+                raise ValueError("rerun_processing requires at least one dataset id")
+            r = self._client.post(f"/stream/{self.id}/processing/datasets", json=ids)
+        validate_response(r, "Rerun processing failed")
 
     def delete(self) -> None:
         """

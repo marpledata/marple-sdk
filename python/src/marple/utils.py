@@ -1,3 +1,4 @@
+from enum import Enum
 from pathlib import Path
 from typing import Any, Literal
 from urllib import parse, request
@@ -17,6 +18,17 @@ from marple.db.constants import (
     COL_VAL_TEXT,
     COL_VAL_TEXT_IDX,
 )
+
+
+class Omitted(Enum):
+    """
+    Marker for values that are not defined.
+    """
+
+    TOKEN = 0
+
+
+OMITTED = Omitted.TOKEN
 
 
 def validate_response(response: requests.Response, failure_message: str) -> Any:

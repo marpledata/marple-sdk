@@ -1,4 +1,7 @@
+import os
 import re
+import runpy
+import tempfile
 import time
 import warnings
 from collections import UserList
@@ -23,6 +26,7 @@ from marple.db.constants import (
     MAX_SIGNALS_PER_ADD,
     SCHEMA,
 )
+from marple.db.script import Script
 from marple.db.signal import Signal
 from marple.db.signal_upload import (
     SignalUpload,
@@ -544,6 +548,58 @@ class Dataset(BaseModel):
         """
         r = self._client.post(f"/stream/{self.datastream_id}/dataset/{self.id}/delete")
         validate_response(r, "Delete dataset failed")
+
+    def rerun_processing(self) -> "Dataset":
+        """
+        Rerun aliasing and processing scripts for this dataset.
+
+        Returns the dataset after rerun processing has been queued.
+        Wait for completion with :meth:`wait_for_import`.
+        """
+        r = self._client.post(
+            f"/stream/{self.datastream_id}/processing/datasets",
+            json=[self.id],
+        )
+        validate_response(r, "Rerun processing failed")
+        return self.fetch(self._client, self.id)
+
+    def reingest(self) -> "Dataset":
+        """
+        Re-queue this dataset for ingest from its original uploaded file.
+
+        Returns the dataset after reingest has been queued.
+        Wait for completion with :meth:`wait_for_import`.
+        """
+        r = self._client.post(f"/stream/{self.datastream_id}/dataset/{self.id}/reingest")
+        validate_response(r, "Reingest dataset failed")
+        return self.fetch(self._client, self.id)
+
+    def get_debug_messages(self) -> list[str]:
+        """Return ingest / processing debug messages for this dataset's latest ingestion."""
+        r = self._client.get(f"/stream/{self.datastream_id}/dataset/{self.id}/debug")
+        return validate_response(r, "Get debug messages failed")
+
+    def run_locally(self, script: str | Path) -> "Dataset":
+        """Run a script locally for this dataset.
+
+        Args:
+            script: A source text or a path to a file that must define ``process(dataset)``.
+
+        Warning:
+            This is not a dry-run. The script will be executed and the dataset will be modified.
+        """
+        source = Script.resolve_source(script)
+        tmp = tempfile.NamedTemporaryFile("w", suffix=".py", delete=False)
+        try:
+            tmp.write(source)
+            tmp.close()
+            process = runpy.run_path(tmp.name).get("process")
+            if not callable(process):
+                raise ValueError("process() must be a callable")
+            process(self)
+        finally:
+            os.unlink(tmp.name)
+        return self.fetch(self._client, self.id)
 
 
 class DatasetList(UserList[Dataset]):

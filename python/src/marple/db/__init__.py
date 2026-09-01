@@ -14,6 +14,7 @@ from marple.db.constants import SAAS_URL
 from marple.db.constants import SCHEMA as _SCHEMA
 from marple.db.dataset import Dataset, DatasetList
 from marple.db.datastream import DataStream
+from marple.db.script import Script, ScriptVersion
 from marple.db.signal import Signal
 from marple.db.signal_upload import SignalsAlreadyExistError, SignalUpload
 from marple.utils import DBClient, validate_response
@@ -37,6 +38,8 @@ __all__ = [
     "DataStream",
     "Dataset",
     "DatasetList",
+    "Script",
+    "ScriptVersion",
     "Signal",
     "SignalUpload",
     "SignalsAlreadyExistError",
@@ -187,6 +190,15 @@ class DB:
         r_json = validate_response(r, "Create stream failed")
         return self.get_stream(r_json["id"])
 
+    def update_stream(self, stream_key: str | int, **config) -> DataStream:
+        """
+        Update a datastream. Keyword arguments are forwarded to
+        :meth:`~marple.db.datastream.DataStream.update`.
+        """
+        updated = self.get_stream(stream_key).update(**config)
+        self._streams[updated.id] = updated
+        return updated
+
     def delete_stream(self, stream_key: str | int) -> None:
         """
         Delete a datastream and all its datasets.
@@ -236,6 +248,76 @@ class DB:
         raise Exception(
             f"Stream with name or id {stream_key} not found, available streams: {', '.join([s.name for s in self._streams.values()])}"
         )
+
+    def rerun_processing(self, stream_key: str | int, dataset_ids: Sequence[int] | None = None) -> None:
+        """
+        Rerun aliasing and processing scripts for a stream or selected datasets.
+
+        See :meth:`~marple.db.datastream.DataStream.rerun_processing`.
+        """
+        self.get_stream(stream_key).rerun_processing(dataset_ids)
+
+    def get_scripts(self) -> list[Script]:
+        """List processing scripts in this workspace (without source / version history)."""
+        r = self.get("/scripts")
+        return [
+            Script(client=self.client, **script)
+            for script in validate_response(r, "Get scripts failed")["scripts"]
+        ]
+
+    def get_script(self, script_id: int) -> Script:
+        """Get a processing script by ID, including recent versions and source."""
+        return Script.fetch(self.client, script_id)
+
+    def run_script_locally(self, dataset_id: int, script: str | Path) -> Dataset:
+        """Run a script locally for a dataset.
+
+        Args:
+            dataset_id: The ID of the dataset to run the script on.
+            script: Source text or a path to a file that must define ``process(dataset)``.
+
+        Warning:
+            This is not a dry-run. The script will be executed and the dataset will be modified.
+        """
+        return self.get_dataset(dataset_id).run_locally(script)
+
+    def create_script(
+        self,
+        name: str,
+        script: str | Path,
+        *,
+        description: str | None = None,
+        streams: Sequence[int] | None = None,
+    ) -> Script:
+        """
+        Create a processing script.
+
+        Args:
+            name: The name of the script.
+            script: Source text or a path to a file that must define ``process(dataset)``.
+            description: The description of the script.
+            streams: Stream IDs to append this script to.
+        """
+        r = self.post(
+            "/script",
+            json={
+                "name": name,
+                "description": description,
+                "script": Script.resolve_source(script),
+                "streams": list(streams) if streams is not None else [],
+            },
+        )
+        return Script(client=self.client, **validate_response(r, "Create script failed"))
+
+    def delete_script(self, script_id: int) -> None:
+        """
+        Delete a processing script.
+
+        Warning:
+            This cannot be undone. The script is removed from every stream pipeline.
+        """
+        r = self.delete(f"/script/{script_id}")
+        validate_response(r, "Delete script failed")
 
     def _refresh_stream_cache(self, r: Response | None = None) -> None:
         if r is None:

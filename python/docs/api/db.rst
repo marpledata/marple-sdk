@@ -14,6 +14,8 @@ See :doc:`../tutorials` for upload examples.
    marple.db.DataStream
    marple.db.Dataset
    marple.db.DatasetList
+   marple.db.Script
+   marple.db.ScriptVersion
    marple.db.Signal
    marple.db.SignalUpload
    marple.db.SignalsAlreadyExistError
