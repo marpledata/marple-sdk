@@ -10,10 +10,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Changed
 
 - Exact signal names in `get_data` / `get_signal` / `get_signals` resolve via the dataset cache or `GET /datapool/{pool}/signal/{name}/id` instead of downloading the full datapool `signal_map`. Regex patterns still use the map.
+- Optional `plugin_args` on `DataStream.push_file` (and the deprecated `DB.push_file` wrapper).
 
 ### Added
 
 - `DB.delete_signals`, `Dataset.delete_signal` / `Dataset.delete_signals`, and `Signal.delete` to remove signals from a dataset.
+- `Dataset.reingest` to reingest a dataset from its original uploaded file, with optional `plugin_args`.
 
 ### Fixed
 
@@ -29,6 +31,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Fixed
 
 - An empty local parquet cache folder is treated as a cache miss and re-downloaded, instead of being assumed to mean the signal has no data.
+
 
 ## [3.4.0] - 2026-07-28
 

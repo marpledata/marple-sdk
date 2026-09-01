@@ -205,6 +205,34 @@ def test_signal_upload_validation_errors() -> None:
             data=pd.DataFrame({COL_TIME: [20_000_000_000], COL_VAL: [1.0]}),
         ).plan_upload(dataset)
 
+    with pytest.raises(ValueError, match="DatetimeIndex or TimedeltaIndex"):
+        SignalUpload(
+            name="bad_index",
+            data=pd.Series([1.0, 2.0], index=[0, 1]),
+        ).plan_upload(dataset)
+
+
+def test_signal_upload_series_datetime_index() -> None:
+    dataset = _fake_dataset()
+    index = pd.to_datetime([0, 1_000_000_000], unit="ns")
+    series = pd.Series([1.5, 2.5], index=index)
+
+    planned = SignalUpload(name="from_series", data=series).plan_upload(dataset)
+    assert planned.data.column(COL_TIME).to_pylist() == [0, 1_000_000_000]
+    assert planned.data.column(COL_VAL).to_pylist() == [1.5, 2.5]
+    assert planned.data.column(COL_VAL_TEXT).null_count == 2
+
+
+def test_signal_upload_series_timedelta_index_text() -> None:
+    dataset = _fake_dataset()
+    index = pd.to_timedelta([0, 2_000_000_000], unit="ns")
+    series = pd.Series(["a", "b"], index=index)
+
+    planned = SignalUpload(name="from_td_series", data=series).plan_upload(dataset)
+    assert planned.data.column(COL_TIME).to_pylist() == [0, 2_000_000_000]
+    assert planned.data.column(COL_VAL).null_count == 2
+    assert planned.data.column(COL_VAL_TEXT).to_pylist() == ["a", "b"]
+
 
 def test_signal_upload_non_finite_becomes_null() -> None:
     dataset = _fake_dataset()
