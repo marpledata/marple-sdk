@@ -496,9 +496,7 @@ class Dataset(BaseModel):
         Returns:
             The current dataset state after the reingest was started.
         """
-        kwargs: dict = {}
-        if plugin_args is not None:
-            kwargs["json"] = {"plugin_args": plugin_args}
+        kwargs = {} if plugin_args is None else {"json": {"plugin_args": plugin_args}}
         r = self._client.post(f"/stream/{self.datastream_id}/dataset/{self.id}/reingest", **kwargs)
         validate_response(r, "Reingest dataset failed")
         return self.fetch(self._client, self.id)
