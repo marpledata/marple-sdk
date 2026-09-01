@@ -157,7 +157,7 @@ class DataStream(BaseModel):
         overwrite: bool = False,
         plugin_args: str | None = None,
     ) -> IngestionInit:
-        body: dict = {
+        body = {
             "stream_id": self.id,
             "dataset_name": dataset_name,
             "file_size": file_size,
