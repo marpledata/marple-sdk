@@ -272,6 +272,8 @@ class DB:
     def run_script_locally(self, dataset_id: int, script: str | Path) -> Dataset:
         """Run a script locally for a dataset.
 
+        See :meth:`~marple.db.dataset.Dataset.run_locally`.
+
         Args:
             dataset_id: The ID of the dataset to run the script on.
             script: Source text or a path to a file that must define ``process(dataset)``.

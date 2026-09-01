@@ -82,7 +82,7 @@ Processing scripts
 ------------------
 
 Write a ``process(dataset)`` function and try it on any imported dataset.
-``run_locally`` runs in your Python process and writes to that dataset.
+This runs in your Python process and writes to that dataset.
 
 .. code-block:: python
 
@@ -97,7 +97,7 @@ def process(dataset: Dataset) -> None:
    dataset = stream.get_dataset(path="lap.csv")
    dataset.run_locally(source)
 
-Alternatively, pass a path to a file with the script.
+Alternatively, pass the path to a file that defines the ``process(dataset)`` function.
 
 When the script looks right, store it and attach it to the stream. New uploads then run it after ingest.
 
