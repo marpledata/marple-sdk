@@ -1,10 +1,49 @@
 import ast
+from enum import StrEnum
 from pathlib import Path
 from typing import Any
 
 from pydantic import BaseModel, Field, PrivateAttr, field_validator
 
 from marple.utils import OMITTED, DBClient, Omitted, validate_response
+
+
+class SandboxJobStatus(StrEnum):
+    """Status of a server-side processing script run."""
+
+    QUEUED = "queued"
+    RUNNING = "running"
+    SUCCEEDED = "succeeded"
+    FAILED = "failed"
+
+    def is_terminal(self) -> bool:
+        return self in (SandboxJobStatus.SUCCEEDED, SandboxJobStatus.FAILED)
+
+
+class SandboxJob(BaseModel):
+    """A server-side run of a stored processing script against a dataset."""
+
+    id: int
+    dataset_id: int
+    stream_id: int
+    script_id: int | None = None
+    script_version: int | None = None
+    script_index: int | None = None
+    ingestion_id: int | None = None
+    status: SandboxJobStatus
+    batch_job_id: str | None = None
+    token_id: int | None = None
+    log: str | None = None
+    created_by: str
+    created_at: float
+    started_at: float | None = None
+    finished_at: float | None = None
+
+    @classmethod
+    def fetch(cls, client: DBClient, job_id: int) -> "SandboxJob":
+        """Fetch a sandbox job by ID."""
+        r = client.get(f"/sandbox-job/{job_id}")
+        return cls.model_validate(validate_response(r, "Get sandbox job failed", check_envelope=False))
 
 
 class ScriptVersion(BaseModel):

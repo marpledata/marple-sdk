@@ -14,7 +14,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Added
 
 - Processing scripts: `DB.create_script` / `get_scripts` / `get_script` / `delete_script`, and `Script.update` / `duplicate` / `delete`, to manage stored `process(dataset)` scripts and attach them to streams.
-- `Dataset.run_locally` / `DB.run_script_locally` to execute a processing script against a dataset.
+- `Dataset.run` / `DB.run_script` to execute a stored processing script against a dataset via a server-side sandbox job.
 - `DataStream.scripts`, `DataStream.update` (`DB.update_stream`), and `DataStream.rerun_processing` (`DB.rerun_processing`) to edit a stream, set pipeline order, and rerun aliasing + scripts.
 - `Dataset.rerun_processing`, `Dataset.reingest`, and `Dataset.get_debug_messages`.
 - `DB.delete_signals`, `Dataset.delete_signal` / `Dataset.delete_signals`, and `Signal.delete` to remove signals from a dataset.

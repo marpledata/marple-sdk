@@ -1,7 +1,7 @@
 from pathlib import Path
 from types import SimpleNamespace
 from typing import Any
-from unittest.mock import MagicMock
+from unittest.mock import MagicMock, call
 
 import pytest
 
@@ -68,6 +68,28 @@ def _script_payload(**overrides: Any) -> dict[str, Any]:
     return payload
 
 
+def _job_payload(**overrides: Any) -> dict[str, Any]:
+    payload = {
+        "id": 99,
+        "dataset_id": 42,
+        "stream_id": 7,
+        "script_id": 3,
+        "script_version": 10,
+        "script_index": None,
+        "ingestion_id": None,
+        "status": "queued",
+        "batch_job_id": None,
+        "token_id": None,
+        "log": None,
+        "created_by": "sdk",
+        "created_at": 1.0,
+        "started_at": None,
+        "finished_at": None,
+    }
+    payload.update(overrides)
+    return payload
+
+
 def _dataset_payload(**overrides: Any) -> dict[str, Any]:
     payload = {
         "id": 42,
@@ -111,6 +133,13 @@ def require_rerun_processing_api(db: DB) -> None:
     response = db.client.post("/stream/0/processing/datasets", json=[1])
     if response.status_code in (404, 405):
         pytest.skip("Rerun processing API not available on this Marple DB deployment")
+
+
+@pytest.fixture(scope="session")
+def require_sandbox_jobs_api(db: DB) -> None:
+    response = db.client.post("/stream/0/dataset/0/sandbox-job", json={"script_id": 1})
+    if response.status_code in (403, 404, 405):
+        pytest.skip("Sandbox jobs API not available on this Marple DB deployment")
 
 
 def test_stream_defaults_scripts_when_missing() -> None:
@@ -250,6 +279,102 @@ def test_script_delete_and_duplicate() -> None:
     assert copy.name == "speed_kmh (Copy)"
 
 
+def test_dataset_run_rejects_source_text() -> None:
+    dataset = Dataset(client=MagicMock(), **_dataset_payload())
+    with pytest.raises(TypeError, match="stored Script"):
+        dataset.run(PASS_SCRIPT)  # type: ignore[arg-type]
+
+
+def test_dataset_run_rejects_source_and_version() -> None:
+    dataset = Dataset(client=MagicMock(), **_dataset_payload())
+    with pytest.raises(ValueError, match="source or version"):
+        dataset.run(3, source=PASS_SCRIPT, version=10)
+
+
+def test_dataset_run_posts_and_polls_until_succeeded(monkeypatch: pytest.MonkeyPatch) -> None:
+    client = MagicMock()
+    client.datapool = "default"
+    client.post.return_value = _ok(_job_payload(status="queued"))
+    client.get.side_effect = [
+        _ok(_job_payload(status="running")),
+        _ok(_job_payload(status="succeeded")),
+        _ok(_dataset_payload(import_status="FINISHED")),
+    ]
+    monkeypatch.setattr("marple.db.dataset.time.sleep", lambda _: None)
+    dataset = Dataset(client=client, **_dataset_payload(import_status="FINISHED"))
+    script = Script(client=client, **_script_payload())
+
+    updated = dataset.run(script)
+
+    client.post.assert_called_once_with(
+        "/stream/7/dataset/42/sandbox-job",
+        json={"script_id": 3},
+    )
+    assert client.get.call_args_list[:2] == [
+        call("/sandbox-job/99"),
+        call("/sandbox-job/99"),
+    ]
+    assert updated.id == 42
+    assert updated.import_status == "FINISHED"
+
+
+def test_dataset_run_posts_script_id_and_version() -> None:
+    client = MagicMock()
+    client.datapool = "default"
+    client.post.return_value = _ok(_job_payload(status="succeeded"))
+    client.get.return_value = _ok(_dataset_payload())
+    dataset = Dataset(client=client, **_dataset_payload())
+
+    dataset.run(3, version=10)
+
+    client.post.assert_called_once_with(
+        "/stream/7/dataset/42/sandbox-job",
+        json={"script_id": 3, "script_version": 10},
+    )
+
+
+def test_dataset_run_saves_source_then_runs() -> None:
+    client = MagicMock()
+    client.datapool = "default"
+    client.post.side_effect = [
+        _ok(_script_payload()),
+        _ok(_job_payload(status="succeeded")),
+    ]
+    client.get.return_value = _ok(_dataset_payload())
+    dataset = Dataset(client=client, **_dataset_payload())
+    script = Script(client=client, **_script_payload())
+
+    dataset.run(script, source=PASS_SCRIPT)
+
+    assert client.post.call_args_list == [
+        call("/script/3", json={"script": PASS_SCRIPT}),
+        call("/stream/7/dataset/42/sandbox-job", json={"script_id": 3}),
+    ]
+
+
+def test_dataset_run_raises_on_failure() -> None:
+    client = MagicMock()
+    client.post.return_value = _ok(_job_payload(status="failed", log="Traceback: boom"))
+    dataset = Dataset(client=client, **_dataset_payload())
+
+    with pytest.raises(RuntimeError, match="boom"):
+        dataset.run(3)
+    client.get.assert_not_called()
+
+
+def test_dataset_run_timeout(monkeypatch: pytest.MonkeyPatch) -> None:
+    client = MagicMock()
+    client.post.return_value = _ok(_job_payload(status="queued"))
+    monkeypatch.setattr("marple.db.dataset.time.sleep", lambda _: None)
+    times = iter([0.0, 10.0])
+    monkeypatch.setattr("marple.db.dataset.time.monotonic", lambda: next(times))
+    dataset = Dataset(client=client, **_dataset_payload())
+
+    with pytest.raises(TimeoutError, match="job 99"):
+        dataset.run(3, timeout=1)
+    client.get.assert_not_called()
+
+
 @pytest.mark.integration
 def test_script_crud_and_stream_pipeline(db: DB, require_scripts_api: None) -> None:
     name = unique_name("py-sdk-script")
@@ -310,3 +435,18 @@ def test_rerun_processing_and_debug(db: DB, require_rerun_processing_api: None) 
         stream.rerun_processing([dataset.id])
         finished = dataset.wait_for_import(timeout=180, force_fetch=True)
         assert finished.import_status == "FINISHED"
+
+
+@pytest.mark.integration
+def test_dataset_run_script(db: DB, require_sandbox_jobs_api: None) -> None:
+    name = unique_name("py-sdk-script-run")
+    with isolated_stream(db, SCRIPTS_TEST_PREFIX, "run", plugin_args="--use-index") as stream:
+        dataset = ingest_dataset(stream)
+        script = db.create_script(name, SPEED_KMH_SCRIPT)
+        try:
+            ran = dataset.run(script, timeout=180)
+            signal = ran.get_signal("car.speed_kmh")
+            assert signal is not None
+            signal.wait_until_available(timeout=60)
+        finally:
+            script.delete()

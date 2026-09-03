@@ -81,8 +81,8 @@ For batches, ``add_signals`` returns signal IDs without waiting:
 Processing scripts
 ------------------
 
-Write a ``process(dataset)`` function and try it on any imported dataset.
-This runs in your Python process and writes to that dataset.
+Write a ``process(dataset)`` function, store it, and try it on any imported dataset.
+This runs on the server and writes to that dataset.
 
 .. code-block:: python
 
@@ -94,16 +94,19 @@ def process(dataset: Dataset) -> None:
     dataset.add_signal("car.speed_kmh", speed * 3.6, metadata={"unit": "km/h"})
 """
 
+   script = db.create_script("speed_kmh", source)
    dataset = stream.get_dataset(path="lap.csv")
-   dataset.run_locally(source)
+   dataset.run(script)
 
-Alternatively, pass the path to a file that defines the ``process(dataset)`` function.
+Pass a ``.py`` path instead of source text. Iterate with
+``script.update(script=...)`` then ``dataset.run(script)`` (or
+``dataset.run(script, source=...)`` to save and run in one step).
 
-When the script looks right, store it and attach it to the stream. New uploads then run it after ingest.
+When the script looks right, attach it to the stream. New uploads then run it after ingest.
 
 .. code-block:: python
 
-   script = db.create_script("speed_kmh", source, streams=[stream.id])
+   stream.update(scripts=[script.id])
 
 For files already imported, rerun aliasing and scripts, or start over from
 the original file:

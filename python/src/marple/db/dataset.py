@@ -1,7 +1,4 @@
-import os
 import re
-import runpy
-import tempfile
 import time
 import warnings
 from collections import UserList
@@ -26,7 +23,7 @@ from marple.db.constants import (
     MAX_SIGNALS_PER_ADD,
     SCHEMA,
 )
-from marple.db.script import Script
+from marple.db.script import SandboxJob, SandboxJobStatus, Script
 from marple.db.signal import Signal
 from marple.db.signal_upload import (
     SignalUpload,
@@ -579,26 +576,68 @@ class Dataset(BaseModel):
         r = self._client.get(f"/stream/{self.datastream_id}/dataset/{self.id}/debug")
         return validate_response(r, "Get debug messages failed")
 
-    def run_locally(self, script: str | Path) -> "Dataset":
-        """Run a script locally for this dataset.
+    def run(
+        self,
+        script: Script | int,
+        *,
+        source: str | Path | None = None,
+        version: int | None = None,
+        timeout: float = 180,
+    ) -> "Dataset":
+        """Run a stored processing script on this dataset.
+
+        The script runs in a server-side sandbox (not in this process). Pass a
+        :class:`~marple.db.script.Script` from :meth:`~marple.db.DB.create_script`
+        (or its ID). If ``source`` is set, that source is saved as a new version
+        first, then the latest version is run.
 
         Args:
-            script: A source text or a path to a file that must define ``process(dataset)``.
+            script: A stored script or its ID.
+            source: Optional source text or ``.py`` path to save before running.
+            version: Script version ID to run. Defaults to the latest version.
+            timeout: Seconds to wait for the sandbox job to finish.
 
         Warning:
             This is not a dry-run. The script will be executed and the dataset will be modified.
         """
-        source = Script.resolve_source(script)
-        tmp = tempfile.NamedTemporaryFile("w", suffix=".py", delete=False)
-        try:
-            tmp.write(source)
-            tmp.close()
-            process = runpy.run_path(tmp.name).get("process")
-            if not callable(process):
-                raise ValueError("process() must be a callable")
-            process(self)
-        finally:
-            os.unlink(tmp.name)
+        if isinstance(script, (str, Path)):
+            raise TypeError(
+                "dataset.run() takes a stored Script (or script id). "
+                "Create one with db.create_script(name, source), then dataset.run(script)."
+            )
+        if source is not None and version is not None:
+            raise ValueError("Pass source or version, not both; saving creates a new version")
+
+        if source is not None:
+            stored = script if isinstance(script, Script) else Script.fetch(self._client, script)
+            stored = stored.update(script=source)
+            script_id = stored.id
+            version = None
+        else:
+            script_id = script.id if isinstance(script, Script) else script
+
+        payload: dict[str, Any] = {"script_id": script_id}
+        if version is not None:
+            payload["script_version"] = version
+
+        r = self._client.post(
+            f"/stream/{self.datastream_id}/dataset/{self.id}/sandbox-job",
+            json=payload,
+        )
+        job = SandboxJob.model_validate(validate_response(r, "Run script failed", check_envelope=False))
+
+        deadline = time.monotonic() + max(timeout, 0.1)
+        while not job.status.is_terminal():
+            if time.monotonic() >= deadline:
+                raise TimeoutError(
+                    f"Script did not finish after {timeout} seconds (job {job.id}, status={job.status})"
+                )
+            time.sleep(0.5)
+            job = SandboxJob.fetch(self._client, job.id)
+
+        if job.status == SandboxJobStatus.FAILED:
+            raise RuntimeError(f"Script failed (job {job.id}): {job.log or 'no log'}")
+
         return self.fetch(self._client, self.id)
 
 
