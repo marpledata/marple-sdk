@@ -293,16 +293,17 @@ class DB:
         script: str | Path,
         *,
         description: str | None = None,
-        streams: Sequence[int] | None = None,
     ) -> Script:
         """
         Create a processing script.
+
+        Attach it to a stream with :meth:`~marple.db.datastream.DataStream.update`
+        (``scripts=`` replaces the full pipeline).
 
         Args:
             name: The name of the script.
             script: Source text or a path to a file that must define ``process(dataset)``.
             description: The description of the script.
-            streams: Stream IDs to append this script to.
         """
         r = self.post(
             "/script",
@@ -310,7 +311,6 @@ class DB:
                 "name": name,
                 "description": description,
                 "script": Script.resolve_source(script),
-                "streams": list(streams) if streams is not None else [],
             },
         )
         return Script(client=self.client, **validate_response(r, "Create script failed"))

@@ -306,7 +306,9 @@ class DataStream(BaseModel):
             signal_reduction: The new signal reduction for the datastream.
             insight_workspace: The new insight workspace for the datastream.
             insight_project: The new insight project for the datastream.
-            scripts: IDs of the scripts to set as the new pipeline.
+            scripts: Replace the processing pipeline with these script IDs, in
+                order. Pass ``[]`` to detach all scripts. Omitted leaves the
+                pipeline unchanged.
         """
         payload: dict[str, Any] = {}
         if name is not OMITTED:

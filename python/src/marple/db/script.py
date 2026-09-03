@@ -59,9 +59,10 @@ class Script(BaseModel):
     """
     A reusable processing script that runs on datasets after ingest.
 
-    Scripts are stored at workspace level. Attach them to one or more streams
-    with ``streams`` (appends to each stream's pipeline) or set the full
-    pipeline order with :meth:`~marple.db.datastream.DataStream.update`.
+    Scripts are stored at workspace level. Attach them to a stream's pipeline
+    with :meth:`~marple.db.datastream.DataStream.update` (``scripts=`` replaces
+    the full pipeline, in order). ``streams`` is the list of stream IDs this
+    script is currently attached to.
 
     The script source must define ``process(dataset)``. List responses do not
     include ``versions``; use :meth:`fetch` / :meth:`refresh` or the object
@@ -110,16 +111,17 @@ class Script(BaseModel):
         name: str | Omitted = OMITTED,
         description: str | None | Omitted = OMITTED,
         script: str | Path | Omitted = OMITTED,
-        streams: list[int] | Omitted = OMITTED,
     ) -> "Script":
         """
         Update this script. Only provided fields are sent.
+
+        To attach this script to a stream, use
+        :meth:`~marple.db.datastream.DataStream.update` with ``scripts=``.
 
         Args:
             name: The new name for the script.
             description: The new description for the script.
             script: Source text, a ``.py`` path string, or a :class:`~pathlib.Path`.
-            streams: The new streams to attach the script to.
         """
         payload: dict[str, Any] = {}
         if name is not OMITTED:
@@ -128,8 +130,6 @@ class Script(BaseModel):
             payload["description"] = description
         if script is not OMITTED:
             payload["script"] = self.resolve_source(script)
-        if streams is not OMITTED:
-            payload["streams"] = streams
 
         r = self._client.post(f"/script/{self.id}", json=payload)
         return Script(client=self._client, **validate_response(r, "Update script failed"))

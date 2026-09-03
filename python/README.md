@@ -108,20 +108,21 @@ dataset = stream.get_dataset(path="lap.csv")
 dataset.run(script)
 ```
 
-Pass a `.py` path or `pathlib.Path` to `create_script` / `script.update` instead of source text. Iterate with `script.update(script=...)` then `dataset.run(script)` again (or `dataset.run(script, source=...)` to save and run in one step). When the script looks right, attach it to the stream. New uploads then run it after ingest.
+Pass a `.py` path or `pathlib.Path` to `create_script` / `script.update` instead of source text. Iterate with `script.update(script=...)` then `dataset.run(script)` again (or `dataset.run(script, source=...)` to save and run in one step). New signals written by the script may need `signal.wait_until_available(...)` before you read them.
+
+When the script looks right, attach it to the stream with `stream.update(scripts=...)`. That **replaces** the pipeline (pass `[]` to detach all). New uploads then run those scripts after ingest.
 
 ```python
-stream.update(scripts=[script.id])
+stream = stream.update(scripts=[script.id])
 ```
 
-For files already imported, rerun aliasing and scripts, or start over from the original file:
+For files already imported, rerun aliasing and the stream's script pipeline:
 
 ```python
 dataset = dataset.rerun_processing().wait_for_import()
-# or: dataset = dataset.reingest().wait_for_import()
 ```
 
-Use `script.update(...)` to change source or metadata, `stream.update(scripts=[script.id])` to set pipeline order, and `dataset.get_debug_messages()` to read ingest/script logs.
+Use `script.update(...)` to change source or metadata, and `dataset.get_debug_messages()` for the latest ingestion's debug log (not the sandbox job log from `dataset.run`).
 
 #### Upload large files
 
@@ -221,10 +222,9 @@ if len(datasets) > 0:
 - **Delete a dataset**: `dataset.delete()` or `db.delete_dataset(dataset_id, dataset_path)`
 - **Delete signals**: `signal.delete()`, `dataset.delete_signal(signal_id)` / `dataset.delete_signals(signal_ids)`, or `db.delete_signals(dataset_id, dataset_path, signal_ids)`
 - **Run a processing script**: `dataset.run(script)` or `db.run_script(dataset_id, script)`
-- **Create a processing script**: `db.create_script(name, script, streams=[stream.id])`
-- **Edit a stream / set script pipeline**: `stream.update(description=..., scripts=[script.id])`
+- **Create a processing script**: `db.create_script(name, script)`
+- **Set script pipeline** (replaces the full list): `stream.update(scripts=[script.id])`
 - **Rerun aliasing + scripts**: `dataset.rerun_processing().wait_for_import()` or `stream.rerun_processing([dataset.id])`
-- **Reingest from the original file**: `dataset.reingest().wait_for_import()`
 - **Read ingest debug logs**: `dataset.get_debug_messages()`
 
 For live streams:

@@ -87,12 +87,12 @@ This runs on the server and writes to that dataset.
 .. code-block:: python
 
    source = """
-from marple.db import Dataset
+   from marple.db import Dataset
 
-def process(dataset: Dataset) -> None:
-    speed = dataset.get_signal("car.speed").get_data()
-    dataset.add_signal("car.speed_kmh", speed * 3.6, metadata={"unit": "km/h"})
-"""
+   def process(dataset: Dataset) -> None:
+       speed = dataset.get_signal("car.speed").get_data()
+       dataset.add_signal("car.speed_kmh", speed * 3.6, metadata={"unit": "km/h"})
+   """
 
    script = db.create_script("speed_kmh", source)
    dataset = stream.get_dataset(path="lap.csv")
@@ -102,19 +102,19 @@ Pass a ``.py`` path instead of source text. Iterate with
 ``script.update(script=...)`` then ``dataset.run(script)`` (or
 ``dataset.run(script, source=...)`` to save and run in one step).
 
-When the script looks right, attach it to the stream. New uploads then run it after ingest.
+When the script looks right, attach it to the stream with
+``stream.update(scripts=...)``. That **replaces** the pipeline
+(pass ``[]`` to detach all). New uploads then run those scripts after ingest.
 
 .. code-block:: python
 
-   stream.update(scripts=[script.id])
+   stream = stream.update(scripts=[script.id])
 
-For files already imported, rerun aliasing and scripts, or start over from
-the original file:
+For files already imported, rerun aliasing and the stream's script pipeline:
 
 .. code-block:: python
 
    dataset = dataset.rerun_processing().wait_for_import()
-   # or: dataset = dataset.reingest().wait_for_import()
 
 Filter datasets and get resampled data
 --------------------------------------

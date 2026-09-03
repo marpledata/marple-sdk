@@ -561,7 +561,10 @@ class Dataset(BaseModel):
         return self.fetch(self._client, self.id)
 
     def get_debug_messages(self) -> list[str]:
-        """Return ingest / processing debug messages for this dataset's latest ingestion."""
+        """Return debug messages for this dataset's latest ingestion (aliasing and pipeline runs).
+
+        Sandbox output from :meth:`run` is on the job log, not this list.
+        """
         r = self._client.get(f"/stream/{self.datastream_id}/dataset/{self.id}/debug")
         return validate_response(r, "Get debug messages failed")
 
