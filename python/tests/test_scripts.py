@@ -1,0 +1,266 @@
+from pathlib import Path
+from types import SimpleNamespace
+from typing import Any
+from unittest.mock import MagicMock, call
+
+import pytest
+
+from marple import DB
+from marple.db import Dataset, Script
+from support import ingest_dataset, isolated_stream, unique_name
+
+SCRIPTS_TEST_PREFIX = "Salty Compulsory PytestScripts"
+
+SPEED_KMH_SCRIPT = """
+from marple.db import Dataset
+
+def process(dataset: Dataset) -> None:
+    speed = dataset.get_signal("car.speed")
+    if speed is None:
+        return
+    dataset.add_signal("car.speed_kmh", speed.get_data() * 3.6, metadata={"unit": "km/h"})
+"""
+
+PASS_SCRIPT = "def process(dataset):\n    pass\n"
+
+
+def _ok(body: Any) -> SimpleNamespace:
+    return SimpleNamespace(status_code=200, json=lambda: body)
+
+
+def _script_payload(**overrides: Any) -> dict[str, Any]:
+    payload = {
+        "id": 3,
+        "name": "speed_kmh",
+        "description": "Derive km/h",
+        "created_at": 1.0,
+        "created_by": "sdk",
+        "updated_at": 2.0,
+        "updated_by": "sdk",
+        "streams": [7],
+        "versions": [
+            {
+                "id": 10,
+                "script": "print('ok')",
+                "updated_at": 2.0,
+                "updated_by": "sdk",
+            }
+        ],
+    }
+    payload.update(overrides)
+    return payload
+
+
+def _job_payload(**overrides: Any) -> dict[str, Any]:
+    payload = {
+        "id": 99,
+        "dataset_id": 42,
+        "stream_id": 7,
+        "script_id": 3,
+        "script_version": 10,
+        "script_index": None,
+        "ingestion_id": None,
+        "status": "queued",
+        "batch_job_id": None,
+        "token_id": None,
+        "log": None,
+        "created_by": "sdk",
+        "created_at": 1.0,
+        "started_at": None,
+        "finished_at": None,
+    }
+    payload.update(overrides)
+    return payload
+
+
+def _dataset_payload(**overrides: Any) -> dict[str, Any]:
+    payload = {
+        "id": 42,
+        "stream_id": 7,
+        "datastream_version": 1,
+        "created_at": 0.0,
+        "created_by": "sdk",
+        "import_status": "POSTPROCESSING",
+        "import_progress": 0.0,
+        "import_message": None,
+        "import_time": None,
+        "path": "lap.csv",
+        "metadata": {},
+        "cold_path": "",
+        "cold_bytes": 0,
+        "hot_bytes": 0,
+        "backup_path": None,
+        "backup_size": None,
+        "plugin": "csv",
+        "plugin_args": None,
+        "n_datapoints": 0,
+        "n_signals": 0,
+        "timestamp_start": None,
+        "timestamp_stop": None,
+        "import_speed": None,
+        "parquet_version": 1,
+    }
+    payload.update(overrides)
+    return payload
+
+
+@pytest.fixture(scope="session")
+def require_scripts_api(db: DB) -> None:
+    response = db.client.get("/scripts")
+    if response.status_code in (404, 405):
+        pytest.skip("Processing scripts API not available on this Marple DB deployment")
+
+
+@pytest.fixture(scope="session")
+def require_rerun_processing_api(db: DB) -> None:
+    response = db.client.post("/stream/0/processing/datasets", json=[1])
+    if response.status_code in (404, 405):
+        pytest.skip("Rerun processing API not available on this Marple DB deployment")
+
+
+@pytest.fixture(scope="session")
+def require_sandbox_jobs_api(db: DB) -> None:
+    response = db.client.post("/stream/0/dataset/0/sandbox-job", json={"script_id": 1})
+    if response.status_code in (403, 404, 405):
+        pytest.skip("Sandbox jobs API not available on this Marple DB deployment")
+
+
+def test_resolve_source(tmp_path: Path) -> None:
+    assert Script.resolve_source(PASS_SCRIPT) == PASS_SCRIPT
+
+    path = tmp_path / "speed.py"
+    path.write_text(PASS_SCRIPT)
+    assert Script.resolve_source(path) == PASS_SCRIPT
+
+    with pytest.raises(ValueError, match="exactly one process"):
+        Script.resolve_source("print('ok')")
+
+
+def test_dataset_run_rejects_source_text() -> None:
+    dataset = Dataset(client=MagicMock(), **_dataset_payload())
+    with pytest.raises(TypeError, match="stored Script"):
+        dataset.run(PASS_SCRIPT)  # type: ignore[arg-type]
+
+
+def test_dataset_run_rejects_source_and_version() -> None:
+    dataset = Dataset(client=MagicMock(), **_dataset_payload())
+    with pytest.raises(ValueError, match="source or version"):
+        dataset.run(3, source=PASS_SCRIPT, version=10)
+
+
+def test_dataset_run_saves_source_then_runs() -> None:
+    client = MagicMock()
+    client.datapool = "default"
+    client.post.side_effect = [
+        _ok(_script_payload()),
+        _ok(_job_payload(status="succeeded")),
+    ]
+    client.get.return_value = _ok(_dataset_payload())
+    dataset = Dataset(client=client, **_dataset_payload())
+    script = Script(client=client, **_script_payload())
+
+    dataset.run(script, source=PASS_SCRIPT)
+
+    assert client.post.call_args_list == [
+        call("/script/3", json={"script": PASS_SCRIPT}),
+        call("/stream/7/dataset/42/sandbox-job", json={"script_id": 3}),
+    ]
+
+
+def test_dataset_run_raises_on_failure() -> None:
+    client = MagicMock()
+    client.post.return_value = _ok(_job_payload(status="failed", log="Traceback: boom"))
+    dataset = Dataset(client=client, **_dataset_payload())
+
+    with pytest.raises(RuntimeError, match="boom"):
+        dataset.run(3)
+    client.get.assert_not_called()
+
+
+def test_dataset_run_timeout(monkeypatch: pytest.MonkeyPatch) -> None:
+    client = MagicMock()
+    client.post.return_value = _ok(_job_payload(status="queued"))
+    monkeypatch.setattr("marple.db.dataset.time.sleep", lambda _: None)
+    times = iter([0.0, 10.0])
+    monkeypatch.setattr("marple.db.dataset.time.monotonic", lambda: next(times))
+    dataset = Dataset(client=client, **_dataset_payload())
+
+    with pytest.raises(TimeoutError, match="job 99"):
+        dataset.run(3, timeout=1)
+    client.get.assert_not_called()
+
+
+@pytest.mark.integration
+def test_script_crud_and_stream_pipeline(db: DB, require_scripts_api: None) -> None:
+    name = unique_name("py-sdk-script")
+    with isolated_stream(db, SCRIPTS_TEST_PREFIX, "pipeline", plugin_args="--use-index") as stream:
+        script = db.create_script(
+            name,
+            SPEED_KMH_SCRIPT,
+            description="Created by SDK test",
+        )
+        duplicate = None
+        try:
+            assert script.name == name
+            assert script.streams == []
+            assert script.source is not None and "def process" in script.source
+            assert any(s.id == script.id for s in db.get_scripts())
+            assert db.get_script(script.id).id == script.id
+
+            updated = script.update(description="Metadata only")
+            assert updated.description == "Metadata only"
+            assert len(updated.versions) == 1
+
+            coded = updated.update(script=PASS_SCRIPT)
+            assert coded.source == PASS_SCRIPT
+            assert len(coded.versions) == 2
+
+            duplicate = coded.duplicate()
+            assert duplicate.name == f"{name} (Copy)"
+            assert duplicate.streams == []
+
+            stream = stream.update(scripts=[script.id, duplicate.id])
+            assert stream.scripts == [script.id, duplicate.id]
+            assert coded.refresh().streams == [stream.id]
+
+            stream = stream.update(description="SDK processing test")
+            assert stream.description == "SDK processing test"
+            assert stream.scripts == [script.id, duplicate.id]
+
+            stream = stream.update(scripts=[])
+            assert stream.scripts == []
+        finally:
+            if duplicate is not None:
+                duplicate.delete()
+            db.delete_script(script.id)
+
+
+@pytest.mark.integration
+def test_rerun_processing_and_debug(db: DB, require_rerun_processing_api: None) -> None:
+    with isolated_stream(db, SCRIPTS_TEST_PREFIX, "rerun", plugin_args="--use-index") as stream:
+        dataset = ingest_dataset(stream)
+        messages = dataset.get_debug_messages()
+        assert isinstance(messages, list)
+
+        rerun = dataset.rerun_processing().wait_for_import(timeout=180)
+        assert rerun.import_status == "FINISHED"
+        assert rerun.id == dataset.id
+
+        stream.rerun_processing([dataset.id])
+        finished = dataset.wait_for_import(timeout=180, force_fetch=True)
+        assert finished.import_status == "FINISHED"
+
+
+@pytest.mark.integration
+def test_dataset_run_script(db: DB, require_sandbox_jobs_api: None) -> None:
+    name = unique_name("py-sdk-script-run")
+    with isolated_stream(db, SCRIPTS_TEST_PREFIX, "run", plugin_args="--use-index") as stream:
+        dataset = ingest_dataset(stream)
+        script = db.create_script(name, SPEED_KMH_SCRIPT)
+        try:
+            ran = dataset.run(script, timeout=180)
+            signal = ran.get_signal("car.speed_kmh")
+            assert signal is not None
+            signal.wait_until_available(timeout=60)
+        finally:
+            script.delete()

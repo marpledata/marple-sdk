@@ -14,6 +14,7 @@ from marple.db.constants import SAAS_URL
 from marple.db.constants import SCHEMA as _SCHEMA
 from marple.db.dataset import Dataset, DatasetList
 from marple.db.datastream import DataStream
+from marple.db.script import SandboxJob, SandboxJobStatus, Script, ScriptVersion
 from marple.db.signal import Signal
 from marple.db.signal_upload import SignalsAlreadyExistError, SignalUpload
 from marple.utils import DBClient, validate_response
@@ -37,6 +38,10 @@ __all__ = [
     "DataStream",
     "Dataset",
     "DatasetList",
+    "SandboxJob",
+    "SandboxJobStatus",
+    "Script",
+    "ScriptVersion",
     "Signal",
     "SignalUpload",
     "SignalsAlreadyExistError",
@@ -236,6 +241,89 @@ class DB:
         raise Exception(
             f"Stream with name or id {stream_key} not found, available streams: {', '.join([s.name for s in self._streams.values()])}"
         )
+
+    def rerun_processing(self, stream_key: str | int, dataset_ids: Sequence[int] | None = None) -> None:
+        """
+        Rerun aliasing and processing scripts for a stream or selected datasets.
+
+        See :meth:`~marple.db.datastream.DataStream.rerun_processing`.
+        """
+        self.get_stream(stream_key).rerun_processing(dataset_ids)
+
+    def get_scripts(self) -> list[Script]:
+        """List processing scripts in this workspace (without source / version history)."""
+        r = self.get("/scripts")
+        return [
+            Script(client=self.client, **script)
+            for script in validate_response(r, "Get scripts failed")["scripts"]
+        ]
+
+    def get_script(self, script_id: int) -> Script:
+        """Get a processing script by ID, including recent versions and source."""
+        return Script.fetch(self.client, script_id)
+
+    def run_script(
+        self,
+        dataset_id: int,
+        script: Script | int,
+        *,
+        source: str | Path | None = None,
+        version: int | None = None,
+        timeout: float = 180,
+    ) -> Dataset:
+        """Run a stored processing script on a dataset.
+
+        See :meth:`~marple.db.dataset.Dataset.run`.
+
+        Args:
+            dataset_id: The ID of the dataset to run the script on.
+            script: A stored script or its ID.
+            source: Optional source text or ``.py`` path to save before running.
+            version: Script version ID to run. Defaults to the latest version.
+            timeout: Seconds to wait for the sandbox job to finish.
+
+        Warning:
+            This is not a dry-run. The script will be executed and the dataset will be modified.
+        """
+        return self.get_dataset(dataset_id).run(script, source=source, version=version, timeout=timeout)
+
+    def create_script(
+        self,
+        name: str,
+        script: str | Path,
+        *,
+        description: str | None = None,
+    ) -> Script:
+        """
+        Create a processing script.
+
+        Attach it to a stream with :meth:`~marple.db.datastream.DataStream.update`
+        (``scripts=`` replaces the full pipeline).
+
+        Args:
+            name: The name of the script.
+            script: Source text or a path to a file that must define ``process(dataset)``.
+            description: The description of the script.
+        """
+        r = self.post(
+            "/script",
+            json={
+                "name": name,
+                "description": description,
+                "script": Script.resolve_source(script),
+            },
+        )
+        return Script(client=self.client, **validate_response(r, "Create script failed"))
+
+    def delete_script(self, script_id: int) -> None:
+        """
+        Delete a processing script.
+
+        Warning:
+            This cannot be undone. The script is removed from every stream pipeline.
+        """
+        r = self.delete(f"/script/{script_id}")
+        validate_response(r, "Delete script failed")
 
     def _refresh_stream_cache(self, r: Response | None = None) -> None:
         if r is None:

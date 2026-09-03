@@ -1,3 +1,4 @@
+from enum import Enum
 from pathlib import Path
 from typing import Any, Literal
 from urllib import parse, request
@@ -19,7 +20,18 @@ from marple.db.constants import (
 )
 
 
-def validate_response(response: requests.Response, failure_message: str) -> Any:
+class Omitted(Enum):
+    """
+    Marker for values that are not defined.
+    """
+
+    TOKEN = 0
+
+
+OMITTED = Omitted.TOKEN
+
+
+def validate_response(response: requests.Response, failure_message: str, *, check_envelope: bool = True) -> Any:
     if response.status_code == 400:
         raise ValueError(f"{failure_message}: Bad request. {response.json().get('error', 'Unknown error')}")
     if response.status_code == 403:
@@ -35,7 +47,11 @@ def validate_response(response: requests.Response, failure_message: str) -> Any:
     if response.status_code != 200:
         response.raise_for_status()
     r_json = response.json()
-    if isinstance(r_json, dict) and r_json.get("status", "success") not in ["success", "healthy"]:
+    if (
+        check_envelope
+        and isinstance(r_json, dict)
+        and r_json.get("status", "success") not in ["success", "healthy"]
+    ):
         raise ValueError(failure_message)
     return r_json
 
