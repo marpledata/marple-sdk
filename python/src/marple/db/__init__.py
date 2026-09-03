@@ -442,6 +442,7 @@ class DB:
         metadata: dict | None = None,
         file_name: str | None = None,
         overwrite: bool = False,
+        plugin_args: str | None = None,
     ) -> int:
         """
         Push a file to a datastream.
@@ -450,12 +451,13 @@ class DB:
         - `metadata`: (optional) A dictionary of metadata to be associated with the file.
         - `file_name`: (optional) The name of the file to be stored in the stream.
         - `overwrite`: (optional) If true, existing dataset with the same name will be overwritten.
+        - `plugin_args`: (optional) Plugin arguments for this ingest.
 
         Note:
             This function is deprecated and it is encouraged to use the `push_file` method in the `DataStream` class directly.
         """
         stream = self.get_stream(stream_key)
-        return stream.push_file(file_path, metadata, file_name, overwrite=overwrite).id
+        return stream.push_file(file_path, metadata, file_name, overwrite=overwrite, plugin_args=plugin_args).id
 
     @deprecated
     def get_status(self, stream_key: str | int, dataset_id: int) -> dict:

@@ -25,10 +25,7 @@ from marple.db.constants import (
 )
 from marple.db.script import SandboxJob, SandboxJobStatus, Script
 from marple.db.signal import Signal
-from marple.db.signal_upload import (
-    SignalUpload,
-    run_signal_uploads,
-)
+from marple.db.signal_upload import SignalUpload, run_signal_uploads
 from marple.utils import DBClient, validate_response
 
 
@@ -484,6 +481,25 @@ class Dataset(BaseModel):
 
         r = self._client.post(f"/stream/{self.datastream_id}/dataset/{self.id}/cool")
         validate_response(r, "Cool dataset failed")
+        return self.fetch(self._client, self.id)
+
+    def reingest(self, plugin_args: str | None = None) -> "Dataset":
+        """
+        Reingest this dataset from its original uploaded file.
+
+        Reingestion is started asynchronously on the server. Poll completion with
+        :meth:`wait_for_import`.
+
+        Args:
+            plugin_args: Optional plugin arguments for this reingest. If omitted, the
+                arguments from the previous ingestion are used.
+
+        Returns:
+            The current dataset state after the reingest was started.
+        """
+        kwargs = {} if plugin_args is None else {"json": {"plugin_args": plugin_args}}
+        r = self._client.post(f"/stream/{self.datastream_id}/dataset/{self.id}/reingest", **kwargs)
+        validate_response(r, "Reingest dataset failed")
         return self.fetch(self._client, self.id)
 
     def wait_for_import(self, timeout: float = 60, force_fetch: bool = False) -> "Dataset":
