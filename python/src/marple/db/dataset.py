@@ -560,17 +560,6 @@ class Dataset(BaseModel):
         validate_response(r, "Rerun processing failed")
         return self.fetch(self._client, self.id)
 
-    def reingest(self) -> "Dataset":
-        """
-        Re-queue this dataset for ingest from its original uploaded file.
-
-        Returns the dataset after reingest has been queued.
-        Wait for completion with :meth:`wait_for_import`.
-        """
-        r = self._client.post(f"/stream/{self.datastream_id}/dataset/{self.id}/reingest")
-        validate_response(r, "Reingest dataset failed")
-        return self.fetch(self._client, self.id)
-
     def get_debug_messages(self) -> list[str]:
         """Return ingest / processing debug messages for this dataset's latest ingestion."""
         r = self._client.get(f"/stream/{self.datastream_id}/dataset/{self.id}/debug")
@@ -585,11 +574,6 @@ class Dataset(BaseModel):
         timeout: float = 180,
     ) -> "Dataset":
         """Run a stored processing script on this dataset.
-
-        The script runs in a server-side sandbox (not in this process). Pass a
-        :class:`~marple.db.script.Script` from :meth:`~marple.db.DB.create_script`
-        (or its ID). If ``source`` is set, that source is saved as a new version
-        first, then the latest version is run.
 
         Args:
             script: A stored script or its ID.

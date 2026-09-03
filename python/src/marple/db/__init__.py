@@ -192,15 +192,6 @@ class DB:
         r_json = validate_response(r, "Create stream failed")
         return self.get_stream(r_json["id"])
 
-    def update_stream(self, stream_key: str | int, **config) -> DataStream:
-        """
-        Update a datastream. Keyword arguments are forwarded to
-        :meth:`~marple.db.datastream.DataStream.update`.
-        """
-        updated = self.get_stream(stream_key).update(**config)
-        self._streams[updated.id] = updated
-        return updated
-
     def delete_stream(self, stream_key: str | int) -> None:
         """
         Delete a datastream and all its datasets.
