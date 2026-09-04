@@ -15,6 +15,7 @@ import pyarrow.parquet as pq
 from pandas._typing import AggFuncType, Frequency
 from pydantic import BaseModel, ConfigDict, Field, PrivateAttr, ValidationError
 
+from marple.db.activity import logger
 from marple.db.constants import (
     COL_SIG,
     COL_TIME,
@@ -24,10 +25,7 @@ from marple.db.constants import (
     SCHEMA,
 )
 from marple.db.signal import Signal
-from marple.db.signal_upload import (
-    SignalUpload,
-    run_signal_uploads,
-)
+from marple.db.signal_upload import SignalUpload, run_signal_uploads
 from marple.utils import DBClient, validate_response
 
 
@@ -335,6 +333,8 @@ class Dataset(BaseModel):
         new_metadata = metadata if overwrite else {**self.metadata, **metadata}
         r = self._client.post(f"/stream/{self.datastream_id}/dataset/{self.id}/metadata", json=new_metadata)
         validate_response(r, "Update metadata failed")
+        suffix = " (overwrite=True)" if overwrite else ""
+        logger.debug(f"Updated dataset metadata: {metadata}{suffix}")
         return self.fetch(self._client, self.id)
 
     def upsert_signals(self, signals: list[dict]) -> None:
@@ -349,6 +349,7 @@ class Dataset(BaseModel):
         """
         r = self._client.post(f"/stream/{self.datastream_id}/dataset/{self.id}/signals", json=signals)
         validate_response(r, "Upsert signals failed")
+        logger.debug("Upserted metadata for %s signals", len(signals))
 
     def add_signal(
         self,
@@ -417,6 +418,8 @@ class Dataset(BaseModel):
         for signal_id in signal_ids:  # Invalidate new signals from cache
             if signal_id in self._signals:
                 del self._signals[signal_id]
+        names = [item.name if isinstance(item, SignalUpload) else item["name"] for item in signals]
+        logger.debug("Added %s (overwrite=%s)", ", ".join(names), overwrite)
         return signal_ids
 
     def append(
@@ -463,6 +466,7 @@ class Dataset(BaseModel):
             timeout=self._client.STORAGE_TIMEOUT,
         )
         validate_response(r, "Append data failed")
+        logger.debug("Appended %s rows to realtime dataset", len(data))
 
     def cool(self) -> "Dataset":
         """
@@ -483,6 +487,7 @@ class Dataset(BaseModel):
 
         r = self._client.post(f"/stream/{self.datastream_id}/dataset/{self.id}/cool")
         validate_response(r, "Cool dataset failed")
+        logger.debug("Started cooling dataset %s", self.id)
         return self.fetch(self._client, self.id)
 
     def wait_for_import(self, timeout: float = 60, force_fetch: bool = False) -> "Dataset":
@@ -534,6 +539,7 @@ class Dataset(BaseModel):
         validate_response(r, "Delete signals failed")
         for signal_id in to_delete:
             self._signals.pop(signal_id, None)
+        logger.debug("Deleted %s signals", len(to_delete))
 
     def delete(self) -> None:
         """
@@ -544,6 +550,7 @@ class Dataset(BaseModel):
         """
         r = self._client.post(f"/stream/{self.datastream_id}/dataset/{self.id}/delete")
         validate_response(r, "Delete dataset failed")
+        logger.debug("Deleted dataset %s", self.id)
 
 
 class DatasetList(UserList[Dataset]):

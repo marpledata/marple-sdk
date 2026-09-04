@@ -9,6 +9,7 @@ from requests import Response
 from requests.exceptions import ConnectionError
 
 from marple.db import sql
+from marple.db.activity import enable_activity_log
 from marple.db.constants import LAKE_ARROW_SCHEMA as _LAKE_ARROW_SCHEMA
 from marple.db.constants import SAAS_URL
 from marple.db.constants import SCHEMA as _SCHEMA
@@ -42,6 +43,7 @@ __all__ = [
     "SignalsAlreadyExistError",
     "SCHEMA",
     "LAKE_ARROW_SCHEMA",
+    "enable_activity_log",
 ]
 
 

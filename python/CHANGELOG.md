@@ -14,6 +14,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Added
 
 - `DB.delete_signals`, `Dataset.delete_signal` / `Dataset.delete_signals`, and `Signal.delete` to remove signals from a dataset.
+- `logger.debug` lines on SDK mutations (`add_signal`, `update_metadata`, …), off by default. Call `enable_activity_log()` to print them (used by the processing sandbox).
 
 ### Fixed
 
