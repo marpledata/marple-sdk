@@ -1,15 +1,21 @@
 import warnings
-from collections.abc import Iterator
+from collections.abc import Iterator, Sequence
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from pathlib import Path
 from threading import Lock
-from typing import Literal, Optional
+from typing import Any, Literal, Optional
 
-from pydantic import BaseModel, PrivateAttr
+from pydantic import BaseModel, Field, PrivateAttr, field_validator
 
 from marple.db.activity import logger
 from marple.db.dataset import Dataset, DatasetList
-from marple.utils import DBClient, validate_response, validate_storage_response
+from marple.utils import (
+    OMITTED,
+    DBClient,
+    Omitted,
+    validate_response,
+    validate_storage_response,
+)
 
 
 class IngestionInit(BaseModel):
@@ -62,12 +68,30 @@ class DataStream(BaseModel):
     plugin: Optional[str] = None
     plugin_args: Optional[str] = None
     signal_reduction: Optional[list] = None
+    scripts: list[int] = Field(default_factory=list)
+    """IDs of processing scripts in pipeline order. Empty if none are attached."""
 
     _client = PrivateAttr()
 
     def __init__(self, client: DBClient, **kwargs):
         super().__init__(**kwargs)
         self._client = client
+
+    @field_validator("scripts", mode="before")
+    @classmethod
+    def _default_scripts(cls, value: object) -> object:
+        """Default to empty list if scripts is None."""
+        return value or []
+
+    @classmethod
+    def fetch(cls, client: DBClient, stream_id: int) -> "DataStream":
+        """Fetch a datastream by ID."""
+        r = client.get(f"/stream/{stream_id}")
+        return cls(client=client, **validate_response(r, "Get stream failed"))
+
+    def refresh(self) -> "DataStream":
+        """Return a freshly fetched copy of this datastream."""
+        return self.fetch(self._client, self.id)
 
     def get_dataset(self, id: int | None = None, path: str | None = None) -> "Dataset":
         """Get a single dataset in the datastream by ID or path."""
@@ -111,6 +135,7 @@ class DataStream(BaseModel):
         concurrency: int = 4,
         upload_mode: Literal["auto", "server"] = "auto",
         overwrite: bool = False,
+        plugin_args: str | None = None,
     ) -> Dataset:
         """
         Push a file to the datastream. The file will be ingested as a new dataset.
@@ -122,13 +147,14 @@ class DataStream(BaseModel):
             concurrency: Maximum number of concurrent part uploads for multipart uploads.
             upload_mode: Upload mode override. Use "server" to force upload through the Marple DB API server.
             overwrite: If true, existing dataset with the same name will be overwritten.
+            plugin_args: Optional plugin arguments for this ingest. If omitted, the stream default is used.
         """
         if upload_mode not in ("auto", "server"):
             raise ValueError("upload_mode must be either 'auto' or 'server'")
 
         path = Path(file_path)
         file_size = path.stat().st_size
-        init = self._init_ingestion(file_name or path.name, file_size, metadata or {}, overwrite)
+        init = self._init_ingestion(file_name or path.name, file_size, metadata or {}, overwrite, plugin_args)
 
         try:
             if upload_mode == "server" or init.mode == "server":
@@ -151,18 +177,23 @@ class DataStream(BaseModel):
         return self.get_dataset(init.dataset_id)
 
     def _init_ingestion(
-        self, dataset_name: str, file_size: int, metadata: dict, overwrite: bool = False
+        self,
+        dataset_name: str,
+        file_size: int,
+        metadata: dict,
+        overwrite: bool = False,
+        plugin_args: str | None = None,
     ) -> IngestionInit:
-        r = self._client.post(
-            "/ingestion",
-            json={
-                "stream_id": self.id,
-                "dataset_name": dataset_name,
-                "file_size": file_size,
-                "metadata": metadata,
-                "overwrite": overwrite,
-            },
-        )
+        body = {
+            "stream_id": self.id,
+            "dataset_name": dataset_name,
+            "file_size": file_size,
+            "metadata": metadata,
+            "overwrite": overwrite,
+        }
+        if plugin_args is not None:
+            body["plugin_args"] = plugin_args
+        r = self._client.post("/ingestion", json=body)
         return IngestionInit(**validate_response(r, "Initialize ingestion failed"))
 
     def _upload_server(self, init: IngestionInit, path: Path) -> None:
@@ -262,6 +293,74 @@ class DataStream(BaseModel):
         except Exception as e:
             warnings.warn(f"Failed to abort ingestion {ingestion_id}: {e}")
 
+    def update(
+        self,
+        *,
+        name: str | None | Omitted = OMITTED,
+        description: str | None | Omitted = OMITTED,
+        plugin: str | None | Omitted = OMITTED,
+        plugin_args: str | None | Omitted = OMITTED,
+        signal_reduction: list | None | Omitted = OMITTED,
+        insight_workspace: str | None | Omitted = OMITTED,
+        insight_project: str | None | Omitted = OMITTED,
+        scripts: list[int] | None | Omitted = OMITTED,
+    ) -> "DataStream":
+        """
+        Update this datastream. Only provided fields are sent.
+
+        Args:
+            name: The new name for the datastream.
+            description: The new description for the datastream.
+            plugin: The new plugin for the datastream.
+            plugin_args: The new plugin arguments for the datastream.
+            signal_reduction: The new signal reduction for the datastream.
+            insight_workspace: The new insight workspace for the datastream.
+            insight_project: The new insight project for the datastream.
+            scripts: Replace the processing pipeline with these script IDs, in
+                order. Pass ``[]`` to detach all scripts. Omitted leaves the
+                pipeline unchanged.
+        """
+        payload: dict[str, Any] = {}
+        if name is not OMITTED:
+            payload["name"] = name
+        if description is not OMITTED:
+            payload["description"] = description
+        if plugin is not OMITTED:
+            payload["plugin"] = plugin
+        if plugin_args is not OMITTED:
+            payload["plugin_args"] = plugin_args
+        if signal_reduction is not OMITTED:
+            payload["signal_reduction"] = signal_reduction
+        if insight_workspace is not OMITTED:
+            payload["insight_workspace"] = insight_workspace
+        if insight_project is not OMITTED:
+            payload["insight_project"] = insight_project
+        if scripts is not OMITTED:
+            payload["scripts"] = scripts
+
+        r = self._client.post(f"/stream/update/{self.id}", json=payload)
+        validate_response(r, "Update stream failed")
+        logger.debug(f"Updated stream {self.name}: {payload}")
+        return self.fetch(self._client, self.id)
+
+    def rerun_processing(self, dataset_ids: Sequence[int] | None = None) -> None:
+        """
+        Rerun aliasing and processing scripts.
+
+        Args:
+            dataset_ids: The IDs of the datasets to rerun processing for. If omitted, every eligible dataset in the stream is processed.
+        """
+        if dataset_ids is None:
+            r = self._client.post(f"/stream/{self.id}/processing")
+        else:
+            ids = list(dataset_ids)
+            if not ids:
+                raise ValueError("rerun_processing requires at least one dataset id")
+            r = self._client.post(f"/stream/{self.id}/processing/datasets", json=ids)
+        validate_response(r, "Rerun processing failed")
+        target = f"{len(dataset_ids)} datasets" if dataset_ids is not None else "all datasets"
+        logger.debug(f"Reran processing for stream {self.name} ({target})")
+
     def delete(self) -> None:
         """
         Delete the datastream.
@@ -271,3 +370,4 @@ class DataStream(BaseModel):
         """
         r = self._client.post(f"/stream/{self.id}/delete")
         validate_response(r, "Delete stream failed")
+        logger.debug(f"Deleted stream {self.name}")

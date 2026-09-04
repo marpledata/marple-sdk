@@ -1,5 +1,6 @@
 import random
 import re
+from datetime import datetime
 from pathlib import Path
 from tempfile import TemporaryDirectory
 from typing import Literal
@@ -300,6 +301,28 @@ def test_push_file_multipart_upload(db: DB) -> None:
             dataset = _push_and_assert_upload(stream, multipart_csv, metadata)
 
     assert dataset.metadata.get("upload_mode") == "multipart"
+
+
+def test_push_file_plugin_args(example_stream: DataStream) -> None:
+    dataset = example_stream.push_file(
+        str(EXAMPLE_CSV),
+        metadata={"source": "pytest:plugin_args"},
+        file_name=f"pytest-plugin-args-{datetime.now().strftime('%Y-%m-%d-%H-%M-%S')}.csv",
+        plugin_args="--use-index",
+    ).wait_for_import(timeout=180)
+    assert dataset.import_status == "FINISHED"
+    assert dataset.plugin_args == "--use-index"
+
+
+def test_dataset_reingest(example_dataset: Dataset) -> None:
+    reingested = example_dataset.reingest().wait_for_import(timeout=180)
+    assert reingested.id == example_dataset.id
+    assert reingested.import_status == "FINISHED"
+
+    with_args = reingested.reingest(plugin_args="--use-index").wait_for_import(timeout=180)
+    assert with_args.id == example_dataset.id
+    assert with_args.import_status == "FINISHED"
+    assert with_args.plugin_args == "--use-index"
 
 
 def test_db_get_parquet(example_dataset: Dataset) -> None:

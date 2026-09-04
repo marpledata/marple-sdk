@@ -89,6 +89,41 @@ samples = pd.DataFrame({"time": [t0, t0 + 1_000_000_000], "value": [1.0, 2.0]})
 dataset.add_signal("car.custom", samples)
 ```
 
+#### Processing scripts
+
+Write a `process(dataset)` function, store it, and try it on any imported dataset. This runs on the server and writes to that dataset.
+
+```python
+source = """
+from marple.db import Dataset
+
+def process(dataset: Dataset) -> None:
+    speed = dataset.get_signal("car.speed").get_data()
+    dataset.add_signal("car.speed_kmh", speed * 3.6, metadata={"unit": "km/h"})
+"""
+
+script = db.create_script("speed_kmh", source)
+dataset = stream.get_dataset(path="lap.csv")
+# or: dataset = stream.push_file("lap.csv").wait_for_import()
+dataset.run(script)
+```
+
+Pass a `.py` path or `pathlib.Path` to `create_script` / `script.update` instead of source text. Iterate with `script.update(script=...)` then `dataset.run(script)` again (or `dataset.run(script, source=...)` to save and run in one step). New signals written by the script may need `signal.wait_until_available(...)` before you read them.
+
+When the script looks right, attach it to the stream with `stream.update(scripts=...)`. That **replaces** the pipeline (pass `[]` to detach all). New uploads then run those scripts after ingest.
+
+```python
+stream = stream.update(scripts=[script.id])
+```
+
+For files already imported, rerun aliasing and the stream's script pipeline:
+
+```python
+dataset = dataset.rerun_processing().wait_for_import()
+```
+
+Use `script.update(...)` to change source or metadata, and `dataset.get_debug_messages()` for the latest ingestion's debug log (not the sandbox job log from `dataset.run`).
+
 #### Upload large files
 
 `stream.push_file(...)` starts an ingestion and lets the Marple DB API choose the best upload mode. Depending on the deployment and file size, the SDK can upload through the API server, upload directly to Azure Blob Storage, use a single presigned URL, or split the file into multipart uploads.
@@ -186,6 +221,11 @@ if len(datasets) > 0:
 - **Delete a stream**: `stream.delete()` or `db.delete_stream(stream_key)`
 - **Delete a dataset**: `dataset.delete()` or `db.delete_dataset(dataset_id, dataset_path)`
 - **Delete signals**: `signal.delete()`, `dataset.delete_signal(signal_id)` / `dataset.delete_signals(signal_ids)`, or `db.delete_signals(dataset_id, dataset_path, signal_ids)`
+- **Run a processing script**: `dataset.run(script)` or `db.run_script(dataset_id, script)`
+- **Create a processing script**: `db.create_script(name, script)`
+- **Set script pipeline** (replaces the full list): `stream.update(scripts=[script.id])`
+- **Rerun aliasing + scripts**: `dataset.rerun_processing().wait_for_import()` or `stream.rerun_processing([dataset.id])`
+- **Read ingest debug logs**: `dataset.get_debug_messages()`
 
 For live streams:
 

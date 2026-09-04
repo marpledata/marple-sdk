@@ -715,11 +715,15 @@ classdef DB
       end
     end
 
-    function [ingestion_id, dataset_id] = init_ingestion(obj, stream_id, dataset_name, file_size, metadata, overwrite)
+    function [ingestion_id, dataset_id] = init_ingestion(obj, stream_id, dataset_name, file_size, metadata, overwrite, plugin_args)
+      extra = '';
+      if ~isempty(plugin_args)
+        extra = sprintf(',"plugin_args":%s', jsonencode(DB.as_char(plugin_args)));
+      end
       body = sprintf( ...
-        '{"stream_id":%d,"dataset_name":%s,"file_size":%d,"metadata":%s,"overwrite":%s}', ...
+        '{"stream_id":%d,"dataset_name":%s,"file_size":%d,"metadata":%s,"overwrite":%s%s}', ...
         stream_id, jsonencode(dataset_name), file_size, ...
-        DB.encode_json_object(metadata), jsonencode(overwrite));
+        DB.encode_json_object(metadata), jsonencode(overwrite), extra);
       init_resp = obj.post_or_error('/ingestion', body, 'Initialize ingestion failed for "%s": %s', dataset_name);
       DB.must(isfield(init_resp, 'ingestion_id') && isfield(init_resp, 'dataset_id'), ...
         'Initialize ingestion response missing dataset_id/ingestion_id for "%s"', dataset_name);
@@ -924,10 +928,11 @@ classdef DB
       %PUSH_FILE Push a local file to a file stream; ingested as a new dataset.
       %
       %   dataset = mdb.push_file(stream_name, file_path)
-      %   dataset = mdb.push_file(..., Metadata=struct(), FileName=name, Overwrite=false)
+      %   dataset = mdb.push_file(..., Metadata=struct(), FileName=name, Overwrite=false, PluginArgs=args)
       %
       %   Uploads via the API server. FileName defaults to the local file's basename and
-      %   becomes the dataset name.
+      %   becomes the dataset name. PluginArgs are optional per-file plugin arguments;
+      %   if omitted, the stream default is used.
       arguments
         obj
         stream_name
@@ -935,6 +940,7 @@ classdef DB
         opts.Metadata = struct()
         opts.FileName = ""
         opts.Overwrite (1,1) logical = false
+        opts.PluginArgs = []
       end
 
       file_path = DB.as_char(file_path);
@@ -949,7 +955,7 @@ classdef DB
 
       stream_id = obj.find_stream_id(DB.as_char(stream_name));
       [ingestion_id, dataset_id] = obj.init_ingestion( ...
-        stream_id, dataset_name, info(1).bytes, opts.Metadata, opts.Overwrite);
+        stream_id, dataset_name, info(1).bytes, opts.Metadata, opts.Overwrite, opts.PluginArgs);
       obj.upload_ingestion_file(file_path, ingestion_id);
       dataset = obj.fetch_dataset(dataset_id, ...
         'Failed to fetch dataset "%s" after push_file (id=%d): %s', dataset_name, dataset_id);

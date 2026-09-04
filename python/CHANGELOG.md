@@ -10,11 +10,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Changed
 
 - Exact signal names in `get_data` / `get_signal` / `get_signals` resolve via the dataset cache or `GET /datapool/{pool}/signal/{name}/id` instead of downloading the full datapool `signal_map`. Regex patterns still use the map.
+- Optional `plugin_args` on `DataStream.push_file` (and the deprecated `DB.push_file` wrapper).
+- `logger.debug` lines on SDK mutations (`add_signal`, `update_metadata`, …), off by default. Call `enable_activity_log()` to print them (used by the processing sandbox).
 
 ### Added
 
-- `DB.delete_signals`, `Dataset.delete_signal` / `Dataset.delete_signals`, and `Signal.delete` to remove signals from a dataset.
-- `logger.debug` lines on SDK mutations (`add_signal`, `update_metadata`, …), off by default. Call `enable_activity_log()` to print them (used by the processing sandbox).
+- Processing Pipeline
+  - `DB.create_script` / `get_scripts` / `get_script` / `delete_script`
+  - `Script.update` / `duplicate` / `delete`, to manage stored `process(dataset)` scripts.
+  - `Dataset.run` / `DB.run_script` to execute a stored processing script against a dataset via a server-side sandbox job.
+  - `DataStream.scripts`, `DataStream.update`, and `DataStream.rerun_processing` (`DB.rerun_processing`) to edit a stream and set the script pipeline
+  - `Dataset.rerun_processing` and `Dataset.get_debug_messages`.
+  - `DB.delete_signals`, `Dataset.delete_signal` / `Dataset.delete_signals`, and `Signal.delete` to remove signals from a dataset.
+  - `Dataset.reingest` to reingest a dataset from its original uploaded file, with optional `plugin_args`.
 
 ### Fixed
 
