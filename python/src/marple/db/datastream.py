@@ -124,7 +124,7 @@ class DataStream(BaseModel):
             json={"dataset_name": dataset_name, "metadata": metadata or {}},
         )
         r_json = validate_response(r, "Add dataset failed")
-        logger.debug("Added dataset %s", dataset_name)
+        logger.debug(f"Added dataset {dataset_name}")
         return self.get_dataset(r_json["dataset_id"])
 
     def push_file(
@@ -173,7 +173,7 @@ class DataStream(BaseModel):
             self._abort_upload(init.ingestion_id, str(exc) or type(exc).__name__)
             raise
 
-        logger.debug("Pushed file %s", file_name or path.name)
+        logger.debug(f"Pushed file {file_name or path.name}")
         return self.get_dataset(init.dataset_id)
 
     def _init_ingestion(
