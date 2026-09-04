@@ -833,7 +833,7 @@ wheels = [
 
 [[package]]
 name = "marpledata"
-version = "3.6.0.dev2"
+version = "3.6.0"
 source = { editable = "." }
 dependencies = [
     { name = "azure-storage-blob" },
