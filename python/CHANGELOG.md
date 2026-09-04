@@ -11,7 +11,6 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - Exact signal names in `get_data` / `get_signal` / `get_signals` resolve via the dataset cache or `GET /datapool/{pool}/signal/{name}/id` instead of downloading the full datapool `signal_map`. Regex patterns still use the map.
 - Optional `plugin_args` on `DataStream.push_file` (and the deprecated `DB.push_file` wrapper).
-- `logger.debug` lines on SDK mutations (`add_signal`, `update_metadata`, …), off by default. Call `db.verbose()` to print them.
 
 ### Added
 
@@ -23,6 +22,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   - `Dataset.rerun_processing` and `Dataset.get_debug_messages`.
   - `DB.delete_signals`, `Dataset.delete_signal` / `Dataset.delete_signals`, and `Signal.delete` to remove signals from a dataset.
   - `Dataset.reingest` to reingest a dataset from its original uploaded file, with optional `plugin_args`.
+  - `logger.debug` lines on SDK mutations (`add_signal`, `update_metadata`, …), off by default. Call `db.verbose()` to print them.
 
 ### Fixed
 
