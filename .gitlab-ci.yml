@@ -66,12 +66,18 @@ rust:workspace:
   before_script:
     - rustc --version
     - cargo --version
+    - rustup component add rustfmt clippy
     - mkdir -p "$CARGO_HOME/registry" "$CARGO_HOME/git"
     - apt-get update && apt-get install -y --no-install-recommends pkg-config libssl-dev ca-certificates
   script:
     - cd rust
+    - cargo fmt --all -- --check
+    - cargo clippy --workspace --locked --all-targets --all-features -- -D warnings
     - cargo test --workspace --locked
+    - cargo test -p marple-db --locked --no-default-features --features native-tls
+    - cargo check -p marple-db --locked --no-default-features --features rustls-tls
     - cargo build --workspace --examples --locked
+    - RUSTDOCFLAGS="-D warnings" cargo doc --workspace --no-deps
   rules:
     - if: '$CI_COMMIT_BRANCH == $CI_DEFAULT_BRANCH'
       changes:

@@ -1,0 +1,482 @@
+use crate::browse::style::{block, body_style, highlight, idle_highlight};
+use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
+use ratatui::Frame;
+use ratatui::layout::{Constraint, Rect};
+use ratatui::style::{Modifier, Style};
+use ratatui::widgets::{Cell, Row, Table, TableState};
+
+#[derive(Clone, Debug, Default)]
+pub(crate) struct TableSearch {
+    pub query: String,
+    pub editing: bool,
+    saved: Option<String>,
+}
+
+impl TableSearch {
+    pub fn start(&mut self) {
+        self.saved = Some(self.query.clone());
+        self.query.clear();
+        self.editing = true;
+    }
+
+    pub fn active(&self) -> bool {
+        self.editing || !self.query.trim().is_empty()
+    }
+
+    pub fn clear(&mut self) {
+        self.query.clear();
+        self.saved = None;
+        self.editing = false;
+    }
+
+    pub fn cancel(&mut self) {
+        if let Some(saved) = self.saved.take() {
+            self.query = saved;
+        }
+        self.editing = false;
+    }
+
+    pub fn finish(&mut self) {
+        self.saved = None;
+        self.editing = false;
+    }
+
+    pub fn push(&mut self, ch: char) {
+        self.query.push(ch);
+    }
+
+    pub fn backspace(&mut self) {
+        self.query.pop();
+    }
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum SearchAction {
+    Changed,
+    Applied,
+    Closed,
+    Ignored,
+}
+
+pub(crate) fn handle_search_key(search: &mut TableSearch, key: KeyEvent) -> SearchAction {
+    match key.code {
+        KeyCode::Esc => {
+            search.cancel();
+            SearchAction::Closed
+        }
+        KeyCode::Enter => {
+            search.finish();
+            SearchAction::Applied
+        }
+        KeyCode::Backspace => {
+            search.backspace();
+            SearchAction::Changed
+        }
+        KeyCode::Char(ch) if !key.modifiers.contains(KeyModifiers::CONTROL) => {
+            search.push(ch);
+            SearchAction::Changed
+        }
+        _ => SearchAction::Ignored,
+    }
+}
+
+pub(crate) fn row_matches(query: &str, fields: impl IntoIterator<Item = impl AsRef<str>>) -> bool {
+    let query = query.trim();
+    if query.is_empty() {
+        return true;
+    }
+    let fields: Vec<String> = fields
+        .into_iter()
+        .map(|field| field.as_ref().to_lowercase())
+        .collect();
+    query.split_whitespace().all(|token| {
+        let token = token.to_lowercase();
+        fields.iter().any(|field| field.contains(&token))
+    })
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub(crate) enum Visible {
+    All(usize),
+    Filtered { indices: Vec<usize>, at: Vec<u32> },
+}
+
+impl Visible {
+    pub fn filtered(source_len: usize, indices: Vec<usize>) -> Self {
+        let mut at = vec![u32::MAX; source_len];
+        for (pos, &index) in indices.iter().enumerate() {
+            if let Some(slot) = at.get_mut(index) {
+                *slot = pos as u32;
+            }
+        }
+        Self::Filtered { indices, at }
+    }
+
+    pub fn len(&self) -> usize {
+        match self {
+            Self::All(len) => *len,
+            Self::Filtered { indices, .. } => indices.len(),
+        }
+    }
+
+    pub fn is_empty(&self) -> bool {
+        self.len() == 0
+    }
+
+    pub fn get(&self, pos: usize) -> Option<usize> {
+        match self {
+            Self::All(len) if pos < *len => Some(pos),
+            Self::Filtered { indices, .. } => indices.get(pos).copied(),
+            _ => None,
+        }
+    }
+
+    pub fn position(&self, index: usize) -> Option<usize> {
+        match self {
+            Self::All(len) if index < *len => Some(index),
+            Self::Filtered { at, .. } => at
+                .get(index)
+                .copied()
+                .filter(|&pos| pos != u32::MAX)
+                .map(|pos| pos as usize),
+            _ => None,
+        }
+    }
+}
+
+pub(crate) fn step_visible(
+    visible: &Visible,
+    selected: Option<usize>,
+    delta: i32,
+) -> Option<usize> {
+    step_visible_by(visible, selected, delta, wrap_index)
+}
+
+pub(crate) fn step_visible_clamped(
+    visible: &Visible,
+    selected: Option<usize>,
+    delta: i32,
+) -> Option<usize> {
+    step_visible_by(visible, selected, delta, clamp_index)
+}
+
+fn step_visible_by(
+    visible: &Visible,
+    selected: Option<usize>,
+    delta: i32,
+    step: fn(usize, i32, i32) -> usize,
+) -> Option<usize> {
+    let len = visible.len();
+    if len == 0 {
+        return None;
+    }
+    let pos = selected
+        .and_then(|selected| visible.position(selected))
+        .unwrap_or(0) as i32;
+    visible.get(step(len, pos, delta))
+}
+
+pub(crate) fn wrap_index(len: usize, index: i32, delta: i32) -> usize {
+    if len == 0 {
+        return 0;
+    }
+    (index + delta).rem_euclid(len as i32) as usize
+}
+
+pub(crate) fn clamp_index(len: usize, index: i32, delta: i32) -> usize {
+    if len == 0 {
+        return 0;
+    }
+    (index + delta).clamp(0, len as i32 - 1) as usize
+}
+
+pub(crate) fn goto_visible(visible: &Visible, index: usize) -> Option<usize> {
+    let len = visible.len();
+    if len == 0 {
+        return None;
+    }
+    visible.get(index.min(len - 1))
+}
+
+pub(crate) fn snap_visible(visible: &Visible, selected: Option<usize>) -> Option<usize> {
+    match selected {
+        Some(selected) if visible.position(selected).is_some() => Some(selected),
+        _ => visible.get(0),
+    }
+}
+
+pub(crate) fn visible_span(visible: &Visible, anchor: Option<usize>, current: usize) -> Vec<usize> {
+    let Some(cur) = visible.position(current) else {
+        return Vec::new();
+    };
+    let start = anchor
+        .and_then(|index| visible.position(index))
+        .unwrap_or(cur);
+    let (lo, hi) = if start <= cur {
+        (start, cur)
+    } else {
+        (cur, start)
+    };
+    (lo..=hi).filter_map(|pos| visible.get(pos)).collect()
+}
+
+pub(crate) fn visible_forward(visible: &Visible, current: usize, n: usize) -> Vec<usize> {
+    let Some(pos) = visible.position(current) else {
+        return Vec::new();
+    };
+    if n == 0 || visible.is_empty() {
+        return Vec::new();
+    }
+    let last = pos
+        .saturating_add(n.saturating_sub(1))
+        .min(visible.len() - 1);
+    (pos..=last).filter_map(|pos| visible.get(pos)).collect()
+}
+
+#[allow(clippy::too_many_arguments)]
+pub(crate) fn render_table(
+    frame: &mut Frame,
+    area: Rect,
+    title: &str,
+    focused: bool,
+    headers: &[&str],
+    widths: impl IntoIterator<Item = Constraint>,
+    visible: &Visible,
+    selected: Option<usize>,
+    mut row_at: impl FnMut(usize) -> Row<'static>,
+) {
+    let pos = selected.and_then(|selected| visible.position(selected));
+    let (start, end) = visible_range(visible.len(), pos, table_view_rows(area.height));
+    let title = window_title(title, start, end, visible.len());
+    let rows: Vec<Row> = (start..end)
+        .filter_map(|pos| visible.get(pos).map(&mut row_at))
+        .collect();
+    let mut table = Table::new(rows, widths)
+        .block(block(&title, focused))
+        .style(body_style())
+        .row_highlight_style(if focused {
+            highlight()
+        } else {
+            idle_highlight()
+        })
+        .highlight_symbol("");
+    if !headers.is_empty() {
+        table = table.header(header_row(headers));
+    }
+    let mut window = TableState::default().with_selected(pos.map(|index| index - start));
+    frame.render_stateful_widget(table, area, &mut window);
+}
+
+pub(crate) fn search_title(base: &str, search: &TableSearch) -> String {
+    if !search.editing && search.query.trim().is_empty() {
+        return base.to_string();
+    }
+    let caret = if search.editing { "_" } else { "" };
+    format!("{base}  /{}{caret}", search.query)
+}
+
+fn header_row<'a>(cells: &'a [&str]) -> Row<'a> {
+    Row::new(cells.iter().copied().map(Cell::from).collect::<Vec<_>>())
+        .style(Style::default().add_modifier(Modifier::BOLD))
+}
+
+pub(crate) fn text_col(area: Rect, reserved: u16, gaps: u16) -> usize {
+    (area.width.saturating_sub(2) as usize)
+        .saturating_sub(usize::from(reserved) + usize::from(gaps))
+}
+
+fn table_view_rows(height: u16) -> usize {
+    height.saturating_sub(3).max(1) as usize
+}
+
+pub(crate) fn window_indices(
+    visible: &Visible,
+    selected: Option<usize>,
+    view: usize,
+) -> impl Iterator<Item = usize> + '_ {
+    let pos = selected.and_then(|index| visible.position(index));
+    let (start, end) = visible_range(visible.len(), pos, view);
+    (start..end).filter_map(move |pos| visible.get(pos))
+}
+
+fn window_title(title: &str, start: usize, end: usize, len: usize) -> String {
+    if len == 0 {
+        title.to_string()
+    } else {
+        format!("{title}  {}–{} of {len}", start + 1, end)
+    }
+}
+
+pub(crate) fn visible_range(len: usize, selected: Option<usize>, view: usize) -> (usize, usize) {
+    if len == 0 {
+        return (0, 0);
+    }
+    let selected = selected.unwrap_or(0).min(len - 1);
+    let start = selected
+        .saturating_sub(view / 2)
+        .min(len.saturating_sub(view));
+    (start, (start + view).min(len))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{
+        TableSearch, Visible, clamp_index, goto_visible, handle_search_key, row_matches,
+        search_title, snap_visible, step_visible, step_visible_clamped, visible_forward,
+        visible_range, visible_span, window_indices, window_title, wrap_index,
+    };
+    use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
+
+    #[test]
+    fn row_matches_case_insensitive_field_substrings() {
+        assert!(row_matches("", ["anything"]));
+        assert!(row_matches("traffic", ["mallorca-traffic/add_traffic.py"]));
+        assert!(row_matches("FAILED", ["ok.csv", "failed"]));
+        assert!(row_matches("fail csv", ["ok.csv", "failed"]));
+        assert!(row_matches("mb racing", ["MB Racing"]));
+        assert!(!row_matches("mbr", ["MB Racing"]));
+        assert!(!row_matches("failed", ["traffic.csv", "succeeded"]));
+        assert!(!row_matches("xyz", ["MB Racing"]));
+    }
+
+    #[test]
+    fn search_title_shows_prompt_while_editing() {
+        let mut search = TableSearch::default();
+        assert_eq!(search_title("streams", &search), "streams");
+        search.start();
+        assert_eq!(search_title("streams", &search), "streams  /_");
+        search.push('f');
+        assert_eq!(search_title("streams", &search), "streams  /f_");
+        search.finish();
+        assert_eq!(search_title("streams", &search), "streams  /f");
+    }
+
+    #[test]
+    fn search_esc_cancels_edit_then_clear_drops_filter() {
+        let mut search = TableSearch {
+            query: "old".into(),
+            ..TableSearch::default()
+        };
+        search.start();
+        search.push('n');
+        assert_eq!(
+            handle_search_key(&mut search, KeyEvent::new(KeyCode::Esc, KeyModifiers::NONE)),
+            super::SearchAction::Closed
+        );
+        assert!(!search.editing);
+        assert_eq!(search.query, "old");
+        search.clear();
+        assert!(!search.active());
+        assert_eq!(search.query, "");
+    }
+
+    #[test]
+    fn search_enter_keeps_query() {
+        let mut search = TableSearch::default();
+        search.start();
+        search.push('f');
+        assert_eq!(
+            handle_search_key(
+                &mut search,
+                KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE)
+            ),
+            super::SearchAction::Applied
+        );
+        assert!(!search.editing);
+        assert_eq!(search.query, "f");
+        assert!(search.active());
+    }
+
+    #[test]
+    fn visible_motion_steps_filtered_rows() {
+        let visible = Visible::filtered(10, vec![2, 5, 9]);
+        assert_eq!(step_visible(&visible, Some(5), 1), Some(9));
+        assert_eq!(step_visible(&visible, Some(5), -1), Some(2));
+        assert_eq!(step_visible(&visible, Some(2), -1), Some(9));
+        assert_eq!(step_visible(&visible, Some(9), 1), Some(2));
+        assert_eq!(step_visible(&visible, Some(9), 4), Some(2));
+        assert_eq!(goto_visible(&visible, 0), Some(2));
+        assert_eq!(goto_visible(&visible, 99), Some(9));
+        assert_eq!(snap_visible(&visible, Some(5)), Some(5));
+        assert_eq!(snap_visible(&visible, Some(1)), Some(2));
+        assert_eq!(step_visible(&Visible::All(0), Some(0), 1), None);
+        let all = Visible::All(3);
+        assert_eq!(step_visible(&all, Some(1), 1), Some(2));
+        assert_eq!(snap_visible(&all, Some(1)), Some(1));
+        assert_eq!(goto_visible(&all, 99), Some(2));
+    }
+
+    #[test]
+    fn wrap_index_wraps_and_handles_empty() {
+        assert_eq!(wrap_index(3, 0, -1), 2);
+        assert_eq!(wrap_index(3, 2, 1), 0);
+        assert_eq!(wrap_index(3, 1, -4), 0);
+        assert_eq!(wrap_index(0, 0, 1), 0);
+    }
+
+    #[test]
+    fn clamp_index_stops_at_ends() {
+        assert_eq!(clamp_index(5, 0, -1), 0);
+        assert_eq!(clamp_index(5, 4, 1), 4);
+        assert_eq!(clamp_index(5, 2, 10), 4);
+        assert_eq!(clamp_index(0, 0, 1), 0);
+        let visible = Visible::filtered(10, vec![1, 3, 5, 7, 9]);
+        assert_eq!(step_visible_clamped(&visible, Some(1), -1), Some(1));
+        assert_eq!(step_visible_clamped(&visible, Some(9), 1), Some(9));
+        assert_eq!(step_visible_clamped(&visible, Some(5), 1), Some(7));
+        assert_eq!(step_visible_clamped(&Visible::All(5), Some(2), 10), Some(4));
+        assert_eq!(step_visible_clamped(&Visible::All(0), Some(0), 1), None);
+    }
+
+    #[test]
+    fn visible_forward_takes_n_rows_from_cursor() {
+        let visible = Visible::filtered(10, vec![1, 3, 5, 7, 9]);
+        assert_eq!(visible_forward(&visible, 3, 3), vec![3, 5, 7]);
+        assert_eq!(visible_forward(&visible, 7, 8), vec![7, 9]);
+        assert_eq!(visible_forward(&visible, 0, 2), Vec::<usize>::new());
+        assert_eq!(visible_forward(&Visible::All(5), 1, 3), vec![1, 2, 3]);
+        assert_eq!(visible_forward(&Visible::All(5), 1, 0), Vec::<usize>::new());
+    }
+
+    #[test]
+    fn window_title_shows_visible_slice() {
+        assert_eq!(window_title("streams", 0, 0, 0), "streams");
+        assert_eq!(window_title("streams", 0, 5, 20), "streams  1–5 of 20");
+        assert_eq!(
+            window_title("signals  /speed", 8, 13, 20),
+            "signals  /speed  9–13 of 20"
+        );
+    }
+
+    #[test]
+    fn visible_range_keeps_selection_in_window() {
+        assert_eq!(visible_range(0, Some(0), 5), (0, 0));
+        assert_eq!(visible_range(3, Some(1), 10), (0, 3));
+        assert_eq!(visible_range(20, Some(0), 5), (0, 5));
+        assert_eq!(visible_range(20, Some(19), 5), (15, 20));
+        assert_eq!(visible_range(20, Some(10), 5), (8, 13));
+    }
+
+    #[test]
+    fn window_indices_maps_visible_positions_to_source_rows() {
+        let visible = Visible::filtered(10, vec![1, 3, 5, 7, 9]);
+        assert_eq!(
+            window_indices(&visible, Some(5), 3).collect::<Vec<_>>(),
+            vec![3, 5, 7]
+        );
+        assert_eq!(
+            window_indices(&Visible::All(5), Some(1), 3).collect::<Vec<_>>(),
+            vec![0, 1, 2]
+        );
+    }
+
+    #[test]
+    fn visible_span_selects_inclusive_range() {
+        let visible = Visible::filtered(10, vec![1, 3, 5, 7, 9]);
+        assert_eq!(visible_span(&visible, Some(3), 7), vec![3, 5, 7]);
+        assert_eq!(visible_span(&visible, Some(7), 3), vec![3, 5, 7]);
+        assert_eq!(visible_span(&visible, None, 5), vec![5]);
+        assert_eq!(visible_span(&Visible::All(5), Some(1), 3), vec![1, 2, 3]);
+        assert_eq!(visible_span(&visible, Some(0), 5), vec![5]);
+    }
+}

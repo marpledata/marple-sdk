@@ -1,0 +1,737 @@
+use super::picker::FilePicker;
+use super::upload::{FormFocus, UploadForm};
+use super::{App, BrowseLevel, Motion, PAGE_SIZE, cycle_focus};
+use crate::table::{SearchAction, handle_search_key};
+use crossterm::event::{KeyCode, KeyEvent, KeyEventKind, KeyModifiers};
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(super) enum InputMode {
+    Browse,
+    Info,
+    Search,
+    Env {
+        editing: bool,
+    },
+    Upload {
+        editing: bool,
+        files: bool,
+        submit: bool,
+    },
+    Download {
+        editing: bool,
+    },
+}
+
+impl App {
+    pub(super) fn input_mode(&self) -> InputMode {
+        if self
+            .env_picker
+            .as_ref()
+            .is_some_and(|picker| picker.editing)
+        {
+            InputMode::Env { editing: true }
+        } else if self.upload_typing() {
+            InputMode::Upload {
+                editing: true,
+                files: false,
+                submit: false,
+            }
+        } else if self.download_typing() {
+            InputMode::Download { editing: true }
+        } else if self.debug.search.editing || self.search.editing {
+            InputMode::Search
+        } else if self.env_picker.is_some() {
+            InputMode::Env { editing: false }
+        } else if let Some(form) = &self.upload.form {
+            InputMode::Upload {
+                editing: false,
+                files: form.focus.is_files(),
+                submit: form.focus == FormFocus::Upload,
+            }
+        } else if self.download.picker.is_some() {
+            InputMode::Download { editing: false }
+        } else if self.info_expanded || self.view_scrolls() {
+            InputMode::Info
+        } else {
+            InputMode::Browse
+        }
+    }
+
+    pub(super) fn hint_text(&self) -> String {
+        let visual =
+            self.in_visual() || self.upload.form.as_ref().is_some_and(UploadForm::in_visual);
+        let query = if self.debug.search.editing {
+            Some(self.debug.search.query.as_str())
+        } else if self.search.editing {
+            Some(self.search.query.as_str())
+        } else {
+            None
+        };
+        short_hint(
+            self.input_mode(),
+            visual,
+            self.browse_level,
+            self.info_expanded,
+            self.dataset_table_focused(),
+            query,
+        )
+    }
+}
+
+pub(super) const HELP_OVERLAY: &[(&str, &str)] = &[
+    ("move", "j/k  S-↓/↑ page  gg/G  0  Ng"),
+    ("open", "→/l/enter  ←/h/esc back  tab list|table"),
+    ("filter", "/  enter keep  esc clear"),
+    ("inspect", "i"),
+    ("select", "space toggle  v range  Nv  a all  A clear"),
+    (
+        "actions",
+        "u upload  d download  x delete  r reingest  p process",
+    ),
+    ("env", "w"),
+    ("quit", "q"),
+    (
+        "upload",
+        "tab footer  space  v  a/A  h/l field  enter  / path",
+    ),
+    ("download", "enter this folder  → open  ← parent  / path"),
+    ("env file", "tab recent|files  enter open/use  / path"),
+];
+
+fn short_hint(
+    mode: InputMode,
+    visual: bool,
+    browse_level: BrowseLevel,
+    info_expanded: bool,
+    dataset_table: bool,
+    filter_query: Option<&str>,
+) -> String {
+    if let Some(query) = filter_query {
+        return format!("/{query}_  enter keep  esc cancel");
+    }
+    if visual {
+        return "v/enter/space keep  esc cancel  ? help".to_string();
+    }
+    match mode {
+        InputMode::Upload { editing: true, .. } => "enter keep  esc cancel".to_string(),
+        InputMode::Upload { submit: true, .. } => {
+            "enter upload  tab files  esc close  ? help".to_string()
+        }
+        InputMode::Upload { files: false, .. } => {
+            "tab files  h/l field  enter  esc close  ? help".to_string()
+        }
+        InputMode::Upload { .. } => {
+            "tab footer  space toggle  v range  / path  esc close  ? help".to_string()
+        }
+        InputMode::Download { editing: true } => "enter download here  esc cancel".to_string(),
+        InputMode::Download { .. } => "enter here  → open  / path  esc close  ? help".to_string(),
+        InputMode::Env { editing: true } => "enter use or open  esc cancel".to_string(),
+        InputMode::Env { .. } => "tab  enter  / path  esc close  ? help".to_string(),
+        InputMode::Info if info_expanded => "i/esc close  ? help  q quit".to_string(),
+        InputMode::Info => {
+            "→ view  ← back  / filter  i info  u upload  d download  ? help  q quit".to_string()
+        }
+        InputMode::Browse if browse_level == BrowseLevel::Root => {
+            "→ open  / filter  i info  u upload  d download  ? help  q quit".to_string()
+        }
+        InputMode::Browse if browse_level == BrowseLevel::Datasets => {
+            "tab  → view  ← back  / filter  i info  u upload  d download  ? help  q quit"
+                .to_string()
+        }
+        InputMode::Browse if dataset_table => {
+            "tab  space toggle  v range  → open  / filter  u upload  d download  ? help  q quit"
+                .to_string()
+        }
+        InputMode::Browse | InputMode::Search => {
+            "tab  → open  ← back  / filter  i info  u upload  d download  ? help  q quit"
+                .to_string()
+        }
+    }
+}
+
+#[derive(Clone, Copy, Default, Debug, PartialEq, Eq)]
+pub(super) struct MotionState {
+    count: Option<u32>,
+    pending_g: bool,
+}
+
+impl MotionState {
+    pub(super) fn pending(self) -> bool {
+        self.count.is_some() || self.pending_g
+    }
+
+    pub(super) fn clear(&mut self) {
+        *self = Self::default();
+    }
+
+    pub(super) fn take_count(&mut self) -> Option<u32> {
+        let count = self.count.take();
+        self.clear();
+        count
+    }
+}
+
+#[derive(Debug)]
+enum MotionRead {
+    Pending,
+    Act(Motion),
+    None,
+}
+
+pub(super) fn handle_key(app: &mut App, key: KeyEvent) -> bool {
+    if key.kind == KeyEventKind::Repeat {
+        if let MotionRead::Act(motion @ (Motion::Delta(_) | Motion::Page(_))) =
+            read_motion(&mut MotionState::default(), key)
+        {
+            apply_motion(app, motion);
+        }
+        return false;
+    }
+    if matches!(key.code, KeyCode::Esc) && app.motion.pending() {
+        app.motion.clear();
+        return false;
+    }
+    match app.input_mode() {
+        InputMode::Env { editing: true } => {
+            handle_env_input(app, key);
+            false
+        }
+        InputMode::Upload { editing: true, .. } => {
+            app.handle_upload_input(key);
+            false
+        }
+        InputMode::Download { editing: true } => {
+            app.handle_download_input(key);
+            false
+        }
+        InputMode::Search => {
+            if app.debug.search.editing {
+                handle_search_key(&mut app.debug.search, key);
+                app.debug.scroll = 0;
+            } else if handle_search_key(&mut app.search, key) != SearchAction::Ignored {
+                app.snap_search();
+            }
+            false
+        }
+        mode => {
+            if handle_help_key(app, key) {
+                return false;
+            }
+            match read_motion(&mut app.motion, key) {
+                MotionRead::Pending => return false,
+                MotionRead::Act(motion) => {
+                    apply_motion(app, motion);
+                    return false;
+                }
+                MotionRead::None => {}
+            }
+            match mode {
+                InputMode::Env { .. } => {
+                    handle_env_key(app, key);
+                    false
+                }
+                InputMode::Upload { .. } => {
+                    app.handle_upload_key(key);
+                    false
+                }
+                InputMode::Download { .. } => {
+                    app.handle_download_key(key);
+                    false
+                }
+                InputMode::Info | InputMode::Browse => handle_browse_key(app, key),
+                InputMode::Search => unreachable!(),
+            }
+        }
+    }
+}
+
+fn handle_help_key(app: &mut App, key: KeyEvent) -> bool {
+    if matches!(key.code, KeyCode::Char('?')) {
+        app.motion.clear();
+        app.help_open = !app.help_open;
+        return true;
+    }
+    if app.help_open {
+        app.help_open = false;
+        return true;
+    }
+    false
+}
+
+fn handle_browse_key(app: &mut App, key: KeyEvent) -> bool {
+    if app.handle_confirm_key(key) {
+        return false;
+    }
+    if matches!(key.code, KeyCode::Char('/')) {
+        if app.debug_filter_enabled() {
+            app.motion.clear();
+            app.debug.search.start();
+            return false;
+        }
+        if !app.info_expanded && !app.view_scrolls() {
+            app.commit_visual();
+            app.motion.clear();
+            app.search.start();
+            return false;
+        }
+    }
+    if matches!(key.code, KeyCode::Esc) && app.debug.search.active() && app.debug_filter_enabled() {
+        app.debug.search.clear();
+        return false;
+    }
+    if matches!(key.code, KeyCode::Esc) && app.search.active() {
+        app.search.clear();
+        return false;
+    }
+    match key.code {
+        KeyCode::Char('q') => return true,
+        KeyCode::Tab | KeyCode::BackTab => {
+            app.commit_visual();
+            app.focus = cycle_focus(app.browse_level, app.focus);
+            app.snap_search();
+        }
+        KeyCode::Esc if app.cancel_visual() => {}
+        KeyCode::Esc | KeyCode::Char('h') | KeyCode::Left => {
+            app.commit_visual();
+            app.go_back();
+        }
+        KeyCode::Enter if app.in_visual() => app.commit_visual(),
+        KeyCode::Char('l') | KeyCode::Right | KeyCode::Enter => {
+            app.commit_visual();
+            app.activate();
+        }
+        KeyCode::Char('i') => {
+            app.commit_visual();
+            app.toggle_info();
+        }
+        KeyCode::Char('w') => {
+            app.commit_visual();
+            app.open_env();
+        }
+        KeyCode::Char('u') => {
+            app.commit_visual();
+            app.open_upload();
+        }
+        KeyCode::Char('d') => {
+            app.commit_visual();
+            app.open_download();
+        }
+        KeyCode::Char('x') => {
+            app.commit_visual();
+            app.request_delete();
+        }
+        KeyCode::Char('r') => {
+            app.commit_visual();
+            app.request_reingest();
+        }
+        KeyCode::Char('p') => {
+            app.commit_visual();
+            app.request_process();
+        }
+        KeyCode::Char(' ') => {
+            if app.in_visual() {
+                app.commit_visual();
+            } else {
+                app.toggle_dataset_selection();
+            }
+        }
+        KeyCode::Char('v') => {
+            let count = app.motion.take_count();
+            app.visual_or_select_n(count);
+        }
+        KeyCode::Char('a') => app.select_all_datasets(),
+        KeyCode::Char('A') => app.clear_dataset_selection(),
+        _ => {}
+    }
+    false
+}
+
+fn handle_env_key(app: &mut App, key: KeyEvent) {
+    match key.code {
+        KeyCode::Esc | KeyCode::Char('q') => app.env_picker = None,
+        KeyCode::Enter => {
+            if let Some(path) = app.env_picker.as_mut().and_then(FilePicker::enter_selected) {
+                app.use_env_file(path);
+            }
+        }
+        other => {
+            let Some(picker) = app.env_picker.as_mut() else {
+                return;
+            };
+            match other {
+                KeyCode::Char('h') | KeyCode::Left | KeyCode::Backspace => picker.go_parent(),
+                KeyCode::Char('l') | KeyCode::Right
+                    if picker.selected_entry().is_some_and(|entry| entry.is_dir) =>
+                {
+                    picker.enter_selected();
+                }
+                KeyCode::Tab | KeyCode::BackTab => picker.cycle_section(),
+                KeyCode::Char('/') => picker.start_editing(),
+                _ => {}
+            }
+        }
+    }
+}
+
+fn handle_env_input(app: &mut App, key: KeyEvent) {
+    match key.code {
+        KeyCode::Enter => {
+            let result = app
+                .env_picker
+                .as_mut()
+                .map(FilePicker::submit_input)
+                .unwrap_or(Err("no picker".to_string()));
+            match result {
+                Ok(Some(path)) => app.use_env_file(path),
+                Ok(None) => {}
+                Err(error) => app.status = error,
+            }
+        }
+        other => {
+            let Some(picker) = app.env_picker.as_mut() else {
+                return;
+            };
+            match other {
+                KeyCode::Esc => picker.cancel_editing(),
+                KeyCode::Backspace => picker.backspace(),
+                KeyCode::Char(ch) if !key.modifiers.contains(KeyModifiers::CONTROL) => {
+                    picker.push_char(ch);
+                }
+                _ => {}
+            }
+        }
+    }
+}
+
+fn read_motion(state: &mut MotionState, key: KeyEvent) -> MotionRead {
+    if let KeyCode::Char(c) = key.code
+        && c.is_ascii_digit()
+        && !key.modifiers.contains(KeyModifiers::SHIFT)
+    {
+        if c == '0' && state.count.is_none() && !state.pending_g {
+            return MotionRead::Act(Motion::First);
+        }
+        let Some(digit) = c.to_digit(10) else {
+            return MotionRead::None;
+        };
+        state.count = Some(
+            state
+                .count
+                .unwrap_or(0)
+                .saturating_mul(10)
+                .saturating_add(digit),
+        );
+        return MotionRead::Pending;
+    }
+
+    let shift = key.modifiers.contains(KeyModifiers::SHIFT);
+    let count = state.count.unwrap_or(1) as i32;
+    let motion = match key.code {
+        KeyCode::Char('g') if !shift => {
+            if state.pending_g {
+                let n = state.count.take().unwrap_or(1);
+                state.pending_g = false;
+                return MotionRead::Act(Motion::Goto(n.saturating_sub(1) as usize));
+            }
+            state.pending_g = true;
+            return MotionRead::Pending;
+        }
+        KeyCode::Char('G') => match state.count.take() {
+            Some(n) => Motion::Goto(n.saturating_sub(1) as usize),
+            None => Motion::Last,
+        },
+        KeyCode::Char('J') | KeyCode::PageDown => Motion::Page(count),
+        KeyCode::Char('K') | KeyCode::PageUp => Motion::Page(-count),
+        KeyCode::Down if shift => Motion::Page(count),
+        KeyCode::Up if shift => Motion::Page(-count),
+        KeyCode::Char('j') | KeyCode::Down => Motion::Delta(count),
+        KeyCode::Char('k') | KeyCode::Up => Motion::Delta(-count),
+        KeyCode::Char('v') if !shift => return MotionRead::None,
+        _ => {
+            state.clear();
+            return MotionRead::None;
+        }
+    };
+    state.clear();
+    MotionRead::Act(motion)
+}
+
+fn apply_motion(app: &mut App, motion: Motion) {
+    match app.input_mode() {
+        InputMode::Env { .. } => apply_env_motion(app, motion),
+        InputMode::Upload { .. } => app.apply_upload_motion(motion),
+        InputMode::Download { .. } => app.apply_download_motion(motion),
+        InputMode::Info => apply_info_motion(app, motion),
+        InputMode::Browse => apply_browse_motion(app, motion),
+        _ => {}
+    }
+}
+
+fn apply_env_motion(app: &mut App, motion: Motion) {
+    if let Some(picker) = app.env_picker.as_mut() {
+        picker.apply_motion(motion);
+    }
+}
+
+fn apply_browse_motion(app: &mut App, motion: Motion) {
+    match motion {
+        Motion::Delta(delta) => app.move_sel(delta),
+        Motion::Page(pages) => app.move_sel(pages * PAGE_SIZE),
+        Motion::First => app.goto_sel(0),
+        Motion::Last => app.goto_sel(usize::MAX),
+        Motion::Goto(index) => app.goto_sel(index),
+    }
+}
+
+fn apply_info_motion(app: &mut App, motion: Motion) {
+    match motion {
+        Motion::Delta(delta) => app.scroll_info(delta),
+        Motion::Page(pages) => app.scroll_info(pages * PAGE_SIZE),
+        Motion::First => app.reset_view_scroll(),
+        Motion::Last => app.scroll_info(i32::MAX),
+        Motion::Goto(index) => {
+            app.reset_view_scroll();
+            app.scroll_info(index as i32);
+        }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{
+        BrowseLevel, HELP_OVERLAY, InputMode, Motion, MotionRead, MotionState, read_motion,
+        short_hint,
+    };
+    use crossterm::event::{KeyCode, KeyEvent, KeyEventKind, KeyModifiers};
+
+    fn key(code: KeyCode) -> KeyEvent {
+        KeyEvent::new(code, KeyModifiers::NONE)
+    }
+
+    fn shift(code: KeyCode) -> KeyEvent {
+        KeyEvent::new(code, KeyModifiers::SHIFT)
+    }
+
+    fn act(state: &mut MotionState, code: KeyCode) -> Motion {
+        match read_motion(state, key(code)) {
+            MotionRead::Act(motion) => motion,
+            other => panic!("expected Act, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn digits_prefix_then_j_moves_by_count() {
+        let mut state = MotionState::default();
+        assert!(matches!(
+            read_motion(&mut state, key(KeyCode::Char('1'))),
+            MotionRead::Pending
+        ));
+        assert!(matches!(
+            read_motion(&mut state, key(KeyCode::Char('2'))),
+            MotionRead::Pending
+        ));
+        assert!(matches!(
+            act(&mut state, KeyCode::Char('j')),
+            Motion::Delta(12)
+        ));
+        assert!(!state.pending());
+    }
+
+    #[test]
+    fn leading_zero_goes_first_gg_and_count_gg_goto() {
+        let mut state = MotionState::default();
+        assert!(matches!(act(&mut state, KeyCode::Char('0')), Motion::First));
+
+        assert!(matches!(
+            read_motion(&mut state, key(KeyCode::Char('g'))),
+            MotionRead::Pending
+        ));
+        assert!(matches!(
+            act(&mut state, KeyCode::Char('g')),
+            Motion::Goto(0)
+        ));
+
+        assert!(matches!(
+            read_motion(&mut state, key(KeyCode::Char('4'))),
+            MotionRead::Pending
+        ));
+        assert!(matches!(
+            read_motion(&mut state, key(KeyCode::Char('g'))),
+            MotionRead::Pending
+        ));
+        assert!(matches!(
+            act(&mut state, KeyCode::Char('g')),
+            Motion::Goto(3)
+        ));
+    }
+
+    #[test]
+    fn uppercase_g_last_or_goto_and_shift_arrows_page() {
+        let mut state = MotionState::default();
+        assert!(matches!(act(&mut state, KeyCode::Char('G')), Motion::Last));
+        assert!(matches!(
+            read_motion(&mut state, key(KeyCode::Char('3'))),
+            MotionRead::Pending
+        ));
+        assert!(matches!(
+            act(&mut state, KeyCode::Char('G')),
+            Motion::Goto(2)
+        ));
+        assert!(matches!(
+            read_motion(&mut state, shift(KeyCode::Down)),
+            MotionRead::Act(Motion::Page(1))
+        ));
+        assert!(matches!(
+            read_motion(&mut state, shift(KeyCode::Up)),
+            MotionRead::Act(Motion::Page(-1))
+        ));
+    }
+
+    #[test]
+    fn unrelated_key_clears_pending_count() {
+        let mut state = MotionState::default();
+        assert!(matches!(
+            read_motion(&mut state, key(KeyCode::Char('5'))),
+            MotionRead::Pending
+        ));
+        assert!(matches!(
+            read_motion(&mut state, key(KeyCode::Char('x'))),
+            MotionRead::None
+        ));
+        assert!(!state.pending());
+    }
+
+    #[test]
+    fn v_keeps_pending_count_for_select_n() {
+        let mut state = MotionState::default();
+        assert!(matches!(
+            read_motion(&mut state, key(KeyCode::Char('4'))),
+            MotionRead::Pending
+        ));
+        assert!(matches!(
+            read_motion(&mut state, key(KeyCode::Char('0'))),
+            MotionRead::Pending
+        ));
+        assert!(matches!(
+            read_motion(&mut state, key(KeyCode::Char('v'))),
+            MotionRead::None
+        ));
+        assert_eq!(state.count, Some(40));
+    }
+
+    #[test]
+    fn browse_hints_stay_short() {
+        let modes = [
+            (
+                InputMode::Browse,
+                BrowseLevel::Root,
+                false,
+                false,
+                "→ open  / filter  i info  u upload  d download  ? help  q quit",
+            ),
+            (
+                InputMode::Browse,
+                BrowseLevel::Streams,
+                false,
+                true,
+                "tab  space toggle  v range  → open  / filter  u upload  d download  ? help  q quit",
+            ),
+            (
+                InputMode::Browse,
+                BrowseLevel::Streams,
+                false,
+                false,
+                "tab  → open  ← back  / filter  i info  u upload  d download  ? help  q quit",
+            ),
+            (
+                InputMode::Browse,
+                BrowseLevel::Datasets,
+                false,
+                false,
+                "tab  → view  ← back  / filter  i info  u upload  d download  ? help  q quit",
+            ),
+            (
+                InputMode::Info,
+                BrowseLevel::Datasets,
+                false,
+                false,
+                "→ view  ← back  / filter  i info  u upload  d download  ? help  q quit",
+            ),
+            (
+                InputMode::Info,
+                BrowseLevel::Root,
+                true,
+                false,
+                "i/esc close  ? help  q quit",
+            ),
+        ];
+        for (mode, level, info, table, expected) in modes {
+            let hint = short_hint(mode, false, level, info, table, None);
+            assert_eq!(hint, expected);
+            assert!(hint.chars().count() <= 90, "{hint}");
+            assert!(
+                !hint.contains("u d x r p"),
+                "actions stay on ? overlay: {hint}"
+            );
+        }
+        assert_eq!(
+            short_hint(
+                InputMode::Browse,
+                true,
+                BrowseLevel::Streams,
+                false,
+                true,
+                None
+            ),
+            "v/enter/space keep  esc cancel  ? help"
+        );
+        assert_eq!(
+            short_hint(
+                InputMode::Search,
+                false,
+                BrowseLevel::Root,
+                false,
+                false,
+                Some("foo")
+            ),
+            "/foo_  enter keep  esc cancel"
+        );
+    }
+
+    #[test]
+    fn help_overlay_lists_actions_and_modals() {
+        let labels: Vec<_> = HELP_OVERLAY.iter().map(|(label, _)| *label).collect();
+        assert_eq!(
+            labels,
+            [
+                "move", "open", "filter", "inspect", "select", "actions", "env", "quit", "upload",
+                "download", "env file"
+            ]
+        );
+        let actions = HELP_OVERLAY
+            .iter()
+            .find(|(label, _)| *label == "actions")
+            .map(|(_, keys)| *keys)
+            .unwrap();
+        for key in [
+            "u upload",
+            "d download",
+            "x delete",
+            "r reingest",
+            "p process",
+        ] {
+            assert!(actions.contains(key), "{actions}");
+        }
+    }
+
+    #[test]
+    fn key_repeat_of_arrows_is_still_delta() {
+        let mut state = MotionState::default();
+        let mut down = key(KeyCode::Down);
+        down.kind = KeyEventKind::Repeat;
+        assert!(matches!(
+            read_motion(&mut state, down),
+            MotionRead::Act(Motion::Delta(1))
+        ));
+    }
+}

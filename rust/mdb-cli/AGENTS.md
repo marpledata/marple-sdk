@@ -7,7 +7,24 @@ the Rust SDK crate `marple-db`.
 
 - `src/main.rs`: clap command definitions, argument parsing, command handlers,
   progress output, and process exit behavior.
-- `tests/test_db_cli.rs`: CLI tests using `assert_cmd`.
+- `src/browse/`: stream / dataset / signal browser started by `mdb` (TTY) or
+  `mdb browse`. Session (env file, recents, last upload folder) is saved in
+  `$XDG_CONFIG_HOME/mdb/browse.toml`. Key handling and vim motion live in
+  `input.rs`. The footer is a short hint; `?` opens a key overlay. Status has
+  its own line above the hint. Opening a dataset cycles right-pane views with
+  `→` (info, debug messages, signals) and focuses that pane; `←` returns to the
+  dataset list. Debug logs and import-status polls spawn off the main
+  `PendingLoad` slot and the tick
+  (messages: `DebugLoaded`, `Statuses`). Debug log fetch and display live in
+  `debug.rs`. Dataset check / visual range (`v`) / select-all live in `selection.rs`. The
+  env-file modal (`w`) lives in `picker.rs`.
+  Upload from a stream (`u`) lives in `upload.rs`. Download of original files
+  (`d`) lives in `download.rs`. Dataset delete (`x`), reingest (`r`), and rerun
+  processing (`p`) live in `batch.rs`. TUI palette and bordered chrome live in `style.rs`.
+- `src/table.rs`: shared windowed table draw plus `/` substring row search used
+  by browse.
+- `tests/integration.rs`: CLI tests using `assert_cmd`.
+- `tests/unit.rs`: table-format unit tests.
 - `README.md`: user-facing CLI documentation and examples.
 - `CONTRIBUTING.md`: contributor setup notes.
 - `Cargo.toml`: CLI package metadata, binary declaration, and dependencies.
@@ -22,9 +39,14 @@ the Rust SDK crate `marple-db`.
 ## Conventions
 
 - CLI command definitions should stay close to their handlers in `src/main.rs`
-  unless the file is intentionally split into modules.
+  unless the file is intentionally split into modules. The browser is split on
+  purpose (`src/browse/`).
 - User-facing command output belongs in the CLI crate, not the SDK crate.
-- Write CLI behavior tests in `tests/test_db_cli.rs`. Use `assert_cmd` to spawn
+- Write CLI behavior tests in `tests/integration.rs`. Use `assert_cmd` to spawn
   the `mdb` binary and assert on stdout, stderr, and exit status.
 - Keep progress bars and colored output out of JSON stdout paths so scripts can
   parse command responses reliably.
+- TUI palette lives in `src/browse/style.rs`. Body text inherits the terminal
+  foreground; do not use Gray, DarkGray, White, or Dim as foreground without a
+  background (they vanish on light terminals). Row highlight paints both ends:
+  black on Blue when focused, black on Gray when idle.

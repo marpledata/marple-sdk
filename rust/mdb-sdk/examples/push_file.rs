@@ -1,11 +1,10 @@
-use marple_db::{MarpleDB, PushFileOptions};
+use marple_db::{MarpleDB, PushFileOptions, SAAS_URL};
 use serde_json::json;
 use std::time::Duration;
 
 #[tokio::main]
 async fn main() -> anyhow::Result<()> {
-    let url =
-        std::env::var("MDB_URL").unwrap_or_else(|_| "https://db.marpledata.com/api/v1".to_string());
+    let url = std::env::var("MDB_URL").unwrap_or_else(|_| SAAS_URL.to_string());
     let token = std::env::var("MDB_TOKEN")?;
     let db = MarpleDB::new(&url, &token)?;
     let stream = db.get_stream("runs").await?;
@@ -14,10 +13,9 @@ async fn main() -> anyhow::Result<()> {
         .push_file(
             stream.id,
             "run.csv",
-            PushFileOptions::builder()
+            PushFileOptions::default()
                 .metadata([("source", json!("rust-example"))])
-                .overwrite(true)
-                .build(),
+                .overwrite(true),
         )
         .await?;
     let dataset = db

@@ -2,14 +2,24 @@
 name = "mdb"
 path = "src/main.rs"
 
+[features]
+default = []
+# Optional OpenSSL / SChannel / Secure Transport instead of (or in addition to)
+# the default rustls + OS roots from `marple-db`.
+native-tls = ["marple-db/native-tls"]
+
 [dependencies]
 anyhow.workspace = true
 colored = "3.0.0"
+crossterm = { workspace = true, features = ["event-stream"] }
 dotenvy = "0.15.7"
 futures-util = { workspace = true, default-features = false, features = ["std"] }
 marple-db = { path = "../mdb-sdk", version = "0.3.0" }
+ratatui.workspace = true
 reqwest.workspace = true
+serde.workspace = true
 serde_json.workspace = true
+toml.workspace = true
 walkdir.workspace = true
 
 [dependencies.clap]
@@ -21,7 +31,7 @@ features = ["tokio"]
 version = "0.18.3"
 
 [dependencies.tokio]
-features = ["rt-multi-thread", "macros", "fs", "io-util"]
+features = ["rt-multi-thread", "macros", "fs", "io-util", "sync", "time"]
 workspace = true
 
 [dev-dependencies]
@@ -35,6 +45,7 @@ description = "Command line client for the MarpleDB API"
 documentation = "https://docs.marpledata.com/docs"
 edition.workspace = true
 homepage.workspace = true
+rust-version.workspace = true
 keywords = ["marple", "cli", "database", "iceberg", "parquet"]
 categories = [
     "command-line-utilities",

@@ -8,6 +8,8 @@ authors = ["Jan Scheers <jan@marpledata.com>"]
 edition = "2024"
 homepage = "https://www.marpledata.com/"
 repository = "https://github.com/marpledata/marple-sdk"
+# Edition 2024 requires rustc 1.85+. CI builds with a newer stable image.
+rust-version = "1.85"
 
 [workspace.dependencies]
 anyhow = "1.0.100"
@@ -15,12 +17,15 @@ async-stream = "0.3.6"
 base64 = "0.22.1"
 futures-util = { version = "0.3.31", default-features = false, features = ["std"] }
 httpdate = "1.0.3"
-reqwest = { version = "0.12.28", default-features = false, features = ["json", "multipart", "stream", "rustls-tls"] }
+reqwest = { version = "0.12.28", default-features = false, features = ["json", "multipart", "stream"] }
 serde = { version = "1.0.228", features = ["derive"] }
-serde_json = { version = "1.0.146", features = ["preserve_order"] }
+serde_json = { version = "1.0.146", features = ["preserve_order", "arbitrary_precision"] }
 thiserror = "2.0.17"
 tokio = { version = "1.48.0", default-features = false }
 tokio-util = { version = "0.7.17", features = ["io"] }
 tracing = { version = "0.1.43", default-features = false, features = ["attributes"] }
 url = "2.5.7"
 walkdir = "2.5.0"
+crossterm = "0.28.1"
+ratatui = "0.29.0"
+toml = "0.8.23"

@@ -1,0 +1,1237 @@
+use super::picker::FilePicker;
+use super::progress::AtomicProgress;
+use super::{App, BrowseLevel, Focus, Pane};
+use crate::table::{Visible, window_indices};
+use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
+use marple_db::{
+    Dataset, DatasetStatus, ImportStatus, MarpleDB, Metadata, PushFileOptions, StreamType,
+};
+use serde_json::Value;
+use std::collections::{HashMap, HashSet, VecDeque};
+use std::path::{Path, PathBuf};
+use std::sync::Arc;
+use std::sync::atomic::{AtomicU64, Ordering};
+use std::time::{Duration, Instant};
+use walkdir::WalkDir;
+
+const STATUS_POLL: Duration = Duration::from_millis(500);
+const VIEW_POLL: usize = 48;
+const FOOTER: [FormFocus; 5] = [
+    FormFocus::Overwrite,
+    FormFocus::SkipExisting,
+    FormFocus::Extension,
+    FormFocus::Metadata,
+    FormFocus::Upload,
+];
+
+#[derive(Default)]
+pub(super) struct UploadState {
+    pub form: Option<UploadForm>,
+    queue: VecDeque<QueuedFile>,
+    running: Option<RunningUpload>,
+    watch: Vec<Watch>,
+    last_poll: Option<Instant>,
+    poll_gen: u64,
+    poll_pending: bool,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(super) enum FormFocus {
+    Files,
+    Overwrite,
+    SkipExisting,
+    Extension,
+    Metadata,
+    Upload,
+}
+
+pub(super) struct UploadForm {
+    pub overwrite: bool,
+    pub skip_existing: bool,
+    pub extension: String,
+    pub ext_editing: bool,
+    pub metadata: Vec<(String, Value)>,
+    pub meta_input: String,
+    pub meta_editing: bool,
+    pub focus: FormFocus,
+    pub picker: FilePicker,
+    pub stream_name: String,
+    pub selected: HashSet<PathBuf>,
+    visual: Option<VisualPick>,
+    stream_id: i64,
+}
+
+struct VisualPick {
+    anchor: usize,
+    snapshot: HashSet<PathBuf>,
+}
+
+struct QueuedFile {
+    stream_id: i64,
+    path: PathBuf,
+    overwrite: bool,
+    metadata: Metadata,
+}
+
+struct RunningUpload {
+    dataset_id: Option<i64>,
+    bytes: Arc<AtomicU64>,
+    total: u64,
+}
+
+struct Watch {
+    stream_id: i64,
+    dataset_id: i64,
+}
+
+pub(super) enum UploadEvent {
+    Created(Dataset),
+    Finished(Result<Dataset, String>),
+}
+
+pub(super) struct StatusPollResult {
+    batches: Vec<(i64, Result<Vec<DatasetStatus>, String>)>,
+    hydrated: Vec<Dataset>,
+}
+
+impl UploadState {
+    pub(super) fn clear(&mut self) {
+        self.watch.clear();
+        self.queue.clear();
+        self.poll_pending = false;
+        self.poll_gen = self.poll_gen.wrapping_add(1);
+        self.last_poll = None;
+    }
+
+    pub(super) fn needs_tick(&self) -> bool {
+        self.running.is_some() || !self.queue.is_empty() || !self.watch.is_empty()
+    }
+
+    pub(super) fn is_active(&self, dataset_id: i64) -> bool {
+        self.running
+            .as_ref()
+            .is_some_and(|running| running.dataset_id == Some(dataset_id))
+            || self
+                .watch
+                .iter()
+                .any(|watch| watch.dataset_id == dataset_id)
+    }
+
+    pub(super) fn watch_dataset(&mut self, stream_id: i64, dataset_id: i64) {
+        if self
+            .watch
+            .iter()
+            .any(|watch| watch.dataset_id == dataset_id)
+        {
+            return;
+        }
+        self.watch.push(Watch {
+            stream_id,
+            dataset_id,
+        });
+    }
+
+    pub(super) fn byte_ratio(&self, dataset_id: i64) -> Option<f64> {
+        let running = self.running.as_ref()?;
+        if running.dataset_id != Some(dataset_id) {
+            return None;
+        }
+        if running.total == 0 {
+            return Some(1.0);
+        }
+        Some((running.bytes.load(Ordering::Relaxed) as f64 / running.total as f64).clamp(0.0, 1.0))
+    }
+}
+
+impl FormFocus {
+    fn next_footer(self) -> Self {
+        Self::step_footer(self, 1)
+    }
+
+    fn prev_footer(self) -> Self {
+        Self::step_footer(self, FOOTER.len() - 1)
+    }
+
+    fn step_footer(self, delta: usize) -> Self {
+        let index = FOOTER.iter().position(|&field| field == self).unwrap_or(0);
+        FOOTER[(index + delta) % FOOTER.len()]
+    }
+
+    pub(super) fn is_files(self) -> bool {
+        matches!(self, Self::Files)
+    }
+}
+
+impl App {
+    pub(super) fn open_upload(&mut self) {
+        if self.upload.form.is_some() || self.download.picker.is_some() {
+            return;
+        }
+        if !self.connected {
+            self.prompt_for_env();
+            return;
+        }
+        let Some(stream) = self.selected_stream() else {
+            self.status = "select a stream first".to_string();
+            return;
+        };
+        if stream.stream_type != StreamType::Files {
+            self.status = "upload is only available on file streams".to_string();
+            return;
+        }
+        let stream_id = stream.id;
+        let stream_name = stream.name.clone();
+        if self.browse_level == BrowseLevel::Root {
+            self.open_stream_table();
+        } else {
+            self.request_datasets(stream_id);
+            self.browse_level = BrowseLevel::Streams;
+            self.focus = Focus::Table;
+        }
+        self.status.clear();
+        self.upload.form = Some(UploadForm::new(
+            stream_id,
+            stream_name,
+            self.upload_dir.as_deref(),
+        ));
+    }
+
+    pub(super) fn upload_typing(&self) -> bool {
+        self.upload.form.as_ref().is_some_and(UploadForm::typing)
+    }
+
+    pub(super) fn on_upload_tick(&mut self) {
+        self.patch_upload_progress();
+        self.start_next_upload();
+        self.maybe_poll_statuses();
+    }
+
+    pub(super) fn handle_upload_key(&mut self, key: KeyEvent) {
+        match key.code {
+            KeyCode::Esc => {
+                if self.cancel_upload_edit() {
+                    return;
+                }
+                if self
+                    .upload
+                    .form
+                    .as_mut()
+                    .is_some_and(UploadForm::cancel_visual)
+                {
+                    return;
+                }
+                self.close_upload();
+                return;
+            }
+            KeyCode::Char('q') if !self.upload_typing() => {
+                self.close_upload();
+                return;
+            }
+            KeyCode::Char('v') => {
+                let count = self.motion.take_count();
+                if let Some(form) = self.upload.form.as_mut()
+                    && form.focus.is_files()
+                {
+                    form.visual_or_select_n(count);
+                }
+                return;
+            }
+            _ => {}
+        }
+        let confirm = {
+            let Some(form) = self.upload.form.as_mut() else {
+                return;
+            };
+            let confirm = form.focus == FormFocus::Upload && matches!(key.code, KeyCode::Enter);
+            match key.code {
+                KeyCode::Tab => {
+                    form.picker.cancel_editing();
+                    form.stop_edits();
+                    form.commit_visual();
+                    form.focus = if form.focus.is_files() {
+                        FormFocus::Overwrite
+                    } else {
+                        FormFocus::Files
+                    };
+                }
+                KeyCode::BackTab => {
+                    form.picker.cancel_editing();
+                    form.stop_edits();
+                    form.commit_visual();
+                    form.focus = if form.focus.is_files() {
+                        FormFocus::Upload
+                    } else {
+                        FormFocus::Files
+                    };
+                }
+                KeyCode::Enter if !confirm && form.focus.is_files() && form.in_visual() => {
+                    form.commit_visual();
+                }
+                KeyCode::Enter if !confirm => form.activate(),
+                KeyCode::Char(' ') if form.focus.is_files() && form.in_visual() => {
+                    form.commit_visual();
+                }
+                KeyCode::Char(' ') if form.focus.is_files() || form.is_checkbox() => {
+                    form.activate()
+                }
+                KeyCode::Char('a') if form.focus.is_files() => form.toggle_all(),
+                KeyCode::Char('A') if form.focus.is_files() => form.clear_selected(),
+                KeyCode::Char('/') if form.focus.is_files() => {
+                    form.commit_visual();
+                    form.picker.start_editing();
+                }
+                KeyCode::Char('h') | KeyCode::Left if !form.focus.is_files() => {
+                    form.focus = form.focus.prev_footer();
+                }
+                KeyCode::Char('l') | KeyCode::Right if !form.focus.is_files() => {
+                    form.focus = form.focus.next_footer();
+                }
+                KeyCode::Char('h') | KeyCode::Left | KeyCode::Backspace
+                    if form.focus.is_files() =>
+                {
+                    form.commit_visual();
+                    form.picker.go_parent();
+                }
+                KeyCode::Char('l') | KeyCode::Right
+                    if form.focus.is_files()
+                        && form
+                            .picker
+                            .selected_entry()
+                            .is_some_and(|entry| entry.is_dir) =>
+                {
+                    form.commit_visual();
+                    form.picker.enter_selected();
+                }
+                KeyCode::Backspace if form.focus == FormFocus::Metadata && !form.meta_editing => {
+                    form.metadata.pop();
+                }
+                _ => {}
+            }
+            confirm
+        };
+        if confirm {
+            self.confirm_upload();
+        }
+    }
+
+    pub(super) fn handle_upload_input(&mut self, key: KeyEvent) {
+        let mut status = None;
+        {
+            let Some(form) = self.upload.form.as_mut() else {
+                return;
+            };
+            if form.picker.editing {
+                match key.code {
+                    KeyCode::Enter => match form.picker.submit_typed(true) {
+                        Ok(Some(path)) => {
+                            form.selected.insert(super::picker::path_key(&path));
+                        }
+                        Ok(None) => {}
+                        Err(error) => status = Some(error),
+                    },
+                    KeyCode::Esc => form.picker.cancel_editing(),
+                    KeyCode::Backspace => form.picker.backspace(),
+                    KeyCode::Char(ch) if !key.modifiers.contains(KeyModifiers::CONTROL) => {
+                        form.picker.push_char(ch);
+                    }
+                    _ => {}
+                }
+            } else if form.ext_editing {
+                match key.code {
+                    KeyCode::Enter | KeyCode::Esc => form.ext_editing = false,
+                    KeyCode::Backspace => {
+                        form.extension.pop();
+                    }
+                    KeyCode::Char(ch)
+                        if !key.modifiers.contains(KeyModifiers::CONTROL)
+                            && (ch.is_ascii_alphanumeric() || ch == '.') =>
+                    {
+                        form.extension.push(ch);
+                    }
+                    _ => {}
+                }
+            } else if form.meta_editing {
+                match key.code {
+                    KeyCode::Enter => match parse_meta(&form.meta_input) {
+                        Ok(pair) => {
+                            form.metadata.retain(|(key, _)| key != &pair.0);
+                            form.metadata.push(pair);
+                            form.meta_input.clear();
+                            form.meta_editing = false;
+                        }
+                        Err(error) => status = Some(error),
+                    },
+                    KeyCode::Esc => {
+                        form.meta_input.clear();
+                        form.meta_editing = false;
+                    }
+                    KeyCode::Backspace => {
+                        form.meta_input.pop();
+                    }
+                    KeyCode::Char(ch) if !key.modifiers.contains(KeyModifiers::CONTROL) => {
+                        form.meta_input.push(ch);
+                    }
+                    _ => {}
+                }
+            }
+        }
+        if let Some(error) = status {
+            self.status = error;
+        }
+    }
+
+    pub(super) fn apply_upload_motion(&mut self, motion: super::Motion) {
+        let Some(form) = self.upload.form.as_mut() else {
+            return;
+        };
+        if form.focus.is_files() {
+            if form.in_visual() {
+                form.picker.apply_motion_clamped(motion);
+            } else {
+                form.picker.apply_motion(motion);
+            }
+            form.sync_visual();
+            return;
+        }
+        match motion {
+            super::Motion::Delta(delta) if delta > 0 => form.focus = form.focus.next_footer(),
+            super::Motion::Delta(_) => form.focus = form.focus.prev_footer(),
+            _ => {}
+        }
+    }
+
+    fn cancel_upload_edit(&mut self) -> bool {
+        let Some(form) = self.upload.form.as_mut() else {
+            return false;
+        };
+        if form.picker.editing {
+            form.picker.cancel_editing();
+            return true;
+        }
+        if form.ext_editing {
+            form.ext_editing = false;
+            return true;
+        }
+        if form.meta_editing {
+            form.meta_input.clear();
+            form.meta_editing = false;
+            return true;
+        }
+        false
+    }
+
+    fn close_upload(&mut self) {
+        self.remember_upload_dir();
+        self.upload.form = None;
+        self.persist_settings();
+    }
+
+    fn remember_upload_dir(&mut self) {
+        if let Some(form) = &self.upload.form {
+            self.upload_dir = Some(form.picker.dir.clone());
+        }
+    }
+
+    fn confirm_upload(&mut self) {
+        let Some(form) = self.upload.form.as_ref() else {
+            return;
+        };
+        if form.selected.is_empty() {
+            self.status = "enter to select files, then tab to upload".to_string();
+            return;
+        }
+        let paths: Vec<PathBuf> = form.selected.iter().cloned().collect();
+        self.remember_upload_dir();
+        self.queue_upload_paths(paths);
+        self.persist_settings();
+    }
+
+    fn queue_upload_paths(&mut self, paths: Vec<PathBuf>) {
+        let Some(form) = self.upload.form.as_ref() else {
+            return;
+        };
+        let extension = form.extension.trim().to_string();
+        let extension = (!extension.is_empty()).then_some(extension.as_str());
+        let skip_existing = form.skip_existing;
+        let overwrite = form.overwrite;
+        let stream_id = form.stream_id;
+        let metadata: Metadata = form.metadata.iter().cloned().collect();
+        let mut files = Vec::new();
+        for path in &paths {
+            match collect_files(path, extension) {
+                Ok(found) => files.extend(found),
+                Err(error) => {
+                    self.status = error;
+                    return;
+                }
+            }
+        }
+        if files.is_empty() {
+            self.status = "no files to upload".to_string();
+            return;
+        }
+        let existing: HashSet<String> = if skip_existing {
+            self.datasets()
+                .iter()
+                .map(|dataset| dataset.path.clone())
+                .collect()
+        } else {
+            HashSet::new()
+        };
+        let mut queued = 0usize;
+        for file in files {
+            let name = file
+                .file_name()
+                .map(|name| name.to_string_lossy().into_owned())
+                .unwrap_or_default();
+            if skip_existing && existing.contains(&name) {
+                continue;
+            }
+            self.upload.queue.push_back(QueuedFile {
+                stream_id,
+                path: file,
+                overwrite,
+                metadata: metadata.clone(),
+            });
+            queued += 1;
+        }
+        if queued == 0 {
+            self.status = "all files already exist".to_string();
+            return;
+        }
+        self.upload.form = None;
+        self.search.clear();
+        self.status.clear();
+        self.start_next_upload();
+    }
+
+    pub(super) fn start_next_upload(&mut self) {
+        if self.upload.running.is_some() {
+            return;
+        }
+        let Some(front) = self.upload.queue.front() else {
+            return;
+        };
+        if self.loaded_stream_id() != Some(front.stream_id) {
+            self.request_datasets(front.stream_id);
+            return;
+        }
+        let queued = self.upload.queue.pop_front().expect("front");
+        let total = std::fs::metadata(&queued.path)
+            .map(|metadata| metadata.len())
+            .unwrap_or(0);
+        let bytes = Arc::new(AtomicU64::new(0));
+        let tx = self.events.clone();
+        let db = self.db.clone();
+        let progress = Arc::new(AtomicProgress(Arc::clone(&bytes)));
+        tokio::spawn(async move {
+            let options = PushFileOptions::default()
+                .metadata(queued.metadata)
+                .overwrite(queued.overwrite)
+                .progress(progress);
+            match db
+                .begin_upload(queued.stream_id, &queued.path, options)
+                .await
+            {
+                Ok(session) => {
+                    let _ = tx.send(super::Message::Upload(Box::new(UploadEvent::Created(
+                        session.dataset().clone(),
+                    ))));
+                    let result = session.send().await.map_err(|error| error.to_string());
+                    let _ = tx.send(super::Message::Upload(Box::new(UploadEvent::Finished(
+                        result,
+                    ))));
+                }
+                Err(error) => {
+                    let _ = tx.send(super::Message::Upload(Box::new(UploadEvent::Finished(
+                        Err(error.to_string()),
+                    ))));
+                }
+            }
+        });
+        self.upload.running = Some(RunningUpload {
+            dataset_id: None,
+            bytes,
+            total,
+        });
+    }
+
+    pub(super) fn apply_upload_event(&mut self, event: UploadEvent) {
+        match event {
+            UploadEvent::Created(dataset) => {
+                if let Some(running) = self.upload.running.as_mut() {
+                    running.dataset_id = Some(dataset.id);
+                }
+                self.upsert_dataset(dataset);
+            }
+            UploadEvent::Finished(Ok(dataset)) => {
+                let stream_id = dataset.datastream_id;
+                let dataset_id = dataset.id;
+                self.upsert_dataset(dataset);
+                self.upload.watch.push(Watch {
+                    stream_id,
+                    dataset_id,
+                });
+                self.upload.running = None;
+                self.start_next_upload();
+            }
+            UploadEvent::Finished(Err(error)) => {
+                if let Some(id) = self
+                    .upload
+                    .running
+                    .as_ref()
+                    .and_then(|running| running.dataset_id)
+                {
+                    self.patch_dataset(id, |dataset| {
+                        dataset.import_status = ImportStatus::Failed;
+                        dataset.import_message = Some(error.clone());
+                    });
+                }
+                self.status = error;
+                self.upload.running = None;
+                self.start_next_upload();
+            }
+        }
+    }
+
+    fn patch_upload_progress(&mut self) {
+        let Some(running) = &self.upload.running else {
+            return;
+        };
+        let Some(id) = running.dataset_id else {
+            return;
+        };
+        let ratio = self.upload.byte_ratio(id);
+        self.patch_dataset(id, |dataset| {
+            dataset.import_status = ImportStatus::Uploading;
+            dataset.import_progress = ratio;
+        });
+    }
+
+    fn maybe_poll_statuses(&mut self) {
+        if self.upload.poll_pending {
+            return;
+        }
+        if self
+            .upload
+            .last_poll
+            .is_some_and(|last| last.elapsed() < STATUS_POLL)
+        {
+            return;
+        }
+        let by_stream = self.poll_targets();
+        if by_stream.is_empty() {
+            return;
+        }
+        self.upload.poll_gen = self.upload.poll_gen.wrapping_add(1);
+        let poll_gen = self.upload.poll_gen;
+        self.upload.poll_pending = true;
+        self.upload.last_poll = Some(Instant::now());
+        let hydrate_stream = self.loaded_stream_id();
+        let db = self.db.clone();
+        let tx = self.events.clone();
+        tokio::spawn(async move {
+            let result = fetch_status_poll(db, by_stream, hydrate_stream).await;
+            let _ = tx.send(super::Message::Statuses(poll_gen, Box::new(result)));
+        });
+    }
+
+    fn poll_targets(&self) -> HashMap<i64, Vec<i64>> {
+        merge_poll_ids(
+            self.upload
+                .watch
+                .iter()
+                .map(|watch| (watch.stream_id, watch.dataset_id)),
+            self.loaded_stream_id(),
+            &self.viewport_inflight(),
+        )
+    }
+
+    pub(super) fn viewport_inflight(&self) -> Vec<i64> {
+        if !matches!(
+            self.browse_level,
+            BrowseLevel::Streams | BrowseLevel::Datasets
+        ) {
+            return Vec::new();
+        }
+        let selected = self
+            .loaded_datasets
+            .as_ref()
+            .and_then(|loaded| loaded.selected_index());
+        let visible = self.dataset_indices(self.focused_pane() == Pane::Datasets);
+        inflight_in_window(self.datasets(), &visible, selected, VIEW_POLL)
+    }
+
+    pub(super) fn apply_status_poll(&mut self, poll_gen: u64, result: StatusPollResult) {
+        if poll_gen != self.upload.poll_gen {
+            return;
+        }
+        self.upload.poll_pending = false;
+        for (stream_id, batch) in result.batches {
+            let Ok(statuses) = batch else {
+                continue;
+            };
+            let mut done = Vec::new();
+            for status in statuses {
+                self.patch_dataset_status(&status);
+                if status.import_status.is_terminal() {
+                    done.push(status.dataset_id);
+                }
+            }
+            self.upload.watch.retain(|watch| {
+                !(watch.stream_id == stream_id && done.contains(&watch.dataset_id))
+            });
+        }
+        for dataset in result.hydrated {
+            self.upsert_dataset(dataset);
+        }
+    }
+
+    fn patch_dataset_status(&mut self, status: &DatasetStatus) {
+        self.patch_dataset(status.dataset_id, |dataset| {
+            dataset.import_status = status.import_status;
+            dataset.import_progress = status.import_progress;
+            dataset.import_message = status.import_message.clone();
+        });
+    }
+}
+
+async fn fetch_status_poll(
+    db: MarpleDB,
+    by_stream: HashMap<i64, Vec<i64>>,
+    hydrate_stream: Option<i64>,
+) -> StatusPollResult {
+    let mut batches = Vec::new();
+    let mut hydrated = Vec::new();
+    for (stream_id, ids) in by_stream {
+        match db.get_dataset_statuses(stream_id, &ids).await {
+            Ok(statuses) => {
+                if Some(stream_id) == hydrate_stream {
+                    for status in &statuses {
+                        if status.import_status.is_success()
+                            && let Ok(dataset) = db.get_dataset(stream_id, status.dataset_id).await
+                        {
+                            hydrated.push(dataset);
+                        }
+                    }
+                }
+                batches.push((stream_id, Ok(statuses)));
+            }
+            Err(error) => batches.push((stream_id, Err(error.to_string()))),
+        }
+    }
+    StatusPollResult { batches, hydrated }
+}
+
+fn merge_poll_ids(
+    watches: impl IntoIterator<Item = (i64, i64)>,
+    stream_id: Option<i64>,
+    viewport: &[i64],
+) -> HashMap<i64, Vec<i64>> {
+    let mut by_stream: HashMap<i64, Vec<i64>> = HashMap::new();
+    let mut seen = HashSet::new();
+    for (stream_id, dataset_id) in watches {
+        if seen.insert(dataset_id) {
+            by_stream.entry(stream_id).or_default().push(dataset_id);
+        }
+    }
+    if let Some(stream_id) = stream_id {
+        for &dataset_id in viewport {
+            if seen.insert(dataset_id) {
+                by_stream.entry(stream_id).or_default().push(dataset_id);
+            }
+        }
+    }
+    by_stream
+}
+
+fn inflight_in_window(
+    datasets: &[Dataset],
+    visible: &Visible,
+    selected: Option<usize>,
+    view: usize,
+) -> Vec<i64> {
+    window_indices(visible, selected, view)
+        .filter_map(|index| datasets.get(index))
+        .filter(|dataset| !dataset.import_status.is_terminal())
+        .map(|dataset| dataset.id)
+        .collect()
+}
+
+impl UploadForm {
+    fn new(stream_id: i64, stream_name: String, start: Option<&Path>) -> Self {
+        Self {
+            overwrite: false,
+            skip_existing: false,
+            extension: String::new(),
+            ext_editing: false,
+            metadata: Vec::new(),
+            meta_input: String::new(),
+            meta_editing: false,
+            focus: FormFocus::Files,
+            picker: FilePicker::open(start, &[]),
+            stream_name,
+            selected: HashSet::new(),
+            visual: None,
+            stream_id,
+        }
+    }
+
+    pub(super) fn in_visual(&self) -> bool {
+        self.visual.is_some()
+    }
+
+    pub(super) fn visual_span(&self) -> Option<(usize, usize)> {
+        let visual = self.visual.as_ref()?;
+        let current = self.picker.selected;
+        Some(if visual.anchor <= current {
+            (visual.anchor, current)
+        } else {
+            (current, visual.anchor)
+        })
+    }
+
+    fn typing(&self) -> bool {
+        self.picker.editing || self.ext_editing || self.meta_editing
+    }
+
+    fn is_checkbox(&self) -> bool {
+        matches!(self.focus, FormFocus::Overwrite | FormFocus::SkipExisting)
+    }
+
+    fn stop_edits(&mut self) {
+        self.ext_editing = false;
+        self.meta_editing = false;
+        self.meta_input.clear();
+    }
+
+    fn activate(&mut self) {
+        match self.focus {
+            FormFocus::Files => self.toggle_pick(),
+            FormFocus::Overwrite => {
+                self.overwrite = !self.overwrite;
+                if self.overwrite {
+                    self.skip_existing = false;
+                }
+            }
+            FormFocus::SkipExisting => {
+                self.skip_existing = !self.skip_existing;
+                if self.skip_existing {
+                    self.overwrite = false;
+                }
+            }
+            FormFocus::Extension => self.ext_editing = !self.ext_editing,
+            FormFocus::Metadata => {
+                if self.meta_editing {
+                    return;
+                }
+                self.meta_editing = true;
+                self.meta_input.clear();
+            }
+            FormFocus::Upload => {}
+        }
+    }
+
+    fn toggle_pick(&mut self) {
+        if self
+            .picker
+            .selected_entry()
+            .is_some_and(|entry| entry.name == "..")
+        {
+            self.commit_visual();
+            self.picker.enter_selected();
+            return;
+        }
+        let Some(entry) = self.picker.selected_entry() else {
+            return;
+        };
+        let key = super::picker::path_key(&entry.path);
+        if !self.selected.remove(&key) {
+            self.selected.insert(key);
+        }
+    }
+
+    fn visual_or_select_n(&mut self, count: Option<u32>) {
+        if let Some(n) = count {
+            self.commit_visual();
+            self.select_n(n);
+            return;
+        }
+        if self.visual.is_some() {
+            self.commit_visual();
+            return;
+        }
+        self.visual = Some(VisualPick {
+            anchor: self.picker.selected,
+            snapshot: self.selected.clone(),
+        });
+        self.sync_visual();
+    }
+
+    fn select_n(&mut self, n: u32) {
+        let start = self.picker.selected;
+        let last = self.picker.len().saturating_sub(1);
+        let end = start
+            .saturating_add(n.max(1).saturating_sub(1) as usize)
+            .min(last);
+        self.add_span(start, end);
+        self.picker.goto(end);
+    }
+
+    fn toggle_all(&mut self) {
+        self.commit_visual();
+        let keys: Vec<PathBuf> = self
+            .picker
+            .entries
+            .iter()
+            .filter(|entry| entry.name != "..")
+            .map(|entry| super::picker::path_key(&entry.path))
+            .collect();
+        if keys.is_empty() {
+            return;
+        }
+        let all_selected = keys.iter().all(|key| self.selected.contains(key));
+        if all_selected {
+            for key in keys {
+                self.selected.remove(&key);
+            }
+        } else {
+            self.selected.extend(keys);
+        }
+    }
+
+    fn clear_selected(&mut self) {
+        self.visual = None;
+        self.selected.clear();
+    }
+
+    fn cancel_visual(&mut self) -> bool {
+        let Some(visual) = self.visual.take() else {
+            return false;
+        };
+        self.selected = visual.snapshot;
+        true
+    }
+
+    fn commit_visual(&mut self) {
+        self.visual = None;
+    }
+
+    fn sync_visual(&mut self) {
+        let Some((anchor, snapshot)) = self
+            .visual
+            .as_ref()
+            .map(|visual| (visual.anchor, visual.snapshot.clone()))
+        else {
+            return;
+        };
+        self.selected = snapshot;
+        let current = self.picker.selected;
+        let (lo, hi) = if anchor <= current {
+            (anchor, current)
+        } else {
+            (current, anchor)
+        };
+        self.add_span(lo, hi);
+    }
+
+    fn add_span(&mut self, lo: usize, hi: usize) {
+        for index in lo..=hi {
+            let Some(entry) = self.picker.item(index) else {
+                continue;
+            };
+            if entry.name == ".." {
+                continue;
+            }
+            self.selected.insert(super::picker::path_key(&entry.path));
+        }
+    }
+}
+
+pub(super) fn selected_summary(selected: &HashSet<PathBuf>) -> String {
+    let mut files = 0usize;
+    let mut folders = 0usize;
+    for path in selected {
+        if path.is_dir() {
+            folders += 1;
+        } else {
+            files += 1;
+        }
+    }
+    match (files, folders) {
+        (0, 0) => String::new(),
+        (files, 0) => format!("{files} file{}", if files == 1 { "" } else { "s" }),
+        (0, folders) => format!("{folders} folder{}", if folders == 1 { "" } else { "s" }),
+        (files, folders) => format!(
+            "{files} file{}, {folders} folder{}",
+            if files == 1 { "" } else { "s" },
+            if folders == 1 { "" } else { "s" }
+        ),
+    }
+}
+
+fn parse_meta(input: &str) -> Result<(String, Value), String> {
+    let Some((key, value)) = input.split_once('=') else {
+        return Err("metadata needs key=value".to_string());
+    };
+    let key = key.trim();
+    if key.is_empty() {
+        return Err("metadata key is empty".to_string());
+    }
+    let value = value.trim();
+    let parsed = serde_json::from_str(value).unwrap_or_else(|_| Value::String(value.to_string()));
+    Ok((key.to_string(), parsed))
+}
+
+fn collect_files(path: &Path, extension: Option<&str>) -> Result<Vec<PathBuf>, String> {
+    let matches_ext = |candidate: &Path| {
+        extension.is_none_or(|ext| {
+            candidate.extension().is_some_and(|path_ext| {
+                path_ext
+                    .to_string_lossy()
+                    .eq_ignore_ascii_case(ext.trim_start_matches('.'))
+            })
+        })
+    };
+    if path.is_file() {
+        if matches_ext(path) {
+            return Ok(vec![path.to_path_buf()]);
+        }
+        return Err(format!(
+            "{} skipped (extension)",
+            path.file_name()
+                .map(|name| name.to_string_lossy().into_owned())
+                .unwrap_or_else(|| path.display().to_string())
+        ));
+    }
+    if path.is_dir() {
+        let mut files: Vec<PathBuf> = WalkDir::new(path)
+            .into_iter()
+            .filter_map(|entry| entry.ok())
+            .filter(|entry| entry.file_type().is_file() && matches_ext(entry.path()))
+            .map(|entry| entry.into_path())
+            .collect();
+        files.sort();
+        return Ok(files);
+    }
+    Err(format!("{} is not a file or folder", path.display()))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{
+        FormFocus, UploadForm, UploadState, collect_files, inflight_in_window, merge_poll_ids,
+        parse_meta, selected_summary,
+    };
+    use crate::table::Visible;
+    use marple_db::Dataset;
+    use serde_json::json;
+    use std::collections::HashSet;
+    use std::fs;
+
+    fn dataset(id: i64, status: &str) -> Dataset {
+        serde_json::from_value(json!({
+            "id": id,
+            "datastream_id": 7,
+            "path": format!("{id}.csv"),
+            "import_status": status
+        }))
+        .unwrap()
+    }
+
+    #[test]
+    fn collect_files_walks_a_folder_and_filters_extension() {
+        let tmp = tempfile::tempdir().unwrap();
+        fs::create_dir(tmp.path().join("nested")).unwrap();
+        fs::write(tmp.path().join("run.csv"), "a").unwrap();
+        fs::write(tmp.path().join("nested/inner.csv"), "b").unwrap();
+        fs::write(tmp.path().join("notes.txt"), "c").unwrap();
+        let files = collect_files(tmp.path(), Some("csv")).unwrap();
+        assert_eq!(files.len(), 2);
+        assert!(
+            files
+                .iter()
+                .all(|path| path.extension().and_then(|ext| ext.to_str()) == Some("csv"))
+        );
+    }
+
+    fn goto_named(form: &mut UploadForm, name: &str) {
+        let index = form
+            .picker
+            .entries
+            .iter()
+            .position(|entry| entry.name == name)
+            .map(|pos| form.picker.recents.len() + pos)
+            .unwrap();
+        form.picker.goto(index);
+    }
+
+    #[test]
+    fn enter_on_parent_row_navigates_up() {
+        let tmp = tempfile::tempdir().unwrap();
+        fs::create_dir(tmp.path().join("nested")).unwrap();
+        let nested = tmp.path().join("nested");
+        let mut form = UploadForm::new(1, "demo".into(), Some(&nested));
+        goto_named(&mut form, "..");
+        form.activate();
+        assert_eq!(form.picker.dir, fs::canonicalize(tmp.path()).unwrap());
+        assert!(form.selected.is_empty());
+    }
+
+    #[test]
+    fn visual_range_grows_shrinks_and_esc_restores() {
+        let tmp = tempfile::tempdir().unwrap();
+        fs::write(tmp.path().join("a.csv"), "x").unwrap();
+        fs::write(tmp.path().join("b.csv"), "x").unwrap();
+        fs::write(tmp.path().join("c.csv"), "x").unwrap();
+        let mut form = UploadForm::new(1, "demo".into(), Some(tmp.path()));
+        goto_named(&mut form, "a.csv");
+        form.activate();
+        form.visual_or_select_n(None);
+        goto_named(&mut form, "c.csv");
+        form.sync_visual();
+        let mut names = selected_names(&form);
+        names.sort();
+        assert_eq!(names, ["a.csv", "b.csv", "c.csv"]);
+        goto_named(&mut form, "b.csv");
+        form.sync_visual();
+        let mut names = selected_names(&form);
+        names.sort();
+        assert_eq!(names, ["a.csv", "b.csv"]);
+        assert!(form.cancel_visual());
+        let mut names = selected_names(&form);
+        names.sort();
+        assert_eq!(names, ["a.csv"]);
+        assert!(!form.in_visual());
+    }
+
+    #[test]
+    fn count_v_selects_n_rows_from_cursor() {
+        let tmp = tempfile::tempdir().unwrap();
+        fs::write(tmp.path().join("a.csv"), "x").unwrap();
+        fs::write(tmp.path().join("b.csv"), "x").unwrap();
+        fs::write(tmp.path().join("c.csv"), "x").unwrap();
+        let mut form = UploadForm::new(1, "demo".into(), Some(tmp.path()));
+        goto_named(&mut form, "a.csv");
+        form.visual_or_select_n(Some(3));
+        let mut names = selected_names(&form);
+        names.sort();
+        assert_eq!(names, ["a.csv", "b.csv", "c.csv"]);
+        assert!(!form.in_visual());
+        assert_eq!(
+            form.picker
+                .selected_entry()
+                .map(|entry| entry.name.as_str()),
+            Some("c.csv")
+        );
+    }
+
+    fn selected_names(form: &UploadForm) -> Vec<String> {
+        form.selected
+            .iter()
+            .map(|path| path.file_name().unwrap().to_string_lossy().into_owned())
+            .collect()
+    }
+
+    #[test]
+    fn footer_focus_cycles_through_upload() {
+        assert_eq!(FormFocus::Overwrite.next_footer(), FormFocus::SkipExisting);
+        assert_eq!(FormFocus::SkipExisting.next_footer(), FormFocus::Extension);
+        assert_eq!(FormFocus::Extension.next_footer(), FormFocus::Metadata);
+        assert_eq!(FormFocus::Metadata.next_footer(), FormFocus::Upload);
+        assert_eq!(FormFocus::Upload.next_footer(), FormFocus::Overwrite);
+        assert_eq!(FormFocus::Upload.prev_footer(), FormFocus::Metadata);
+        assert!(FormFocus::Files.is_files());
+        assert!(!FormFocus::Upload.is_files());
+    }
+
+    #[test]
+    fn overwrite_and_skip_are_exclusive() {
+        let mut form = UploadForm::new(1, "demo".into(), None);
+        form.focus = FormFocus::Overwrite;
+        form.activate();
+        assert!(form.overwrite);
+        assert!(!form.skip_existing);
+        form.focus = FormFocus::SkipExisting;
+        form.activate();
+        assert!(form.skip_existing);
+        assert!(!form.overwrite);
+    }
+
+    #[test]
+    fn parse_metadata_key_value() {
+        assert_eq!(parse_meta("car=17").unwrap(), ("car".into(), json!(17)));
+        assert_eq!(
+            parse_meta("name=qualifying").unwrap(),
+            ("name".into(), json!("qualifying"))
+        );
+        assert!(parse_meta("nocolon").is_err());
+        assert!(parse_meta("=value").is_err());
+    }
+
+    #[test]
+    fn selected_summary_names_files_and_folders() {
+        let tmp = tempfile::tempdir().unwrap();
+        let file = tmp.path().join("a.csv");
+        fs::write(&file, "x").unwrap();
+        let mut selected = HashSet::new();
+        selected.insert(file);
+        assert_eq!(selected_summary(&selected), "1 file");
+        selected.insert(tmp.path().to_path_buf());
+        let summary = selected_summary(&selected);
+        assert!(summary.contains("1 file"));
+        assert!(summary.contains("1 folder"));
+        selected.clear();
+        assert_eq!(selected_summary(&selected), "");
+    }
+
+    #[test]
+    fn inflight_in_window_skips_terminal_rows() {
+        let rows = vec![
+            dataset(1, "WAITING"),
+            dataset(2, "FINISHED"),
+            dataset(3, "POSTPROCESSING"),
+            dataset(4, "FAILED"),
+            dataset(5, "IMPORTING"),
+        ];
+        let ids = inflight_in_window(&rows, &Visible::All(5), Some(4), 3);
+        assert_eq!(ids, vec![3, 5]);
+    }
+
+    #[test]
+    fn inflight_in_window_follows_filtered_visible_rows() {
+        let rows = vec![
+            dataset(1, "WAITING"),
+            dataset(2, "FINISHED"),
+            dataset(3, "POSTPROCESSING"),
+            dataset(4, "IMPORTING"),
+            dataset(5, "WAITING"),
+        ];
+        let visible = Visible::filtered(5, vec![0, 2, 4]);
+        let ids = inflight_in_window(&rows, &visible, Some(4), 2);
+        assert_eq!(ids, vec![3, 5]);
+    }
+
+    #[test]
+    fn merge_poll_ids_unions_watch_and_viewport() {
+        let merged = merge_poll_ids([(7, 11), (8, 12)], Some(7), &[11, 13]);
+        let mut stream_7 = merged.get(&7).cloned().unwrap();
+        stream_7.sort();
+        assert_eq!(stream_7, vec![11, 13]);
+        assert_eq!(merged.get(&8).map(Vec::as_slice), Some([12].as_slice()));
+    }
+
+    #[test]
+    fn clear_invalidates_in_flight_status_poll() {
+        let mut state = UploadState {
+            poll_gen: 3,
+            poll_pending: true,
+            ..Default::default()
+        };
+        state.watch_dataset(1, 2);
+        state.clear();
+        assert!(state.watch.is_empty());
+        assert!(!state.poll_pending);
+        assert_eq!(state.poll_gen, 4);
+    }
+}

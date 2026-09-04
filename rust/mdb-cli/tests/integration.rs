@@ -55,7 +55,7 @@ fn unique_stream_name() -> String {
     format!("Salty Compulsory Rusttest {}", unique_nanos())
 }
 
-fn find_last_i32(s: &str) -> Option<i32> {
+fn find_last_i64(s: &str) -> Option<i64> {
     let bytes = s.as_bytes();
     let mut i = bytes.len();
     while i > 0 && !bytes[i - 1].is_ascii_digit() {
@@ -68,7 +68,7 @@ fn find_last_i32(s: &str) -> Option<i32> {
     while j > 0 && bytes[j - 1].is_ascii_digit() {
         j -= 1;
     }
-    s[j..i].parse::<i32>().ok()
+    s[j..i].parse::<i64>().ok()
 }
 
 fn example_csv_path() -> PathBuf {
@@ -196,6 +196,41 @@ fn test_env_file_appears_in_help() {
         stdout.contains("--env-file <PATH>"),
         "help should mention --env-file, got: {stdout}"
     );
+    assert!(
+        stdout.contains("browse"),
+        "help should mention the browse command, got: {stdout}"
+    );
+}
+
+#[test]
+fn test_dataset_list_requires_stream() {
+    let output = mdb_cmd_without_auth()
+        .env_remove("MDB_STREAM")
+        .args(["dataset", "list"])
+        .assert()
+        .failure();
+    let stderr = String::from_utf8_lossy(&output.get_output().stderr);
+    assert!(
+        stderr.contains("--stream"),
+        "dataset list without a stream should mention --stream, got: {stderr}"
+    );
+}
+
+#[test]
+fn test_no_args_without_tty_prints_help() {
+    let mut cmd = cargo_bin_cmd!("mdb");
+    cmd.env("NO_COLOR", "1");
+    let output = cmd.assert().success();
+    let stdout = String::from_utf8_lossy(&output.get_output().stdout);
+
+    assert!(
+        stdout.contains("Usage:"),
+        "bare mdb without a TTY should print help, got: {stdout}"
+    );
+    assert!(
+        stdout.contains("browse"),
+        "help should mention the browse command, got: {stdout}"
+    );
 }
 
 #[test]
@@ -284,7 +319,7 @@ async fn test_db_flow_via_cli() {
     let stream_id = stream_obj
         .get("id")
         .and_then(|v| v.as_i64())
-        .expect("stream id") as i32;
+        .expect("stream id");
 
     // Ensure stream appears in list
     let streams_json = mdb_cmd(&token, url.as_deref())
@@ -314,14 +349,20 @@ async fn test_db_flow_via_cli() {
         .assert()
         .success();
     let ingest_out = String::from_utf8_lossy(&ingest.get_output().stdout).to_string();
-    let dataset_id = find_last_i32(&ingest_out).expect("dataset_id from ingest output");
+    let dataset_id = find_last_i64(&ingest_out).expect("dataset_id from ingest output");
 
     // Poll ingest status until finished/failed
     let deadline = std::time::Instant::now() + Duration::from_secs(60);
     let mut last_status = None::<String>;
     while std::time::Instant::now() < deadline {
         let ds_get = mdb_cmd(&token, url.as_deref())
-            .args(["dataset", &stream_name, "get", &dataset_id.to_string()])
+            .args([
+                "dataset",
+                "get",
+                &dataset_id.to_string(),
+                "--stream",
+                &stream_name,
+            ])
             .assert()
             .success();
         let ds_obj = parse_json_stdout(&ds_get);
@@ -343,7 +384,13 @@ async fn test_db_flow_via_cli() {
     );
 
     let ds_get = mdb_cmd(&token, url.as_deref())
-        .args(["dataset", &stream_name, "get", &dataset_id.to_string()])
+        .args([
+            "dataset",
+            "get",
+            &dataset_id.to_string(),
+            "--stream",
+            &stream_name,
+        ])
         .assert()
         .success();
     let ds_obj = parse_json_stdout(&ds_get);
@@ -364,9 +411,25 @@ async fn test_db_flow_via_cli() {
         "dataset metadata missing Foo value"
     );
 
+    let dataset_path = csv_path
+        .file_name()
+        .expect("csv file name")
+        .to_string_lossy()
+        .into_owned();
+    let ds_by_path = mdb_cmd(&token, url.as_deref())
+        .args(["dataset", "get", &dataset_path, "--stream", &stream_name])
+        .assert()
+        .success();
+    let ds_by_path = parse_json_stdout(&ds_by_path);
+    assert_eq!(
+        ds_by_path.get("id").and_then(|v| v.as_i64()),
+        Some(dataset_id),
+        "get by path should return the same dataset"
+    );
+
     // List datasets in the default short/table format
     let ds_short_list = mdb_cmd(&token, url.as_deref())
-        .args(["dataset", &stream_name, "list"])
+        .args(["dataset", "list", "--stream", &stream_name])
         .assert()
         .success();
     let ds_short_stdout = String::from_utf8_lossy(&ds_short_list.get_output().stdout);
@@ -383,7 +446,14 @@ async fn test_db_flow_via_cli() {
 
     // List datasets in JSON format
     let ds_list = mdb_cmd(&token, url.as_deref())
-        .args(["dataset", &stream_name, "list", "--format", "long"])
+        .args([
+            "dataset",
+            "list",
+            "--stream",
+            &stream_name,
+            "--format",
+            "long",
+        ])
         .assert()
         .success();
     let datasets = parse_json_stdout(&ds_list);
@@ -391,7 +461,7 @@ async fn test_db_flow_via_cli() {
     assert!(
         datasets
             .iter()
-            .any(|d| d.get("id").and_then(|v| v.as_i64()) == Some(dataset_id as i64)),
+            .any(|d| d.get("id").and_then(|v| v.as_i64()) == Some(dataset_id)),
         "dataset id not found in dataset list"
     );
 
@@ -423,7 +493,7 @@ async fn test_db_flow_via_cli() {
     assert!(
         datapool_datasets
             .iter()
-            .any(|d| d.get("id").and_then(|v| v.as_i64()) == Some(dataset_id as i64)),
+            .any(|d| d.get("id").and_then(|v| v.as_i64()) == Some(dataset_id)),
         "dataset id not found in datapool dataset list"
     );
 
@@ -451,11 +521,12 @@ async fn test_db_flow_via_cli() {
     mdb_cmd(&token, url.as_deref())
         .args([
             "dataset",
-            &stream_name,
             "download",
             "--output-dir",
             tmp.path().to_str().unwrap(),
             &dataset_id.to_string(),
+            "--stream",
+            &stream_name,
         ])
         .assert()
         .success();
@@ -488,7 +559,7 @@ async fn test_db_flow_via_cli() {
         .first()
         .and_then(|s| s.get("id"))
         .and_then(|v| v.as_i64())
-        .expect("signal id") as i32;
+        .expect("signal id");
 
     let paths_json = mdb_cmd(&token, url.as_deref())
         .args([
@@ -518,6 +589,22 @@ async fn test_db_flow_via_cli() {
         verify_parquet_columns(&p);
     }
 
+    mdb_cmd(&token, url.as_deref())
+        .args([
+            "dataset",
+            "delete",
+            &dataset_id.to_string(),
+            "--stream",
+            &stream_name,
+        ])
+        .assert()
+        .success();
+
+    mdb_cmd(&token, url.as_deref())
+        .args(["stream", "delete", &stream_name])
+        .assert()
+        .success();
+
     // Cleanup leftovers: delete any stream whose name starts with "Salty Compulsory"
     // (covers stale streams from previously failed runs).
     let streams_json = mdb_cmd(&token, url.as_deref())
@@ -531,11 +618,8 @@ async fn test_db_flow_via_cli() {
         if !name.to_lowercase().starts_with("salty compulsory rusttest") {
             continue;
         }
-        let Some(id) = s.get("id").and_then(|v| v.as_i64()) else {
-            continue;
-        };
         let _ = mdb_cmd(&token, url.as_deref())
-            .args(["post", &format!("/stream/{id}/delete")])
+            .args(["stream", "delete", name])
             .assert()
             .success();
     }

@@ -1,5 +1,6 @@
 use marple_db::{
     Dataset, ImportStatus, MarpleDB, Metadata, PushFileOptions, Stream, UploadModeOverride,
+    UsageType,
 };
 use serde_json::{Value, json};
 use std::env;
@@ -10,7 +11,6 @@ use std::sync::OnceLock;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
-const DEFAULT_MDB_URL: &str = "https://db.marpledata.com/api/v1";
 const TEST_STREAM_PREFIX: &str = "Salty Compulsory RustSdkTest";
 const MIB: u64 = 1024 * 1024;
 const MULTIPART_THRESHOLD: u64 = 128 * MIB;
@@ -30,7 +30,7 @@ fn env_opt(name: &str) -> Option<String> {
 fn maybe_skip_integration() -> Option<(String, String)> {
     load_env_files();
     let token = env_opt("MDB_TOKEN")?;
-    let url = env_opt("MDB_URL").unwrap_or_else(|| DEFAULT_MDB_URL.to_string());
+    let url = env_opt("MDB_URL")?;
     Some((token, url))
 }
 
@@ -77,9 +77,7 @@ async fn cleanup_streams(db: &MarpleDB) -> anyhow::Result<()> {
         if !stream.name.starts_with(TEST_STREAM_PREFIX) {
             continue;
         }
-        let _ = db
-            .post::<_, Value>(&format!("/stream/{}/delete", stream.id), &json!({}))
-            .await;
+        let _ = db.delete_stream(stream.id).await;
     }
     Ok(())
 }
@@ -100,10 +98,8 @@ async fn create_test_stream(db: &MarpleDB, suffix: &str) -> anyhow::Result<Strea
         .await?)
 }
 
-async fn delete_stream(db: &MarpleDB, stream_id: i32) {
-    let _ = db
-        .post::<_, Value>(&format!("/stream/{}/delete", stream_id), &json!({}))
-        .await;
+async fn delete_stream(db: &MarpleDB, stream_id: i64) {
+    let _ = db.delete_stream(stream_id).await;
 }
 
 async fn run_with_cleanup<F, Fut>(db: &MarpleDB, suffix: &str, flow: F) -> anyhow::Result<()>
@@ -123,7 +119,7 @@ where
 
 async fn upload_and_assert_dataset(
     db: &MarpleDB,
-    stream_id: i32,
+    stream_id: i64,
     file_path: &Path,
     options: PushFileOptions,
     expected_metadata: &[(&str, &str)],
@@ -170,28 +166,22 @@ async fn upload_and_assert_dataset(
         db.post::<_, Value>("/query", &json!({ "query": query }))
             .await?;
 
-        let signals: Value = db
-            .get(
-                &format!("/stream/{}/dataset/{}/signals", stream_id, dataset.id),
-                &(),
-            )
-            .await?;
+        let signals = db.get_signals(stream_id, dataset.id).await?;
         anyhow::ensure!(
-            signals
-                .as_array()
-                .is_some_and(|signals| !signals.is_empty()),
+            !signals.is_empty(),
             "signals response should be a non-empty array"
+        );
+        anyhow::ensure!(
+            signals.iter().all(|signal| {
+                signal.datastream_id == Some(stream_id) && signal.dataset_id == Some(dataset.id)
+            }),
+            "signals should include the parent stream and dataset ids"
         );
     }
 
-    let download_url = db.get_download_link(&dataset).await?;
-    let response = db.storage_client().get(download_url).send().await?;
-    anyhow::ensure!(
-        response.status().is_success(),
-        "download URL returned status {}",
-        response.status()
-    );
-    let downloaded = response.bytes().await?;
+    let dir = tempfile::tempdir()?;
+    let downloaded_path = db.download_original(&dataset, dir.path()).await?;
+    let downloaded = fs::read(&downloaded_path)?;
     let downloaded_size = downloaded.len() as u64;
     anyhow::ensure!(
         downloaded_size == expected_size,
@@ -239,6 +229,37 @@ async fn test_sdk_health_and_streams() -> anyhow::Result<()> {
 
     let invalid_db = MarpleDB::new(&url, "invalid_token")?;
     assert!(invalid_db.get_streams().await.is_err());
+
+    Ok(())
+}
+
+#[tokio::test]
+async fn test_sdk_user_info_and_usage() -> anyhow::Result<()> {
+    let _guard = integration_test_guard().await;
+    let Some((token, url)) = maybe_skip_integration() else {
+        eprintln!("Skipping Rust SDK integration test: missing env var MDB_TOKEN");
+        return Ok(());
+    };
+
+    let db = db(&token, &url)?;
+    let info = db.get_user_info().await?;
+    anyhow::ensure!(
+        info.current_workspace_id() == Some("staging"),
+        "expected workspace staging, got {:?}",
+        info.current_workspace_id()
+    );
+
+    db.get_workspace_license().await?;
+    db.get_usage_series(UsageType::ColdStorage, None, None)
+        .await?;
+    db.get_settings().await?;
+
+    let workspace = db.get_current_workspace().await?;
+    anyhow::ensure!(
+        workspace.id == "staging",
+        "expected workspace staging, got {}",
+        workspace.id
+    );
 
     Ok(())
 }
@@ -308,6 +329,12 @@ async fn run_auto_upload_flow(db: &MarpleDB, stream: Stream) -> anyhow::Result<(
 
     let fetched = db.get_stream(&stream.name).await?;
     anyhow::ensure!(fetched.id == stream.id, "fetched stream id mismatch");
+    let fetched_by_id = db.get_stream_by_id(stream.id).await?;
+    anyhow::ensure!(
+        fetched_by_id.id == stream.id,
+        "fetched stream-by-id mismatch"
+    );
+    db.get_metadata_fields(stream.id).await?;
 
     anyhow::ensure!(
         db.get_streams()
@@ -325,20 +352,27 @@ async fn run_auto_upload_flow(db: &MarpleDB, stream: Stream) -> anyhow::Result<(
 
     let metadata_deployment = "integration-test";
     let metadata_foo = "Bar";
-    upload_and_assert_dataset(
+    let dataset = upload_and_assert_dataset(
         db,
         stream.id,
         &csv_path,
-        PushFileOptions::builder()
-            .metadata([
-                ("Deployment".to_string(), json!(metadata_deployment)),
-                ("Foo".to_string(), json!(metadata_foo)),
-            ])
-            .build(),
+        PushFileOptions::default().metadata([
+            ("Deployment".to_string(), json!(metadata_deployment)),
+            ("Foo".to_string(), json!(metadata_foo)),
+        ]),
         &[("Deployment", metadata_deployment), ("Foo", metadata_foo)],
         true,
     )
     .await?;
+
+    db.delete_dataset(stream.id, dataset.id).await?;
+    anyhow::ensure!(
+        db.get_datasets(stream.id)
+            .await?
+            .iter()
+            .all(|candidate| candidate.id != dataset.id),
+        "deleted dataset still present in dataset list"
+    );
 
     Ok(())
 }
@@ -351,10 +385,9 @@ async fn run_server_upload_flow(db: &MarpleDB, stream: Stream) -> anyhow::Result
         db,
         stream.id,
         &csv_path,
-        PushFileOptions::builder()
+        PushFileOptions::default()
             .metadata([("upload_mode".to_string(), json!(upload_mode))])
-            .upload_mode(UploadModeOverride::Server)
-            .build(),
+            .upload_mode(UploadModeOverride::Server),
         &[("upload_mode", upload_mode)],
         false,
     )
@@ -370,9 +403,7 @@ async fn run_overwrite_flow(db: &MarpleDB, stream: Stream) -> anyhow::Result<()>
         db,
         stream.id,
         &csv_path,
-        PushFileOptions::builder()
-            .metadata([("version".to_string(), serde_json::json!("1"))])
-            .build(),
+        PushFileOptions::default().metadata([("version".to_string(), serde_json::json!("1"))]),
         &[("version", "1")],
         false,
     )
@@ -382,10 +413,9 @@ async fn run_overwrite_flow(db: &MarpleDB, stream: Stream) -> anyhow::Result<()>
         db,
         stream.id,
         &csv_path,
-        PushFileOptions::builder()
+        PushFileOptions::default()
             .metadata([("version".to_string(), serde_json::json!("2"))])
-            .overwrite(true)
-            .build(),
+            .overwrite(true),
         &[("version", "2")],
         false,
     )
@@ -414,9 +444,7 @@ async fn run_multipart_upload_flow(db: &MarpleDB, stream: Stream) -> anyhow::Res
         db,
         stream.id,
         &csv_path,
-        PushFileOptions::builder()
-            .metadata([("upload_mode".to_string(), json!(upload_mode))])
-            .build(),
+        PushFileOptions::default().metadata([("upload_mode".to_string(), json!(upload_mode))]),
         &[("upload_mode", upload_mode)],
         false,
     )

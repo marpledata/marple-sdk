@@ -5,6 +5,47 @@ All notable changes to `mdb` will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+### Fixed
+
+- Browse env-file loads that omit `MDB_URL` now default to SaaS instead of keeping a leftover staging URL from the process environment.
+- Dataset, stream, and signal ids from the SDK are `i64`.
+- Browse inspect (`i`) scrolls with `j`/`k` and `gg`/`G` instead of moving the table selection.
+- A saved env file that fails to load now shows the error in the status line.
+- Browse upload and download Enter on `../` goes up a folder.
+- Browse polls import status for the painted dataset window (and this-session uploads), so `PROCESSING` keeps updating after switching workspace or opening a stream with in-flight imports.
+- Browse import-status polling no longer blocks keyboard input when the status endpoint is slow.
+- Browse debug view splits ingest log strings on newlines so multi-line messages scroll as separate rows.
+- Browse env-file picker is `w`; the status line and README previously said `v`.
+
+### Changed
+
+- Browse footer is a short context hint; `?` opens a full key overlay. Status messages use their own line so they no longer replace the keymap.
+- Browse TUI inherits the terminal foreground instead of grey/white, so text stays readable in light terminals.
+- Browse no longer restores the last open stream; restarting `mdb browse` lands on the workspace stream list.
+- Browse stream and dataset details sit under the left list; the child table uses the full right column. Opening a dataset shows info and focuses that pane; `→` cycles debug messages and signals (and keeps focus there). `←` returns to the dataset list. Press `i` to expand inspect on a stream, or jump to dataset info.
+- Only the focused pane uses the blue row cursor.
+- Dataset commands take `--stream` (or `MDB_STREAM`) instead of a leading stream name: `mdb dataset list --stream Metrics`, `mdb dataset get xyz.metrics --stream Metrics`.
+- Dataset `get`, `download`, `reingest`, `debug`, and `delete` accept a dataset path or numeric id.
+- Dataset status output uses SDK `ImportStatus` names, including `UNKNOWN`.
+- Dataset downloads use `MarpleDB::download_original_with_progress` instead of the SDK storage client.
+- Browse `/` filter matches id, name/path, status, and plugin text instead of formatted table cells, and import totals are cached so large dataset lists stay responsive.
+- Browse dataset table: Enter opens the dataset (same as `→`). Space toggles a check. `v` starts a live visual range (Esc cancels); `Nv` checks N rows from the cursor. `A` clears checks. The upload picker uses the same space/`v`/`a`/`A` keys.
+
+### Added
+
+- Browse `p` reruns aliasing and script processing for the selected datasets (or every dataset in the stream).
+- `mdb stream delete`, `mdb dataset … delete`, `mdb dataset … reingest`, and `mdb dataset … debug`.
+- Optional `native-tls` Cargo feature for SChannel / Secure Transport / OpenSSL (the SDK default already uses rustls with OS certificate roots).
+
+- `mdb` and `mdb browse` open a stream / dataset / signal browser (bare `mdb` only when stdin and stdout are a terminal; otherwise help is printed). Press `w` for an env-file picker (folders, typed path, recent files labeled by workspace). Session is saved in `$XDG_CONFIG_HOME/mdb/browse.toml`. The workspace card shows license and usage.
+- Browse `u` uploads files or folders into the selected file stream. Space toggles, `v` selects a live range, `a` selects all in the current folder. Enter on `../` goes up a folder. The modal counts files vs folders, and has overwrite, skip-existing, and extension options. The dataset table shows upload then import progress until the dataset is ready. `POSTPROCESSING` is shown as `PROCESSING`.
+- Browse `d` downloads original files: space toggles datasets, `v` selects a live range, `a` selects all visible rows, `d` on a stream downloads the whole stream. A folder picker chooses the destination (Enter on `../` goes up); the dataset table shows a `DOWNLOADING` progress overlay.
+- Browse `x` deletes the selected datasets (enter confirms). Browse `r` re-queues them for ingest from the original file.
+- Opening a dataset in browse shows general info and focuses that pane; `→` cycles through ingest debug messages and signals. `←` returns to the dataset list. `/` filters debug lines when that view is focused.
+- `/` filters the focused table (case-insensitive substring of id, name/path, status, and plugin). The `/` prompt is visible while editing; Enter keeps the filter, Esc cancels the edit, Esc again clears it. Long tables window the visible rows (`1–20 of 180`).
+
 ## [0.3.0] - 2026-08-20
 
 ### Added

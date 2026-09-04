@@ -1,9 +1,8 @@
 use anyhow::{Context, Result, anyhow};
-use clap::{CommandFactory, Parser, Subcommand, ValueEnum};
+use clap::{Args, CommandFactory, Parser, Subcommand, ValueEnum};
 use colored::*;
-use futures_util::StreamExt;
 use marple_db::{
-    Dataset, MarpleDB, Metadata, ProgressReporter, PushFileOptions, UploadModeOverride,
+    Dataset, MarpleDB, Metadata, ProgressReporter, PushFileOptions, Stream, UploadModeOverride,
 };
 use mdb_cli::{
     DatasetListFormat, IndicatifProgress, StreamListFormat, dataset_queue_table_header,
@@ -13,9 +12,9 @@ use mdb_cli::{
 use serde_json::Value;
 use std::collections::HashSet;
 use std::ffi::OsString;
+use std::io::{self, IsTerminal};
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
-use tokio::io::AsyncWriteExt;
 use walkdir::WalkDir;
 
 #[derive(Parser)]
@@ -104,9 +103,6 @@ enum Commands {
 
     /// Dataset commands
     Dataset {
-        /// Stream name
-        stream_name: String,
-
         #[command(subcommand)]
         command: DatasetCommands,
     },
@@ -146,6 +142,9 @@ enum Commands {
         #[arg(num_args = 0.., value_parser = parse_key_val)]
         data: Vec<(String, Value)>,
     },
+
+    /// Browse streams, datasets, and signals
+    Browse,
 }
 
 #[derive(Subcommand)]
@@ -182,12 +181,28 @@ enum StreamCommands {
         #[arg(num_args = 0.., value_parser = parse_key_val)]
         properties: Vec<(String, Value)>,
     },
+
+    /// Delete a stream and all of its datasets; requires an admin token
+    Delete {
+        /// Stream name
+        stream_name: String,
+    },
+}
+
+#[derive(Args)]
+struct StreamArg {
+    /// Stream name; can also be provided through MDB_STREAM
+    #[arg(long, env = "MDB_STREAM")]
+    stream: String,
 }
 
 #[derive(Subcommand)]
 enum DatasetCommands {
     /// List all datasets in a stream
     List {
+        #[command(flatten)]
+        stream: StreamArg,
+
         /// Output format
         #[arg(long, value_enum, default_value_t = DatasetListFormat::Short)]
         format: DatasetListFormat,
@@ -195,18 +210,56 @@ enum DatasetCommands {
 
     /// Get a dataset
     Get {
-        /// Dataset ID
-        dataset_id: i32,
+        /// Dataset path or id
+        #[arg(value_name = "DATASET")]
+        dataset: String,
+
+        #[command(flatten)]
+        stream: StreamArg,
     },
 
-    /// Download one dataset, or all datasets when no dataset id is provided
+    /// Download one dataset, or all datasets when none is provided
     Download {
         /// Output directory
         #[arg(short, long)]
         output_dir: Option<String>,
 
-        /// Dataset ID; omit to download all datasets in the stream
-        dataset_id: Option<i32>,
+        /// Dataset path or id; omit to download all datasets in the stream
+        #[arg(value_name = "DATASET")]
+        dataset: Option<String>,
+
+        #[command(flatten)]
+        stream: StreamArg,
+    },
+
+    /// Re-queue a dataset for ingest from its original uploaded file
+    Reingest {
+        /// Dataset path or id
+        #[arg(value_name = "DATASET")]
+        dataset: String,
+
+        #[command(flatten)]
+        stream: StreamArg,
+    },
+
+    /// Print ingest debug messages for a dataset
+    Debug {
+        /// Dataset path or id
+        #[arg(value_name = "DATASET")]
+        dataset: String,
+
+        #[command(flatten)]
+        stream: StreamArg,
+    },
+
+    /// Delete a dataset
+    Delete {
+        /// Dataset path or id
+        #[arg(value_name = "DATASET")]
+        dataset: String,
+
+        #[command(flatten)]
+        stream: StreamArg,
     },
 }
 
@@ -351,32 +404,48 @@ async fn handle_stream_commands(marpledb: &MarpleDB, command: &StreamCommands) -
                 .await?;
             println!("{}", serde_json::to_string_pretty(&updated_stream)?);
         }
+        StreamCommands::Delete { stream_name } => {
+            let stream = marpledb.get_stream(stream_name).await?;
+            marpledb.delete_stream(stream.id).await?;
+            println!(
+                "{}",
+                serde_json::to_string_pretty(&serde_json::json!({
+                    "status": "success",
+                    "id": stream.id,
+                }))?
+            );
+        }
     }
     Ok(())
 }
 
-async fn handle_dataset_commands(
-    marpledb: &MarpleDB,
-    stream_name: &str,
-    command: &DatasetCommands,
-) -> Result<()> {
+async fn handle_dataset_commands(marpledb: &MarpleDB, command: &DatasetCommands) -> Result<()> {
+    let stream_name = match command {
+        DatasetCommands::List { stream, .. }
+        | DatasetCommands::Get { stream, .. }
+        | DatasetCommands::Download { stream, .. }
+        | DatasetCommands::Reingest { stream, .. }
+        | DatasetCommands::Debug { stream, .. }
+        | DatasetCommands::Delete { stream, .. } => stream.stream.as_str(),
+    };
     let stream = marpledb.get_stream(stream_name).await?;
 
     match command {
-        DatasetCommands::List { format } => {
+        DatasetCommands::List { format, .. } => {
             let datasets = marpledb.get_datasets(stream.id).await?;
             print_datasets(&datasets, *format)?;
         }
-        DatasetCommands::Get { dataset_id } => {
-            let dataset = marpledb.get_dataset(stream.id, *dataset_id).await?;
+        DatasetCommands::Get { dataset, .. } => {
+            let dataset = resolve_dataset(marpledb, &stream, dataset).await?;
             println!("{}", serde_json::to_string_pretty(&dataset)?);
         }
         DatasetCommands::Download {
-            dataset_id,
+            dataset,
             output_dir,
+            ..
         } => {
-            if let Some(dataset_id) = dataset_id {
-                let dataset = marpledb.get_dataset(stream.id, *dataset_id).await?;
+            if let Some(dataset) = dataset {
+                let dataset = resolve_dataset(marpledb, &stream, dataset).await?;
                 match download_dataset(marpledb, &dataset, output_dir.as_deref()).await {
                     Ok(path) => println!("{} {} -> {}", "✓".green(), dataset.path, path),
                     Err(e) => eprintln!("{} {} failed: {}", "✗".red(), dataset.id, e),
@@ -391,8 +460,40 @@ async fn handle_dataset_commands(
                 }
             }
         }
+        DatasetCommands::Reingest { dataset, .. } => {
+            let dataset = resolve_dataset(marpledb, &stream, dataset).await?;
+            marpledb.reingest_dataset(stream.id, dataset.id).await?;
+            println!("{} {}", "✓".green(), dataset.path);
+        }
+        DatasetCommands::Debug { dataset, .. } => {
+            let dataset = resolve_dataset(marpledb, &stream, dataset).await?;
+            let messages = marpledb.get_debug_messages(stream.id, dataset.id).await?;
+            println!("{}", serde_json::to_string_pretty(&messages)?);
+        }
+        DatasetCommands::Delete { dataset, .. } => {
+            let dataset = resolve_dataset(marpledb, &stream, dataset).await?;
+            marpledb.delete_dataset(stream.id, dataset.id).await?;
+            println!("{} {}", "✓".green(), dataset.path);
+        }
     }
     Ok(())
+}
+
+async fn resolve_dataset(marpledb: &MarpleDB, stream: &Stream, spec: &str) -> Result<Dataset> {
+    if let Ok(dataset_id) = spec.parse::<i64>() {
+        return Ok(marpledb.get_dataset(stream.id, dataset_id).await?);
+    }
+
+    let pool = if stream.datapool.is_empty() {
+        "default"
+    } else {
+        stream.datapool.as_str()
+    };
+    let dataset = marpledb.get_dataset_by_path(pool, spec).await?;
+    if dataset.datastream_id != stream.id {
+        return Err(anyhow!("dataset {spec:?} is not in stream {}", stream.name));
+    }
+    Ok(dataset)
 }
 
 async fn handle_datapool_commands(marpledb: &MarpleDB, command: &DatapoolCommands) -> Result<()> {
@@ -453,32 +554,10 @@ async fn download_dataset(
     output_dir: Option<&str>,
 ) -> Result<String> {
     let progress = download_progress(dataset);
-    let url = marpledb.get_download_link(dataset).await?;
-    let local_path = output_dir
-        .map_or_else(|| PathBuf::from("."), PathBuf::from)
-        .join(&dataset.path);
-    let mut file = tokio::fs::File::create(&local_path).await?;
-    let response = marpledb.storage_client().get(url).send().await?;
-    anyhow::ensure!(
-        response.status().is_success(),
-        "download failed with status {}",
-        response.status()
-    );
-    let total = dataset.backup_size.unwrap_or_default();
-    let mut downloaded = 0;
-    let mut chunks = response.bytes_stream();
-
-    while let Some(chunk) = chunks.next().await {
-        let chunk = chunk?;
-        file.write_all(&chunk).await?;
-        downloaded += chunk.len() as u64;
-        progress.set_position(if total == 0 {
-            downloaded
-        } else {
-            downloaded.min(total)
-        });
-    }
-    progress.finish();
+    let output_dir = output_dir.map_or_else(|| PathBuf::from("."), PathBuf::from);
+    let local_path = marpledb
+        .download_original_with_progress(dataset, &output_dir, &progress)
+        .await?;
     Ok(local_path.to_string_lossy().to_string())
 }
 
@@ -557,7 +636,7 @@ async fn handle_ingest(
 
 async fn ingest_path(
     marpledb: &MarpleDB,
-    stream_id: i32,
+    stream_id: i64,
     existing: &HashSet<String>,
     metadata: &Metadata,
     options: &IngestOptions<'_>,
@@ -591,13 +670,12 @@ async fn ingest_path(
         .push_file(
             stream_id,
             path,
-            PushFileOptions::builder()
+            PushFileOptions::default()
                 .metadata(metadata.clone())
                 .concurrency(options.concurrency)
                 .upload_mode(options.upload_mode)
                 .progress(progress)
-                .overwrite(options.overwrite)
-                .build(),
+                .overwrite(options.overwrite),
         )
         .await
     {
@@ -640,40 +718,38 @@ async fn handle_delete(
 async fn main() -> Result<()> {
     load_env()?;
     let cli = Cli::parse();
-    let marpledb = MarpleDB::builder()
-        .url(&cli.mdb_url)
-        .token(&cli.mdb_token)
-        .request_source(concat!("cli/rust:", env!("CARGO_PKG_VERSION")))
-        .build()?;
-
-    let Some(command) = cli.command else {
-        if cli.version {
-            handle_version();
-        } else {
-            Cli::command().print_help()?;
-        }
+    if cli.version {
+        handle_version();
         return Ok(());
-    };
-
-    // Check health
-    if marpledb.health().await.is_err() {
-        eprintln!("{} {} is not responding", "✗".red(), cli.mdb_url);
-        std::process::exit(1);
     }
 
-    // Check token
-    if marpledb.get_streams().await.is_err() {
-        eprintln!("{} Invalid token", "✗".red());
-        std::process::exit(1);
+    let command = match cli.command {
+        Some(command) => command,
+        None if io::stdin().is_terminal() && io::stdout().is_terminal() => Commands::Browse,
+        None => {
+            Cli::command().print_help()?;
+            return Ok(());
+        }
+    };
+
+    let marpledb = mdb_cli::connect(&cli.mdb_url, &cli.mdb_token)?;
+
+    let needs_api = !matches!(command, Commands::Browse);
+    if needs_api {
+        if marpledb.health().await.is_err() {
+            eprintln!("{} {} is not responding", "✗".red(), cli.mdb_url);
+            std::process::exit(1);
+        }
+        if marpledb.get_streams().await.is_err() {
+            eprintln!("{} Invalid token", "✗".red());
+            std::process::exit(1);
+        }
     }
 
     match command {
         Commands::Ping => handle_ping(&marpledb).await?,
         Commands::Stream { command } => handle_stream_commands(&marpledb, &command).await?,
-        Commands::Dataset {
-            stream_name,
-            command,
-        } => handle_dataset_commands(&marpledb, &stream_name, &command).await?,
+        Commands::Dataset { command } => handle_dataset_commands(&marpledb, &command).await?,
         Commands::Datapool { command } => handle_datapool_commands(&marpledb, &command).await?,
         Commands::Ingest {
             stream_name,
@@ -706,6 +782,7 @@ async fn main() -> Result<()> {
         Commands::Get { endpoint, params } => handle_get(&marpledb, &endpoint, params).await?,
         Commands::Post { endpoint, data } => handle_post(&marpledb, &endpoint, data).await?,
         Commands::Delete { endpoint, data } => handle_delete(&marpledb, &endpoint, data).await?,
+        Commands::Browse => mdb_cli::browse::run(marpledb, cli.mdb_url, cli.env_file).await?,
     }
 
     Ok(())
