@@ -14,7 +14,7 @@ colored = "3.0.0"
 crossterm = { workspace = true, features = ["event-stream"] }
 dotenvy = "0.15.7"
 futures-util = { workspace = true, default-features = false, features = ["std"] }
-marple-db = { path = "../mdb-sdk", version = "0.3.0" }
+marple-db = { path = "../mdb-sdk", version = "0.4.0" }
 ratatui.workspace = true
 reqwest.workspace = true
 serde.workspace = true
@@ -58,5 +58,5 @@ license = "Apache-2.0"
 name = "mdb-cli"
 readme = "README.md"
 repository.workspace = true
-version = "0.3.0"
+version = "0.4.0"
 exclude = ["target/", ".git/", ".gitignore"]

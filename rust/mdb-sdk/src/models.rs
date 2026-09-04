@@ -467,7 +467,7 @@ pub enum ImportStatus {
 }
 
 impl ImportStatus {
-    /// API name for this status, such as `FINISHED` or `COOLING_FAILED`.
+    /// User-facing name for this status, such as `FINISHED` or `FAILED (COOLING)`.
     pub fn as_str(self) -> &'static str {
         match self {
             Self::Uploading => "UPLOADING",
@@ -903,13 +903,13 @@ mod import_status_tests {
                 ImportStatus::Uploading => ("UPLOADING", false, false),
                 ImportStatus::Waiting => ("WAITING", false, false),
                 ImportStatus::Importing => ("IMPORTING", false, false),
-                ImportStatus::Postprocessing => ("POSTPROCESSING", false, false),
-                ImportStatus::PostprocessingFailed => ("POSTPROCESSING_FAILED", false, true),
+                ImportStatus::Postprocessing => ("PROCESSING", false, false),
+                ImportStatus::PostprocessingFailed => ("FAILED (PROCESSING)", false, true),
                 ImportStatus::Finished => ("FINISHED", true, false),
                 ImportStatus::Live => ("LIVE", true, false),
-                ImportStatus::Failed => ("FAILED", false, true),
+                ImportStatus::Failed => ("FAILED (IMPORT)", false, true),
                 ImportStatus::Cooling => ("COOLING", false, false),
-                ImportStatus::CoolingFailed => ("COOLING_FAILED", false, true),
+                ImportStatus::CoolingFailed => ("FAILED (COOLING)", false, true),
                 ImportStatus::Unknown => ("UNKNOWN", false, false),
             };
 

@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.4.0] - 2026-09-04
+
 ### Fixed
 
 - Browse env-file loads that omit `MDB_URL` now default to SaaS instead of keeping a leftover staging URL from the process environment.
@@ -32,6 +34,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Dataset downloads use `MarpleDB::download_original_with_progress` instead of the SDK storage client.
 - Browse `/` filter matches id, name/path, status, and plugin text instead of formatted table cells, and import totals are cached so large dataset lists stay responsive.
 - Browse dataset table: Enter opens the dataset (same as `→`). Space toggles a check. `v` starts a live visual range (Esc cancels); `Nv` checks N rows from the cursor. `A` clears checks. The upload picker uses the same space/`v`/`a`/`A` keys.
+- Depends on `marple-db` 0.4.0.
 
 ### Added
 
@@ -106,6 +109,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Environment variable and `.env` file support
 - Cross-platform support (macOS, Linux, Windows)
 
+[0.4.0]: https://github.com/marpledata/marple-sdk/releases/tag/mdb-cli-v0.4.0
 [0.3.0]: https://github.com/marpledata/marple-sdk/releases/tag/mdb-cli-v0.3.0
 [0.2.1]: https://github.com/marpledata/marple-sdk/releases/tag/mdb-cli-v0.2.1
 [0.2.0]: https://github.com/marpledata/marple-sdk/releases/tag/mdb-cli-v0.2.0
