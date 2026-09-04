@@ -2,6 +2,7 @@ import os
 import re
 
 import dotenv
+
 from src.marple.db import DB, Dataset
 
 dotenv.load_dotenv()
@@ -11,6 +12,7 @@ if api_token is None:
 
 url = os.getenv("MDB_URL")
 db = DB(api_token, url)
+db.verbose()  # print SDK mutation activity (push_file, add_signal, …) to stdout
 db.check_connection()
 
 stream_name = "CSV Stream"

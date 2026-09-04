@@ -5,6 +5,7 @@ from typing import Any
 
 from pydantic import BaseModel, Field, PrivateAttr, field_validator
 
+from marple.db.activity import logger
 from marple.utils import OMITTED, DBClient, Omitted, validate_response
 
 
@@ -132,12 +133,16 @@ class Script(BaseModel):
             payload["script"] = self.resolve_source(script)
 
         r = self._client.post(f"/script/{self.id}", json=payload)
-        return Script(client=self._client, **validate_response(r, "Update script failed"))
+        updated = Script(client=self._client, **validate_response(r, "Update script failed"))
+        logger.debug(f"Updated script {self.name}: {payload}")
+        return updated
 
     def duplicate(self) -> "Script":
         """Create a copy of this script, including version history and stream attachments."""
         r = self._client.post(f"/script/{self.id}/duplicate")
-        return Script(client=self._client, **validate_response(r, "Duplicate script failed"))
+        copy = Script(client=self._client, **validate_response(r, "Duplicate script failed"))
+        logger.debug(f"Duplicated script {self.name}")
+        return copy
 
     def delete(self) -> None:
         """
@@ -148,6 +153,7 @@ class Script(BaseModel):
         """
         r = self._client.delete(f"/script/{self.id}")
         validate_response(r, "Delete script failed")
+        logger.debug(f"Deleted script {self.name}")
 
     @staticmethod
     def resolve_source(script: Path | str) -> str:

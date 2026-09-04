@@ -7,6 +7,7 @@ from typing import Literal
 import pandas as pd
 from pydantic import BaseModel, PrivateAttr
 
+from marple.db.activity import logger
 from marple.utils import DBClient, validate_response
 
 
@@ -150,3 +151,4 @@ class Signal(BaseModel):
             json={"signal_ids": [self.id]},
         )
         validate_response(r, "Delete signal failed")
+        logger.debug(f"Deleted signal {self.name}")

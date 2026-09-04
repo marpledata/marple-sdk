@@ -7,6 +7,7 @@ from typing import Any, Literal, Optional
 
 from pydantic import BaseModel, Field, PrivateAttr, field_validator
 
+from marple.db.activity import logger
 from marple.db.dataset import Dataset, DatasetList
 from marple.utils import (
     OMITTED,
@@ -123,6 +124,7 @@ class DataStream(BaseModel):
             json={"dataset_name": dataset_name, "metadata": metadata or {}},
         )
         r_json = validate_response(r, "Add dataset failed")
+        logger.debug(f"Added dataset {dataset_name}")
         return self.get_dataset(r_json["dataset_id"])
 
     def push_file(
@@ -171,6 +173,7 @@ class DataStream(BaseModel):
             self._abort_upload(init.ingestion_id, str(exc) or type(exc).__name__)
             raise
 
+        logger.debug(f"Pushed file {file_name or path.name}")
         return self.get_dataset(init.dataset_id)
 
     def _init_ingestion(
@@ -337,6 +340,7 @@ class DataStream(BaseModel):
 
         r = self._client.post(f"/stream/update/{self.id}", json=payload)
         validate_response(r, "Update stream failed")
+        logger.debug(f"Updated stream {self.name}: {payload}")
         return self.fetch(self._client, self.id)
 
     def rerun_processing(self, dataset_ids: Sequence[int] | None = None) -> None:
@@ -354,6 +358,8 @@ class DataStream(BaseModel):
                 raise ValueError("rerun_processing requires at least one dataset id")
             r = self._client.post(f"/stream/{self.id}/processing/datasets", json=ids)
         validate_response(r, "Rerun processing failed")
+        target = f"{len(dataset_ids)} datasets" if dataset_ids is not None else "all datasets"
+        logger.debug(f"Reran processing for stream {self.name} ({target})")
 
     def delete(self) -> None:
         """
@@ -364,3 +370,4 @@ class DataStream(BaseModel):
         """
         r = self._client.post(f"/stream/{self.id}/delete")
         validate_response(r, "Delete stream failed")
+        logger.debug(f"Deleted stream {self.name}")

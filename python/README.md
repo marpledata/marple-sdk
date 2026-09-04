@@ -43,6 +43,7 @@ API_TOKEN = "<your api token>"
 API_URL = "https://db.marpledata.com/api/v1"  # optional if using the default SaaS
 
 db = DB(API_TOKEN, API_URL)
+db.verbose()  # print SDK mutation activity (push_file, add_signal, …) to stdout
 
 db.check_connection()
 

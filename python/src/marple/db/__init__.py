@@ -1,14 +1,15 @@
 import warnings
 from functools import wraps
 from pathlib import Path
-from typing import TYPE_CHECKING, Any, Literal, Optional, Sequence
+from typing import TYPE_CHECKING, Any, Literal, Optional, Sequence, TextIO
 
 import pandas as pd
 from pydantic import ValidationError
 from requests import Response
 from requests.exceptions import ConnectionError
 
-from marple.db import sql
+from marple.db import activity, sql
+from marple.db.activity import logger
 from marple.db.constants import LAKE_ARROW_SCHEMA as _LAKE_ARROW_SCHEMA
 from marple.db.constants import SAAS_URL
 from marple.db.constants import SCHEMA as _SCHEMA
@@ -155,6 +156,10 @@ class DB:
 
         self._refresh_stream_cache(r)
         return True
+
+    def verbose(self, enabled: bool = True, file: TextIO | None = None) -> None:
+        """Turn SDK mutation activity logging on or off (stdout by default)."""
+        activity.verbose(enabled, file)
 
     # Stream functions #
 
@@ -313,7 +318,9 @@ class DB:
                 "script": Script.resolve_source(script),
             },
         )
-        return Script(client=self.client, **validate_response(r, "Create script failed"))
+        created = Script(client=self.client, **validate_response(r, "Create script failed"))
+        logger.debug(f"Created script {name}")
+        return created
 
     def delete_script(self, script_id: int) -> None:
         """
@@ -324,6 +331,7 @@ class DB:
         """
         r = self.delete(f"/script/{script_id}")
         validate_response(r, "Delete script failed")
+        logger.debug(f"Deleted script {script_id}")
 
     def _refresh_stream_cache(self, r: Response | None = None) -> None:
         if r is None:

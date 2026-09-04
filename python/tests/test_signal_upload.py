@@ -332,6 +332,7 @@ def test_delete_signals_posts_and_clears_cache() -> None:
     client = MagicMock()
     client.post.return_value = SimpleNamespace(status_code=200, json=lambda: {"status": "success"})
     dataset = SimpleNamespace(
+        path="dataset/10",
         id=10,
         datastream_id=5,
         n_signals=3,

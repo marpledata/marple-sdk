@@ -13,7 +13,7 @@ from requests import HTTPError
 import marple
 from marple import DB
 from marple.db import Dataset, DatasetList, DataStream
-from support import EXAMPLE_CSV, isolated_stream, unique_name
+from support import EXAMPLE_CSV, ingest_dataset, isolated_stream, unique_name
 
 pytestmark = pytest.mark.integration
 
@@ -314,13 +314,16 @@ def test_push_file_plugin_args(example_stream: DataStream) -> None:
     assert dataset.plugin_args == "--use-index"
 
 
-def test_dataset_reingest(example_dataset: Dataset) -> None:
-    reingested = example_dataset.reingest().wait_for_import(timeout=180)
-    assert reingested.id == example_dataset.id
+def test_dataset_reingest(example_stream: DataStream) -> None:
+    # Separate dataset on the shared session stream so reingest does not mutate
+    # example_dataset (Insight export and other shared consumers).
+    dataset = ingest_dataset(example_stream, metadata={"test": "reingest"})
+    reingested = dataset.reingest().wait_for_import(timeout=180)
+    assert reingested.id == dataset.id
     assert reingested.import_status == "FINISHED"
 
     with_args = reingested.reingest(plugin_args="--use-index").wait_for_import(timeout=180)
-    assert with_args.id == example_dataset.id
+    assert with_args.id == dataset.id
     assert with_args.import_status == "FINISHED"
     assert with_args.plugin_args == "--use-index"
 
