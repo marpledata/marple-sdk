@@ -196,9 +196,15 @@ fn test_env_file_appears_in_help() {
         stdout.contains("--env-file <PATH>"),
         "help should mention --env-file, got: {stdout}"
     );
+    #[cfg(feature = "tui")]
     assert!(
         stdout.contains("browse"),
         "help should mention the browse command, got: {stdout}"
+    );
+    #[cfg(not(feature = "tui"))]
+    assert!(
+        !stdout.contains("browse"),
+        "help should omit the unavailable browse command, got: {stdout}"
     );
 }
 
@@ -227,9 +233,15 @@ fn test_no_args_without_tty_prints_help() {
         stdout.contains("Usage:"),
         "bare mdb without a TTY should print help, got: {stdout}"
     );
+    #[cfg(feature = "tui")]
     assert!(
         stdout.contains("browse"),
         "help should mention the browse command, got: {stdout}"
+    );
+    #[cfg(not(feature = "tui"))]
+    assert!(
+        !stdout.contains("browse"),
+        "help should omit the unavailable browse command, got: {stdout}"
     );
 }
 

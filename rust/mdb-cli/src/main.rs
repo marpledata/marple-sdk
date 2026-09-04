@@ -12,6 +12,7 @@ use mdb_cli::{
 use serde_json::Value;
 use std::collections::HashSet;
 use std::ffi::OsString;
+#[cfg(feature = "tui")]
 use std::io::{self, IsTerminal};
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
@@ -144,6 +145,7 @@ enum Commands {
     },
 
     /// Browse streams, datasets, and signals
+    #[cfg(feature = "tui")]
     Browse,
 }
 
@@ -725,6 +727,7 @@ async fn main() -> Result<()> {
 
     let command = match cli.command {
         Some(command) => command,
+        #[cfg(feature = "tui")]
         None if io::stdin().is_terminal() && io::stdout().is_terminal() => Commands::Browse,
         None => {
             Cli::command().print_help()?;
@@ -734,7 +737,10 @@ async fn main() -> Result<()> {
 
     let marpledb = mdb_cli::connect(&cli.mdb_url, &cli.mdb_token)?;
 
+    #[cfg(feature = "tui")]
     let needs_api = !matches!(command, Commands::Browse);
+    #[cfg(not(feature = "tui"))]
+    let needs_api = true;
     if needs_api {
         if marpledb.health().await.is_err() {
             eprintln!("{} {} is not responding", "✗".red(), cli.mdb_url);
@@ -782,6 +788,7 @@ async fn main() -> Result<()> {
         Commands::Get { endpoint, params } => handle_get(&marpledb, &endpoint, params).await?,
         Commands::Post { endpoint, data } => handle_post(&marpledb, &endpoint, data).await?,
         Commands::Delete { endpoint, data } => handle_delete(&marpledb, &endpoint, data).await?,
+        #[cfg(feature = "tui")]
         Commands::Browse => mdb_cli::browse::run(marpledb, cli.mdb_url, cli.env_file).await?,
     }
 

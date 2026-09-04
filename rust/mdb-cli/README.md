@@ -10,6 +10,13 @@ From crates.io:
 cargo install mdb-cli
 ```
 
+The terminal browser is enabled by default. For a command-only build without
+the TUI and its dependencies:
+
+```sh
+cargo install mdb-cli --no-default-features
+```
+
 From this repository:
 
 ```sh

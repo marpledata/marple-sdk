@@ -7,6 +7,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.4.1] - 2026-09-04
+
+### Changed
+
+- The terminal browser is behind the default-enabled `tui` Cargo feature. Disable default features for a command-only build without TUI dependencies.
+
 ## [0.4.0] - 2026-09-04
 
 ### Fixed
@@ -109,6 +115,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Environment variable and `.env` file support
 - Cross-platform support (macOS, Linux, Windows)
 
+[0.4.1]: https://github.com/marpledata/marple-sdk/releases/tag/mdb-cli-v0.4.1
 [0.4.0]: https://github.com/marpledata/marple-sdk/releases/tag/mdb-cli-v0.4.0
 [0.3.0]: https://github.com/marpledata/marple-sdk/releases/tag/mdb-cli-v0.3.0
 [0.2.1]: https://github.com/marpledata/marple-sdk/releases/tag/mdb-cli-v0.2.1

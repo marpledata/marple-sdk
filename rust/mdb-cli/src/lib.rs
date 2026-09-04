@@ -3,7 +3,9 @@ use clap::ValueEnum;
 use indicatif::{ProgressBar, ProgressStyle};
 use marple_db::{Dataset, MarpleDB, ProgressReporter, Stream};
 
+#[cfg(feature = "tui")]
 pub mod browse;
+#[cfg(feature = "tui")]
 pub(crate) mod table;
 
 #[derive(Clone, Copy, Debug, Default, ValueEnum)]
@@ -198,6 +200,7 @@ fn format_scaled(value: u64, units: &[&str], base: f64, join: &str, trim_zero: b
     }
 }
 
+#[cfg(feature = "tui")]
 pub(crate) fn format_epoch_utc(seconds: f64) -> String {
     let secs = seconds as i64;
     let days = secs.div_euclid(86_400);
@@ -210,6 +213,7 @@ pub(crate) fn format_epoch_utc(seconds: f64) -> String {
 
 // Howard Hinnant, "chrono-Compatible Low-Level Date Algorithms"
 // https://howardhinnant.github.io/date_algorithms.html#civil_from_days
+#[cfg(feature = "tui")]
 fn civil_from_days(mut days: i64) -> (i32, u32, u32) {
     days += 719_468;
     let era = if days >= 0 { days } else { days - 146_096 } / 146_097;

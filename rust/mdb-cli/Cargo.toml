@@ -3,7 +3,9 @@ name = "mdb"
 path = "src/main.rs"
 
 [features]
-default = []
+default = ["tui"]
+# Terminal stream / dataset / signal browser. Enabled by default.
+tui = ["dep:crossterm", "dep:futures-util", "dep:ratatui", "dep:toml"]
 # Optional OpenSSL / SChannel / Secure Transport instead of (or in addition to)
 # the default rustls + OS roots from `marple-db`.
 native-tls = ["marple-db/native-tls"]
@@ -11,15 +13,15 @@ native-tls = ["marple-db/native-tls"]
 [dependencies]
 anyhow.workspace = true
 colored = "3.0.0"
-crossterm = { workspace = true, features = ["event-stream"] }
+crossterm = { workspace = true, features = ["event-stream"], optional = true }
 dotenvy = "0.15.7"
-futures-util = { workspace = true, default-features = false, features = ["std"] }
+futures-util = { workspace = true, default-features = false, features = ["std"], optional = true }
 marple-db = { path = "../mdb-sdk", version = "0.4.0" }
-ratatui.workspace = true
+ratatui = { workspace = true, optional = true }
 reqwest.workspace = true
 serde.workspace = true
 serde_json.workspace = true
-toml.workspace = true
+toml = { workspace = true, optional = true }
 walkdir.workspace = true
 
 [dependencies.clap]
@@ -58,5 +60,5 @@ license = "Apache-2.0"
 name = "mdb-cli"
 readme = "README.md"
 repository.workspace = true
-version = "0.4.0"
+version = "0.4.1"
 exclude = ["target/", ".git/", ".gitignore"]
