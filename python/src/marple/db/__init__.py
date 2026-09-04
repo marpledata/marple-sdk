@@ -1,15 +1,15 @@
 import warnings
 from functools import wraps
 from pathlib import Path
-from typing import TYPE_CHECKING, Any, Literal, Optional, Sequence
+from typing import TYPE_CHECKING, Any, Literal, Optional, Sequence, TextIO
 
 import pandas as pd
 from pydantic import ValidationError
 from requests import Response
 from requests.exceptions import ConnectionError
 
-from marple.db import sql
-from marple.db.activity import enable_activity_log, logger
+from marple.db import activity, sql
+from marple.db.activity import logger
 from marple.db.constants import LAKE_ARROW_SCHEMA as _LAKE_ARROW_SCHEMA
 from marple.db.constants import SAAS_URL
 from marple.db.constants import SCHEMA as _SCHEMA
@@ -48,7 +48,6 @@ __all__ = [
     "SignalsAlreadyExistError",
     "SCHEMA",
     "LAKE_ARROW_SCHEMA",
-    "enable_activity_log",
 ]
 
 
@@ -157,6 +156,10 @@ class DB:
 
         self._refresh_stream_cache(r)
         return True
+
+    def verbose(self, enabled: bool = True, file: TextIO | None = None) -> None:
+        """Turn SDK mutation activity logging on or off (stdout by default)."""
+        activity.verbose(enabled, file)
 
     # Stream functions #
 
