@@ -373,6 +373,8 @@ class Dataset(BaseModel):
         Returns the new signal immediately after upload completes. Call
         :meth:`Signal.wait_until_available` to wait until the signal is available.
 
+        Warning: for performance reasons, prefer adding signals in bulk using ``add_signals`` over multiple usages of ``add_signal``.
+
         Args:
             name: Signal name.
             data: Signal samples (DataFrame, Series, Arrow table, or parquet path).
