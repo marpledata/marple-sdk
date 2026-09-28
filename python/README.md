@@ -64,6 +64,8 @@ a conflict without overwrite raises `SignalsAlreadyExistError`.
 A Series, or a DataFrame without a `time` column, takes its times from a `DatetimeIndex` or
 `TimedeltaIndex`. Indexed DataFrames must still have a `value` and/or `value_text` column.
 
+Warning: for performance reasons, prefer adding signals in bulk using `add_signals` over multiple usages of `add_signal`.
+
 ```python
 # Single signal: wait until available before reading
 speed = dataset.get_signal("car.speed").get_data()
@@ -93,6 +95,7 @@ dataset.add_signal("car.custom", samples)
 #### Processing scripts
 
 Write a `process(dataset)` function, store it, and try it on any imported dataset. This runs on the server and writes to that dataset.
+Warning: for performance reasons, prefer adding signals in bulk using `add_signals` over multiple usages of `add_signal`.
 
 ```python
 source = """

@@ -40,6 +40,7 @@ After import, you can add derived signals with
 ``dataset.add_signal(...)`` / ``dataset.add_signals([...])``. For custom
 ingest without file parsing, use ``stream.add_dataset(...)`` then
 ``add_signal``. See :doc:`tutorials` for a full example.
+Warning: for performance reasons, prefer adding signals in bulk using ``add_signals`` over multiple usages of ``add_signal``.
 
 ``stream.push_file(...)`` starts an ingestion and lets the Marple DB API choose
 the best upload mode for the deployment and file size. For large files, use a

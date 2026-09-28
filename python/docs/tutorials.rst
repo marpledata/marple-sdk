@@ -46,6 +46,8 @@ Add signals after import, or start with an empty dataset using
 A Series, or a DataFrame without a ``time`` column, takes its times from a
 ``DatetimeIndex`` or ``TimedeltaIndex``.
 
+Warning: for performance reasons, prefer adding signals in bulk using ``add_signals`` over multiple usages of ``add_signal``.
+
 .. code-block:: python
 
    speed = dataset.get_signal("car.speed").get_data()
@@ -83,6 +85,7 @@ Processing scripts
 
 Write a ``process(dataset)`` function, store it, and try it on any imported dataset.
 This runs on the server and writes to that dataset.
+Warning: for performance reasons, prefer adding signals in bulk using ``add_signals`` over multiple usages of ``add_signal``.
 
 .. code-block:: python
 
