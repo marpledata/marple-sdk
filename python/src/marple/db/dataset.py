@@ -56,6 +56,14 @@ STABLE_STATUSES = [
 ]
 BUSY_STATUSES = [v for v in ImportStatus if v not in STABLE_STATUSES]
 
+# A processing script may write in these statuses. POSTPROCESSING is in-flight;
+# only the stable members can start a run.
+SCRIPTABLE_STATUSES = [
+    ImportStatus.FINISHED,
+    ImportStatus.POSTPROCESSING,
+    ImportStatus.POSTPROCESSING_FAILED,
+]
+
 GET_SIGNALS_CHUNK_SIZE = 200
 
 
@@ -414,7 +422,7 @@ class Dataset(BaseModel):
             return []
         if len(signals) > MAX_SIGNALS_PER_ADD:
             raise ValueError(f"Provide at most {MAX_SIGNALS_PER_ADD} signals per call")
-        if self.import_status not in (ImportStatus.FINISHED, ImportStatus.POSTPROCESSING):
+        if self.import_status not in SCRIPTABLE_STATUSES:
             raise ValueError(f"Dataset {self.id} is not in a writable state (status: {self.import_status})")
 
         signal_ids = run_signal_uploads(self, signals, overwrite=overwrite, concurrency=concurrency)

@@ -23,6 +23,7 @@ from marple.db.constants import (
     MAX_SIGNALS_PER_ADD,
     ROW_GROUP_SIZE,
 )
+from marple.db.dataset import SCRIPTABLE_STATUSES
 from marple.db.signal_upload import (
     ParquetUploadMetadata,
     PresignedParquetFile,
@@ -326,6 +327,19 @@ def test_add_signals_rejects_too_many() -> None:
     dataset = object.__new__(Dataset)
     with pytest.raises(ValueError, match=str(MAX_SIGNALS_PER_ADD)):
         Dataset.add_signals(dataset, too_many)
+
+
+def test_add_signals_allows_scriptable_statuses(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr("marple.db.dataset.run_signal_uploads", lambda *_args, **_kwargs: [1])
+    for status in SCRIPTABLE_STATUSES:
+        dataset = cast(Dataset, SimpleNamespace(id=1, path="demo", import_status=status, _signals={}))
+        assert Dataset.add_signals(dataset, [{"name": "s", "data": object()}]) == [1]
+
+
+def test_add_signals_rejects_status_outside_scriptable() -> None:
+    dataset = cast(Dataset, SimpleNamespace(id=1, import_status="LIVE"))
+    with pytest.raises(ValueError, match="not in a writable state"):
+        Dataset.add_signals(dataset, [{"name": "s", "data": object()}])
 
 
 def test_delete_signals_posts_and_clears_cache() -> None:
