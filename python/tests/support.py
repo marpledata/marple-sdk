@@ -1,8 +1,13 @@
+import time
 from collections.abc import Iterator
 from contextlib import contextmanager
 from datetime import datetime
 from pathlib import Path
+from types import SimpleNamespace
+from typing import Any, Callable, TypeVar
 from uuid import uuid4
+
+import pytest
 
 import marple
 from marple import DB
@@ -11,6 +16,39 @@ from marple.db import Dataset, DataStream
 EXAMPLE_CSV = Path(__file__).parents[2] / "test_data" / "examples_race.csv"
 
 _swept_prefixes: set[str] = set()
+
+T = TypeVar("T")
+
+
+def ok(body: Any, status_code: int = 200) -> SimpleNamespace:
+    """A fake API response for unit tests that mock the client."""
+    return SimpleNamespace(status_code=status_code, json=lambda: body, text=str(body))
+
+
+def require_admin_api(db: DB) -> None:
+    """Skip unless the server has the 3.14 admin endpoints and the token may use them. Changes nothing."""
+    r = db.client.post(
+        f"/datapool/{db.client.datapool}/signal-stats/priority", json={"signal_ids": [], "priority": "default"}
+    )
+    if r.status_code in (404, 405):
+        pytest.skip("Signal stats API not available on this Marple DB deployment (needs 3.14)")
+    if r.status_code == 403:
+        pytest.skip("MDB_TOKEN is not an admin token; skipping admin-only test")
+
+
+def poll(fetch: Callable[[], T], until: Callable[[T], bool], timeout: float = 90, interval: float = 2) -> T:
+    """Call `fetch` until `until(result)` holds. At the timeout: the last result, or the last ValueError."""
+    deadline = time.monotonic() + timeout
+    while True:
+        try:
+            result = fetch()
+        except ValueError:
+            if time.monotonic() >= deadline:
+                raise
+        else:
+            if until(result) or time.monotonic() >= deadline:
+                return result
+        time.sleep(interval)
 
 
 def unique_name(prefix: str, suffix: str = "") -> str:

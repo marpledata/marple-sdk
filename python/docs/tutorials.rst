@@ -119,6 +119,77 @@ For files already imported, rerun aliasing and the stream's script pipeline:
 
    dataset = dataset.rerun_processing().wait_for_import()
 
+Signals, priority & aliasing
+----------------------------
+
+These functions need Marple DB 3.14 or later. Changing priority, aliasing rules,
+metadata fields and lifecycle rules needs an admin token.
+
+Search signals across datasets with the query language of the Signals page.
+Words match the signal name (``*`` is a wildcard), ``field:value`` terms filter
+and ``-`` negates a term. Pass ``stream=`` to look at one stream only.
+
+.. code-block:: python
+
+   signals = db.search_signals("EMS_* unit:rpm frequency>=100Hz", sort="cold_bytes")
+   print(signals.total, "matches")
+   df = signals.to_dataframe()
+
+   speed = db.get_signal_stats("car.speed")
+   print(speed.imported_count, speed.value_min, speed.value_max, speed.units)
+   for occurrence in speed.get_datasets(limit=10):
+       print(occurrence.dataset.path, occurrence.frequency)
+
+Signals with high import priority are processed first and placed in hot storage.
+This applies to future imports only.
+
+.. code-block:: python
+
+   db.set_signal_priority(["car.speed", "car.rpm"])            # every stream that has them
+   db.set_signal_priority("car.speed", high=False, stream=stream)
+
+   # In bulk: export, edit the `priority` column, import
+   path = db.export_signal_stats("signals.csv", "car.*")
+   db.import_signal_priority(path)
+
+An aliasing rule gives a signal one name, whatever the file calls it. After
+import, the names in ``signal_hierarchy`` are tried in order and the first one
+the dataset has is copied to ``signal_name``. The original signal stays.
+
+.. code-block:: python
+
+   rule = db.create_aliasing_rule(
+       "car.speed", ["VehSpd", "veh_speed_kph"], streams=[stream], copy_metadata=True
+   )
+   rule = rule.update(description="Vehicle speed")
+   stream.rerun_processing()             # apply to datasets that are already imported
+
+   db.get_aliasing_rules("VehSpd")                         # the rules that pick up this original name
+   db.get_signal_stats("car.speed").get_aliasing_rules()   # the rules that produce car.speed
+   dataset.get_signal("car.speed").alias_of                # "VehSpd": what it was copied from in this dataset
+
+Metadata fields and lifecycle rules
+-----------------------------------
+
+A metadata field defines what the metadata of datasets looks like: its allowed
+values and whether it is mandatory. Updates only change the fields you pass.
+
+.. code-block:: python
+
+   field = db.create_metadata_field("track", allowed_values=["Spa", "Zolder"], mandatory=True)
+   field = field.update(allowed_values=["Spa", "Zolder", "Monza"])
+   field.delete()
+
+Lifecycle rules set after how many days data moves to the next storage tier.
+``0`` means never. On a stream, ``None`` means inherit the workspace value.
+
+.. code-block:: python
+
+   db.get_lifecycle_rules()                              # workspace rules
+   db.set_lifecycle_rules(stream, hot_to_cold_days=60)   # override for one stream
+   stream.get_lifecycle_rules(effective=True)            # what applies, inherited values filled in
+   db.set_lifecycle_rules(stream, hot_to_cold_days=None) # inherit again
+
 Filter datasets and get resampled data
 --------------------------------------
 

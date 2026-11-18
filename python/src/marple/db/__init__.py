@@ -1,4 +1,5 @@
 import warnings
+from collections.abc import Iterable
 from functools import wraps
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, Literal, Optional, Sequence, TextIO
@@ -8,17 +9,35 @@ from pydantic import ValidationError
 from requests import Response
 from requests.exceptions import ConnectionError
 
-from marple.db import activity, sql
+from marple.db import activity, aliasing, lifecycle
+from marple.db import metadata as metadata_fields
+from marple.db import signal_stats, sql
 from marple.db.activity import logger
+from marple.db.aliasing import AliasingRule
 from marple.db.constants import LAKE_ARROW_SCHEMA as _LAKE_ARROW_SCHEMA
 from marple.db.constants import SAAS_URL
 from marple.db.constants import SCHEMA as _SCHEMA
 from marple.db.dataset import Dataset, DatasetList
 from marple.db.datastream import DataStream
+from marple.db.lifecycle import LifecycleRules
+from marple.db.metadata import MetadataField
 from marple.db.script import SandboxJob, SandboxJobStatus, Script, ScriptVersion
-from marple.db.signal import Signal
+from marple.db.signal import Signal, StorageStatus
+from marple.db.signal_stats import (
+    DatasetRef,
+    HeatBucket,
+    SignalOccurrence,
+    SignalPriorityImportResult,
+    SignalPriorityResult,
+    SignalSort,
+    SignalStats,
+    SignalStatsDetail,
+    SignalStatsList,
+    SignalStatsSummary,
+    SignalStreamStats,
+)
 from marple.db.signal_upload import SignalsAlreadyExistError, SignalUpload
-from marple.utils import DBClient, validate_response
+from marple.utils import OMITTED, DBClient, Omitted, StreamKey, validate_response
 
 if TYPE_CHECKING:
     from trino.dbapi import Connection
@@ -36,16 +55,31 @@ omitted and is filled with nulls during validation.
 
 __all__ = [
     "DB",
+    "AliasingRule",
     "DataStream",
     "Dataset",
     "DatasetList",
+    "DatasetRef",
+    "HeatBucket",
+    "LifecycleRules",
+    "MetadataField",
     "SandboxJob",
     "SandboxJobStatus",
     "Script",
     "ScriptVersion",
     "Signal",
+    "SignalOccurrence",
+    "SignalPriorityImportResult",
+    "SignalPriorityResult",
+    "SignalSort",
+    "SignalStats",
+    "SignalStatsDetail",
+    "SignalStatsList",
+    "SignalStatsSummary",
+    "SignalStreamStats",
     "SignalUpload",
     "SignalsAlreadyExistError",
+    "StorageStatus",
     "SCHEMA",
     "LAKE_ARROW_SCHEMA",
 ]
@@ -332,6 +366,349 @@ class DB:
         r = self.delete(f"/script/{script_id}")
         validate_response(r, "Delete script failed")
         logger.debug(f"Deleted script {script_id}")
+
+    # Signal search and statistics #
+
+    def search_signals(
+        self,
+        query: str | None = None,
+        *,
+        stream: StreamKey | None = None,
+        sort: SignalSort | str = SignalSort.IMPORTED_COUNT,
+        descending: bool = True,
+        limit: int | None = 50,
+    ) -> SignalStatsList:
+        """
+        Search signals across datasets, with statistics per signal (the Signals page).
+
+        ``query`` uses the search language of the Signals page. Words match part of the signal
+        name (``*`` is a wildcard that matches the whole name), ``field:value`` terms filter, and
+        a ``-`` in front of a term negates it. Terms combine with AND::
+
+            db.search_signals("EMS_* unit:rpm frequency>=100Hz")
+            db.search_signals("is:constant -is:text", sort="cold_bytes")
+            db.search_signals("datasets:10..100 imported_last>=2026-10")
+
+        Fields: ``name``, ``unit``, ``datasets``, ``coverage``, ``points``, ``cold``, ``archived``,
+        ``frequency``, ``min``, ``max``, ``heated``, ``heated_last``, ``units``, ``sources``,
+        ``imported_first``, ``imported_last``, ``rank``. Flags (``is:<flag>``): ``constant``,
+        ``text``, ``hot``, ``heated``, ``archived``, ``conflict``, ``alias``, ``priority``,
+        ``partial``, ``default``, ``oneoff``.
+
+        Args:
+            query: Search text. ``None`` matches every signal.
+            stream: Only this stream (id, name or ``DataStream``). ``None`` searches the whole datapool.
+            sort: Column to sort on, see :class:`~marple.db.SignalSort`.
+            descending: Sort from high to low.
+            limit: Maximum number of signals to return. ``None`` returns every match.
+
+        Returns:
+            A list of :class:`~marple.db.SignalStats`. Its ``total`` is the number of matches,
+            which can be more than ``limit``.
+
+        Raises:
+            ValueError: If the query does not parse; the message says which term is wrong.
+            RuntimeError: If the statistics of the datapool are still being collected.
+        """
+        return signal_stats.search(
+            self.client, query, stream=self._stream_id(stream), sort=sort, descending=descending, limit=limit
+        )
+
+    def get_signal_stats(
+        self, signal: int | str | SignalStats, *, stream: StreamKey | None = None
+    ) -> SignalStatsDetail:
+        """
+        All statistics of one signal, including a breakdown per stream.
+
+        Args:
+            signal: The signal's id or name.
+            stream: Only this stream. ``None`` covers the whole datapool.
+
+        Raises:
+            ValueError: If the signal does not exist, or has no datasets in this scope.
+        """
+        return signal_stats.get(self.client, signal, stream=self._stream_id(stream))
+
+    def get_signal_stats_summary(
+        self, query: str | None = None, *, stream: StreamKey | None = None
+    ) -> SignalStatsSummary:
+        """
+        Totals over all signals: how many there are, their storage, and how many of each kind.
+
+        Args:
+            query: Search text as for :meth:`search_signals`: the totals of the signals it finds.
+            stream: Only this stream. ``None`` covers the whole datapool.
+        """
+        return signal_stats.get_summary(self.client, query, stream=self._stream_id(stream))
+
+    def export_signal_stats(
+        self,
+        path: str | Path,
+        query: str | None = None,
+        *,
+        stream: StreamKey | None = None,
+        sort: SignalSort | str = SignalSort.IMPORTED_COUNT,
+        descending: bool = True,
+    ) -> Path:
+        """
+        Write the signals of :meth:`search_signals` to a CSV file: all matches, not a page.
+
+        The file has a ``priority`` column. Edit it and send the file back with
+        :meth:`import_signal_priority` to set the priority of many signals at once.
+
+        Args:
+            path: File to write. A directory gets a ``signals.csv``.
+            query: Search text as for :meth:`search_signals`.
+            stream: Only this stream. ``None`` covers the whole datapool.
+            sort: Column to sort on.
+            descending: Sort from high to low.
+
+        Returns:
+            The path of the file written.
+        """
+        return signal_stats.export(
+            self.client, path, query, stream=self._stream_id(stream), sort=sort, descending=descending
+        )
+
+    # Signal priority #
+
+    def set_signal_priority(
+        self,
+        signals: int | str | SignalStats | Iterable[int | str | SignalStats],
+        high: bool = True,
+        *,
+        stream: StreamKey | None = None,
+    ) -> SignalPriorityResult:
+        """
+        Give signals high import priority, or take it away with ``high=False``.
+
+        Signals with high priority are processed first on import and placed in hot storage.
+        This only affects **future** imports: datasets that are already imported do not change.
+        Priority is set per stream that already has the signal; a stream that imports the signal
+        for the first time later starts without priority.
+
+        Requires an admin token.
+
+        Args:
+            signals: One signal or several, each as an id, a name or a ``SignalStats``.
+            high: ``True`` for high priority, ``False`` for the default priority.
+            stream: Only in this stream. ``None`` sets it in every stream that has the signal.
+        """
+        return signal_stats.set_priority(self.client, signals, high, stream=self._stream_id(stream))
+
+    def import_signal_priority(
+        self, csv_path: str | Path, *, stream: StreamKey | None = None
+    ) -> SignalPriorityImportResult:
+        """
+        Set the import priority of many signals from a CSV file.
+
+        This is the reverse of :meth:`export_signal_stats`: export, edit the ``priority`` column,
+        import. Only the columns ``name`` (or ``signal``) and ``priority`` are read. ``high`` gives
+        priority, ``default`` or an empty cell takes it away, and ``partial`` leaves the signal as
+        it is. Signals the file does not name are left as they are.
+
+        Requires an admin token. Like :meth:`set_signal_priority`, this only affects future imports.
+
+        Args:
+            csv_path: The CSV file.
+            stream: Only in this stream. ``None`` sets it in every stream that has the signals.
+        """
+        return signal_stats.import_priority(self.client, csv_path, stream=self._stream_id(stream))
+
+    # Aliasing rules #
+
+    def get_aliasing_rules(
+        self, signal: int | str | SignalStats | Signal | None = None, *, stream: StreamKey | None = None
+    ) -> list[AliasingRule]:
+        """
+        List aliasing rules, optionally only those of one signal or stream.
+
+        Args:
+            signal: Only rules that involve this signal name: rules that produce it
+                (``signal_name``) and rules that look for it as an original name
+                (``signal_hierarchy``).
+            stream: Only rules that apply to this stream: it is in the rule's ``streams``, or
+                the rule applies to every stream.
+        """
+        return aliasing.list_rules(self.client, signal, stream=self._stream_id(stream))
+
+    def create_aliasing_rule(
+        self,
+        signal_name: str,
+        signal_hierarchy: list[str],
+        *,
+        description: str | None = None,
+        streams: Iterable[StreamKey] | None = None,
+        copy_metadata: bool = False,
+    ) -> AliasingRule:
+        """
+        Create an aliasing rule: store a signal as ``signal_name``, whatever the file calls it.
+
+        After a dataset is imported, the names in ``signal_hierarchy`` are tried in order and
+        the first one the dataset has is copied to a signal called ``signal_name``. The original
+        signal stays. Rules apply at import; call :meth:`~marple.db.DataStream.rerun_processing`
+        to apply them to datasets that are already imported.
+
+        Requires an admin token.
+
+        Args:
+            signal_name: The name to store the signal under. Must be unique among the rules.
+            signal_hierarchy: Original names to look for, in order of preference.
+            description: Free text.
+            streams: The streams the rule applies to. ``None`` or empty means every stream.
+            copy_metadata: Whether the aliased signal copies the metadata of the original.
+        """
+        return aliasing.create_rule(
+            self.client,
+            signal_name,
+            signal_hierarchy,
+            description=description,
+            streams=self._stream_ids(streams),
+            copy_metadata=copy_metadata,
+        )
+
+    def upsert_aliasing_rules(
+        self, rules: "str | Path | pd.DataFrame | Iterable[dict[str, Any] | AliasingRule]"
+    ) -> list[AliasingRule]:
+        """
+        Create or update many aliasing rules in one request, matched on ``signal_name``.
+
+        Each rule replaces an existing rule with the same ``signal_name`` as a whole, or is
+        created when there is none. Rules that are not named are left as they are.
+
+        Requires an admin token.
+
+        Args:
+            rules: A CSV file path, a DataFrame, or a list of dicts. Columns / keys:
+                ``signal_name`` and ``signal_hierarchy`` (required), ``description``, ``streams``
+                and ``copy_metadata``. ``signal_hierarchy`` and ``streams`` are lists, or
+                comma-separated text. Streams can be given by id or name.
+
+        Returns:
+            The rules as they are stored now.
+        """
+        return aliasing.upsert_rules(self.client, rules)
+
+    def delete_aliasing_rule(self, rule: int | AliasingRule) -> None:
+        """
+        Delete an aliasing rule, given as its id or as an ``AliasingRule``. Requires an admin token.
+
+        Aliased signals in datasets that are already imported stay until processing is rerun.
+        """
+        aliasing.delete_rule(self.client, rule)
+
+    # Metadata fields #
+
+    def get_metadata_fields(self) -> list[MetadataField]:
+        """List the metadata fields defined for this workspace."""
+        return metadata_fields.list_fields(self.client)
+
+    def get_metadata_field(self, key: int | str) -> MetadataField:
+        """Get a metadata field by its id or name."""
+        return metadata_fields.get_field(self.client, key)
+
+    def create_metadata_field(
+        self,
+        name: str,
+        *,
+        description: str | None = None,
+        allowed_values: Iterable[str] | None = None,
+        streams: Iterable[StreamKey] | None = None,
+        mandatory: bool = False,
+        user_input: bool = False,
+    ) -> MetadataField:
+        """
+        Define a metadata field for datasets. Requires an admin token.
+
+        Args:
+            name: The name of the field. Must be unique.
+            description: Free text.
+            allowed_values: The values the field may take. ``None`` or empty allows any value.
+            streams: The streams the field belongs to. ``None`` or empty means every stream.
+            mandatory: Whether a dataset must have a value for this field.
+            user_input: Whether users are asked for this field when they upload a file.
+        """
+        return metadata_fields.create_field(
+            self.client,
+            name,
+            description=description,
+            allowed_values=allowed_values,
+            streams=self._stream_ids(streams),
+            mandatory=mandatory,
+            user_input=user_input,
+        )
+
+    def delete_metadata_field(self, key: int | str | MetadataField) -> None:
+        """
+        Delete a metadata field definition, given as its id, name or ``MetadataField``.
+
+        Requires an admin token. Metadata values that datasets already have are kept.
+        """
+        metadata_fields.delete_field(self.client, key)
+
+    # Lifecycle rules #
+
+    def get_lifecycle_rules(self, stream: StreamKey | None = None, *, effective: bool = False) -> LifecycleRules:
+        """
+        The lifecycle rules of the workspace, or of one stream.
+
+        Lifecycle rules set after how many days data moves to the next storage tier. ``0`` means
+        never. On a stream, ``None`` means the stream inherits the workspace value.
+
+        Args:
+            stream: The stream to get the rules of. ``None`` returns the workspace rules.
+            effective: For a stream: if ``False``, its own rules, with ``None`` for every rule it
+                inherits. If ``True``, the rules that apply, with inherited values filled in.
+        """
+        return lifecycle.get_rules(self.client, self._stream_id(stream), effective=effective)
+
+    def list_lifecycle_rules(self) -> list[LifecycleRules]:
+        """The workspace rules first, then the rules of every stream that has rules of its own."""
+        return lifecycle.list_rules(self.client)
+
+    def set_lifecycle_rules(
+        self,
+        stream: StreamKey | None = None,
+        *,
+        hot_to_cold_days: int | None | Omitted = OMITTED,
+        cold_to_archive_days: int | None | Omitted = OMITTED,
+        realtime_to_cold_days: int | None | Omitted = OMITTED,
+        retain_prio_signals: bool | None | Omitted = OMITTED,
+    ) -> LifecycleRules:
+        """
+        Set lifecycle rules for the workspace, or for one stream. Requires an admin token.
+
+        Rules that are not given keep their value. Days are ``0`` for never, or a number of days;
+        the server enforces a minimum per rule and rejects lower values with a ``ValueError``.
+        On a stream, ``None`` makes it inherit the workspace value again. Realtime streams are
+        never archived: ``cold_to_archive_days`` and ``retain_prio_signals`` must stay ``None``.
+
+        Args:
+            stream: The stream to set the rules of. ``None`` sets the workspace rules.
+            hot_to_cold_days: Days without use before a signal leaves hot storage.
+            cold_to_archive_days: Days before cold data is archived (only the original file is kept).
+            realtime_to_cold_days: Days before a realtime dataset is moved to cold storage.
+            retain_prio_signals: Whether signals with high import priority are kept out of the archive.
+        """
+        return lifecycle.set_rules(
+            self.client,
+            self._stream_id(stream),
+            hot_to_cold_days=hot_to_cold_days,
+            cold_to_archive_days=cold_to_archive_days,
+            realtime_to_cold_days=realtime_to_cold_days,
+            retain_prio_signals=retain_prio_signals,
+        )
+
+    def _stream_id(self, stream: StreamKey | None) -> int | None:
+        """A stream given as id, name or DataStream, resolved through the stream cache. None stays None."""
+        if stream is None or isinstance(stream, DataStream):
+            return None if stream is None else stream.id
+        return self._get_stream_id(stream)
+
+    def _stream_ids(self, streams: Iterable[StreamKey] | None) -> list[int]:
+        if isinstance(streams, (int, str, DataStream)):
+            raise TypeError("streams must be a list of streams, not a single stream")
+        return [stream_id for s in streams or [] if (stream_id := self._stream_id(s)) is not None]
 
     def _refresh_stream_cache(self, r: Response | None = None) -> None:
         if r is None:

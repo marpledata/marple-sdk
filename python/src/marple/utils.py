@@ -1,6 +1,7 @@
+from collections.abc import Iterable
 from enum import Enum
 from pathlib import Path
-from typing import Any, Literal
+from typing import TYPE_CHECKING, Any, Literal, Union
 from urllib import parse, request
 
 import pandas as pd
@@ -18,6 +19,12 @@ from marple.db.constants import (
     COL_VAL_TEXT,
     COL_VAL_TEXT_IDX,
 )
+
+if TYPE_CHECKING:
+    from marple.db.datastream import DataStream
+
+StreamKey = Union[int, str, "DataStream"]
+"""How a datastream can be given: its id, its name, or a :class:`~marple.db.DataStream`."""
 
 
 class Omitted(Enum):
@@ -54,6 +61,28 @@ def validate_response(response: requests.Response, failure_message: str, *, chec
     ):
         raise ValueError(failure_message)
     return r_json
+
+
+def resolve_stream_id(client: "DBClient", stream: "StreamKey | None") -> int | None:
+    """The id of a stream given as an id, a name or a `DataStream`. `None` stays `None`: the whole datapool."""
+    if stream is None or isinstance(stream, int):
+        return stream
+    if not isinstance(stream, str):
+        return stream.id
+    streams = validate_response(client.get("/streams"), "Failed to fetch streams")["streams"]
+    for candidate in streams:
+        if candidate["name"].lower() == stream.lower() or str(candidate["id"]) == stream:
+            return candidate["id"]
+    raise ValueError(
+        f"Stream with name or id {stream} not found, available streams: {', '.join(s['name'] for s in streams)}"
+    )
+
+
+def resolve_stream_ids(client: "DBClient", streams: "Iterable[StreamKey] | None") -> list[int]:
+    """The ids of several streams. `None` is no streams, which the server reads as every stream."""
+    if isinstance(streams, (int, str)):
+        raise TypeError("streams must be a list of streams, not a single stream")
+    return [stream_id for s in streams or [] if (stream_id := resolve_stream_id(client, s)) is not None]
 
 
 def validate_storage_response(response: requests.Response, failure_message: str) -> None:

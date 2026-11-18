@@ -5,6 +5,33 @@ All notable changes to the Python SDK package `marpledata` will be documented in
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [3.8.0] - Unreleased
+
+Requires Marple DB 3.14 or later for everything listed under "Added".
+
+### Added
+
+- Signal search and statistics (the Signals page)
+  - `DB.search_signals` / `DataStream.search_signals` with the server's query language (`"EMS_* unit:rpm frequency>=100Hz is:constant -text"`), returning a `SignalStatsList` of `SignalStats` (`.total`, `.collected_at`, `.to_dataframe()`).
+  - `DB.get_signal_stats`, `DB.get_signal_stats_summary` and `DB.export_signal_stats` (CSV).
+  - `SignalStats.get_datasets`, `refresh` and `priority`.
+- Signal priority
+  - `DB.set_signal_priority` / `SignalStats.set_priority` and `DB.import_signal_priority` (CSV, round-trips with `export_signal_stats`).
+- Aliasing rules
+  - `DB.get_aliasing_rules` (optionally filtered by signal and stream), `create_aliasing_rule`, `upsert_aliasing_rules` and `delete_aliasing_rule`.
+  - `AliasingRule.update` / `delete` / `applies_to` / `get_signal_stats`.
+  - `SignalStats.get_aliasing_rules`, `Signal.get_aliasing_rules` and `Signal.alias_of` (the signal an aliased signal was copied from).
+- Metadata fields
+  - `DB.get_metadata_fields` / `get_metadata_field` / `create_metadata_field` / `delete_metadata_field`.
+  - `MetadataField.update` / `delete`. Updates only change the fields you pass.
+- Lifecycle rules
+  - `DB.get_lifecycle_rules` / `list_lifecycle_rules` / `set_lifecycle_rules`, with `DataStream.get_lifecycle_rules` / `set_lifecycle_rules` as shorthands.
+- `StorageStatus.ARCHIVE`, and `StorageStatus` is exported from `marple.db`.
+
+### Fixed
+
+- Signals in the new `ARCHIVE` storage status no longer fail to load in `Dataset.get_signals`.
+
 ## [3.7.0] - 2026-09-28
 
 ### Changed

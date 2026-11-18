@@ -7,8 +7,11 @@ from typing import Any, Literal, Optional
 
 from pydantic import BaseModel, Field, PrivateAttr, field_validator
 
+from marple.db import lifecycle, signal_stats
 from marple.db.activity import logger
 from marple.db.dataset import Dataset, DatasetList
+from marple.db.lifecycle import LifecycleRules
+from marple.db.signal_stats import SignalSort, SignalStatsList
 from marple.utils import (
     OMITTED,
     DBClient,
@@ -360,6 +363,56 @@ class DataStream(BaseModel):
         validate_response(r, "Rerun processing failed")
         target = f"{len(dataset_ids)} datasets" if dataset_ids is not None else "all datasets"
         logger.debug(f"Reran processing for stream {self.name} ({target})")
+
+    def search_signals(
+        self,
+        query: str | None = None,
+        *,
+        sort: SignalSort | str = SignalSort.IMPORTED_COUNT,
+        descending: bool = True,
+        limit: int | None = 50,
+    ) -> SignalStatsList:
+        """
+        Search the signals of this stream, with statistics over its datasets.
+
+        See :meth:`~marple.db.DB.search_signals`.
+        """
+        return signal_stats.search(
+            self._client, query, stream=self.id, sort=sort, descending=descending, limit=limit
+        )
+
+    def get_lifecycle_rules(self, *, effective: bool = False) -> LifecycleRules:
+        """
+        The lifecycle rules of this stream.
+
+        Args:
+            effective: If ``False``, the stream's own rules, where ``None`` means inherited from
+                the workspace. If ``True``, the rules that apply, with inherited values filled in.
+        """
+        return lifecycle.get_rules(self._client, self.id, effective=effective)
+
+    def set_lifecycle_rules(
+        self,
+        *,
+        hot_to_cold_days: int | None | Omitted = OMITTED,
+        cold_to_archive_days: int | None | Omitted = OMITTED,
+        realtime_to_cold_days: int | None | Omitted = OMITTED,
+        retain_prio_signals: bool | None | Omitted = OMITTED,
+    ) -> LifecycleRules:
+        """
+        Set lifecycle rules for this stream. Rules that are not given keep their value; ``None``
+        makes the stream inherit the workspace value again.
+
+        See :meth:`~marple.db.DB.set_lifecycle_rules`.
+        """
+        return lifecycle.set_rules(
+            self._client,
+            self.id,
+            hot_to_cold_days=hot_to_cold_days,
+            cold_to_archive_days=cold_to_archive_days,
+            realtime_to_cold_days=realtime_to_cold_days,
+            retain_prio_signals=retain_prio_signals,
+        )
 
     def delete(self) -> None:
         """
