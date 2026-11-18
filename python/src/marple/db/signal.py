@@ -7,8 +7,13 @@ from typing import Literal
 import pandas as pd
 from pydantic import BaseModel, PrivateAttr
 
+from marple.db import aliasing
 from marple.db.activity import logger
+from marple.db.aliasing import AliasingRule
 from marple.utils import DBClient, validate_response
+
+ALIAS_REFERENCE_KEY = "_mdb_reference_signal"
+"""Metadata key the server sets on a signal created by an aliasing rule: the name of the signal it copies."""
 
 
 class StorageStatus(StrEnum):
@@ -24,6 +29,8 @@ class StorageStatus(StrEnum):
     """ Indicates the signal is being loaded into the hot cache."""
     HOT = "HOT"
     """ Indicates the signal is in the hot cache."""
+    ARCHIVE = "ARCHIVE"
+    """ Indicates the signal is archived: its cold data was removed, only the original file is kept."""
 
 
 class Signal(BaseModel):
@@ -71,6 +78,15 @@ class Signal(BaseModel):
         self._dataset = dataset
         self.datastream_id = datastream_id
         self.dataset_id = dataset_id
+
+    @property
+    def alias_of(self) -> str | None:
+        """
+        The name of the signal this one is a copy of, if an aliasing rule created it.
+
+        ``None`` for a signal that comes from the source file.
+        """
+        return self.metadata.get(ALIAS_REFERENCE_KEY)
 
     def cache_parquet(self, refresh_cache: bool = False) -> Path:
         """
@@ -138,6 +154,13 @@ class Signal(BaseModel):
                 warnings.warn(f"Signal {self.name} did not reach a queryable state after {timeout} seconds")
                 return fresh
             time.sleep(0.5)
+
+    def get_aliasing_rules(self) -> list[AliasingRule]:
+        """
+        The aliasing rules of this signal's stream that involve its name: rules that produce it
+        (``signal_name``) and rules that look for it as an original name (``signal_hierarchy``).
+        """
+        return aliasing.list_rules(self._client, signal=self.name, stream=self.datastream_id)
 
     def delete(self) -> None:
         """
