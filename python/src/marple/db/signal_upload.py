@@ -5,6 +5,7 @@ from typing import TYPE_CHECKING
 if TYPE_CHECKING:
     from marple.db.dataset import Dataset
 
+import math
 import tempfile
 from concurrent.futures import ThreadPoolExecutor
 from enum import StrEnum
@@ -15,7 +16,7 @@ import pandas as pd
 import pyarrow as pa
 import pyarrow.compute as pc
 import pyarrow.parquet as pq
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import BaseModel, ConfigDict, Field, field_validator
 
 from marple.db.constants import (
     COL_DATASET,
@@ -232,6 +233,12 @@ class ParquetUploadMetadata(BaseModel):
 class SignalUploadStats(BaseModel):
     sum: float | None
     frequency: float | None
+
+    @field_validator("sum", "frequency")
+    @classmethod
+    def _finite_or_none(cls, value: float | None) -> float | None:
+        # Huge values sum to infinity, which JSON cannot carry: the server takes a missing statistic instead
+        return value if value is not None and math.isfinite(value) else None
 
 
 class SignalUploadComplete(BaseModel):

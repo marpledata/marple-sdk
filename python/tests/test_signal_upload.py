@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import math
 from pathlib import Path
 from types import SimpleNamespace
 from typing import Any, cast
@@ -28,6 +29,7 @@ from marple.db.signal_upload import (
     ParquetUploadMetadata,
     PresignedParquetFile,
     PresignedSignal,
+    SignalUploadStats,
     _estimate_frequency,
     _plan_row_counts,
     run_signal_uploads,
@@ -489,3 +491,11 @@ def test_delete_signals_integration(signal_upload_stream: DataStream, require_si
     dataset.delete_signals(ids[1:])
     remaining = dataset.get_signals(refresh=True)
     assert {s.name for s in remaining} == set()
+
+
+@pytest.mark.parametrize("value", [math.inf, -math.inf, math.nan])
+def test_upload_stats_leave_out_what_json_cannot_carry(value: float) -> None:
+    # Three samples near float64 max sum to infinity; requests refuses to send that as JSON
+    stats = SignalUploadStats(sum=value, frequency=value)
+    assert stats.model_dump() == {"sum": None, "frequency": None}
+    assert SignalUploadStats(sum=6.0, frequency=1.0).model_dump() == {"sum": 6.0, "frequency": 1.0}
