@@ -7,7 +7,14 @@ import pytest
 
 from marple import DB
 from marple.db import SignalStats, SignalStatsDetail, signal_stats
-from support import ingest_dataset, isolated_stream, ok, poll, require_admin_api
+from support import (
+    ingest_dataset,
+    isolated_stream,
+    ok,
+    poll,
+    require_admin_api,
+    require_signal_stats_api,
+)
 
 SIGNAL_STATS_TEST_PREFIX = "Salty Compulsory PytestSignalStats"
 BASE = "/datapool/default/signal-stats"
@@ -107,6 +114,9 @@ def test_search_signals_limit_spans_pages_and_stops() -> None:
 
     assert len(result) == 1200 and result.total == 5000
     assert client.get.call_args_list[1].kwargs["params"]["limit"] == 200
+    # A slice is still a result of the same search
+    assert len(result[:10]) == 10 and result[:10].total == 5000
+    assert result[:10].collected_at == result.collected_at
 
 
 def test_search_signals_errors() -> None:
@@ -253,8 +263,7 @@ def test_export_signal_stats_streams_to_disk(tmp_path: Path) -> None:
 
 @pytest.mark.integration
 def test_signal_stats_e2e(db: DB, tmp_path: Path) -> None:
-    if db.client.get(f"/datapool/{db.client.datapool}/signal-stats/summary").status_code in (404, 405):
-        pytest.skip("Signal stats API not available on this Marple DB deployment (needs 3.14)")
+    require_signal_stats_api(db)
 
     with isolated_stream(db, SIGNAL_STATS_TEST_PREFIX, "read") as stream:
         dataset = ingest_dataset(stream)

@@ -3,6 +3,7 @@
 import csv
 import io
 from collections.abc import Iterable
+from itertools import chain
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
@@ -23,6 +24,30 @@ from marple.utils import (
 if TYPE_CHECKING:
     from marple.db.signal import Signal
     from marple.db.signal_stats import SignalKey, SignalStatsDetail
+
+PANDAS_NA_VALUES = frozenset(
+    {
+        "#N/A",
+        "#N/A N/A",
+        "#NA",
+        "-1.#IND",
+        "-1.#QNAN",
+        "-NaN",
+        "-nan",
+        "1.#IND",
+        "1.#QNAN",
+        "<NA>",
+        "N/A",
+        "NA",
+        "NULL",
+        "NaN",
+        "None",
+        "n/a",
+        "nan",
+        "null",
+    }
+)
+"""Cells pandas reads as empty by default, whatever the quoting."""
 
 UPSERT_COLUMNS = ["signal_name", "signal_hierarchy", "description", "streams", "copy_metadata"]
 """Columns of the CSV file that :func:`upsert_rules` sends."""
@@ -153,7 +178,7 @@ def list_rules(
         rules = [rule for rule in rules if name == rule.signal_name or name in rule.signal_hierarchy]
     stream_id = resolve_stream_id(client, stream)
     if stream_id is not None:
-        rules = [rule for rule in rules if not rule.streams or stream_id in rule.streams]
+        rules = [rule for rule in rules if rule.applies_to(stream_id)]
     return rules
 
 
@@ -234,38 +259,44 @@ def _to_csv(client: DBClient, rows: list[dict]) -> bytes:
     out = io.StringIO()
     writer = csv.writer(out)
     writer.writerow(UPSERT_COLUMNS)
-    stream_ids: dict[str, int] = {}  # resolve each stream name once, not once per row
+    # Every stream of the file in one call: names cost one request together, not one per row
+    stream_cells = [[_stream_key(s) for s in _cells(row.get("streams")) if not _missing(s)] for row in rows]
+    stream_ids = iter(resolve_stream_ids(client, chain.from_iterable(stream_cells)))
 
-    def stream_id(key: Any) -> int:
-        if isinstance(key, str) and key.strip().isdigit():
-            return int(key)
-        if isinstance(key, str):
-            if key not in stream_ids:
-                stream_ids[key] = resolve_stream_id(client, key)  # type: ignore[assignment]
-            return stream_ids[key]
-        return resolve_stream_id(client, key)  # type: ignore[return-value]
-
-    for number, row in enumerate(rows, start=1):
+    for number, (row, cells) in enumerate(zip(rows, stream_cells), start=1):
         name = _text(row.get("signal_name"))
-        hierarchy = _cells(row.get("signal_hierarchy"))
-        if not name or not hierarchy:
+        hierarchy = [str(original) for original in _cells(row.get("signal_hierarchy"))]
+        description = _text(row.get("description"))
+        if not name.strip() or not hierarchy:
             raise ValueError(f"Aliasing rule {number}: signal_name and signal_hierarchy are required")
+        for column, text in (("signal_name", name), ("description", description)):
+            if _inferred(text):
+                raise ValueError(
+                    f"Aliasing rule {number} ({name}): the {column} {text!r} cannot be upserted in bulk, the server "
+                    "would read it as a number, a boolean or an empty cell. "
+                    "Use create_aliasing_rule or AliasingRule.update for this rule."
+                )
         if any("," in original for original in hierarchy):
             raise ValueError(
                 f"Aliasing rule {number} ({name}): original names with a comma cannot be upserted in bulk. "
                 "Use create_aliasing_rule or AliasingRule.update for this rule."
             )
-        streams = [str(stream_id(s)) for s in _cells(row.get("streams"))]
+        streams = [str(next(stream_ids)) for _ in cells]
         writer.writerow(
             [
                 name,
                 _list_cell(hierarchy),
-                _text(row.get("description")),
+                description,
                 _list_cell(streams),
                 "true" if _truthy(row.get("copy_metadata")) else "false",
             ]
         )
     return out.getvalue().encode("utf-8")
+
+
+def _stream_key(cell: Any) -> Any:
+    """A stream cell as a stream key: digits read from a file are an id, not a name to look up."""
+    return int(cell) if isinstance(cell, str) and cell.isdigit() else cell
 
 
 def _list_cell(values: list[str]) -> str:
@@ -298,4 +329,24 @@ def _truthy(value: Any) -> bool:
 
 
 def _missing(value: Any) -> bool:
-    return value is None or (isinstance(value, float) and value != value)
+    """None, NaN, NaT or pd.NA: an empty cell of a DataFrame."""
+    return value is None or (pd.api.types.is_scalar(value) and bool(pd.isna(value)))
+
+
+def _inferred(text: str) -> bool:
+    """
+    Whether the server would read this cell as something else than this text.
+
+    It parses the file with pandas and its default type inference, which quoting does not switch off.
+    A list cell is kept as text by its trailing comma (see `_list_cell`); a name or description has
+    no such escape.
+    """
+    if not text:
+        return False
+    if text in PANDAS_NA_VALUES or not text.strip() or text.strip().lower() in ("true", "false"):
+        return True
+    try:
+        float(text)
+    except ValueError:
+        return False
+    return True

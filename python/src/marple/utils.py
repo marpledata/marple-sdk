@@ -1,13 +1,15 @@
 from collections.abc import Iterable
 from enum import Enum
+from numbers import Integral
 from pathlib import Path
-from typing import TYPE_CHECKING, Any, Literal, Union
+from typing import TYPE_CHECKING, Any, Literal, Union, overload
 from urllib import parse, request
 
 import pandas as pd
 import pyarrow as pa
 import pyarrow.parquet as pq
 import requests
+from pydantic import BaseModel
 from requests.adapters import HTTPAdapter
 from urllib3.util.retry import Retry
 
@@ -63,26 +65,53 @@ def validate_response(response: requests.Response, failure_message: str, *, chec
     return r_json
 
 
+@overload
+def resolve_stream_id(client: "DBClient", stream: "StreamKey") -> int: ...
+
+
+@overload
+def resolve_stream_id(client: "DBClient", stream: None) -> None: ...
+
+
 def resolve_stream_id(client: "DBClient", stream: "StreamKey | None") -> int | None:
     """The id of a stream given as an id, a name or a `DataStream`. `None` stays `None`: the whole datapool."""
-    if stream is None or isinstance(stream, int):
-        return stream
-    if not isinstance(stream, str):
-        return stream.id
-    streams = validate_response(client.get("/streams"), "Failed to fetch streams")["streams"]
-    for candidate in streams:
-        if candidate["name"].lower() == stream.lower() or str(candidate["id"]) == stream:
-            return candidate["id"]
-    raise ValueError(
-        f"Stream with name or id {stream} not found, available streams: {', '.join(s['name'] for s in streams)}"
-    )
+    return None if stream is None else resolve_stream_ids(client, [stream])[0]
 
 
 def resolve_stream_ids(client: "DBClient", streams: "Iterable[StreamKey] | None") -> list[int]:
-    """The ids of several streams. `None` is no streams, which the server reads as every stream."""
-    if isinstance(streams, (int, str)):
+    """
+    The ids of several streams. `None` is no streams, which the server reads as every stream.
+
+    Streams given by name are looked up in one request, however many there are.
+    """
+    # A DataStream is a pydantic model, which is iterable (over its fields): catch it here too
+    if isinstance(streams, (int, str, BaseModel)):
         raise TypeError("streams must be a list of streams, not a single stream")
-    return [stream_id for s in streams or [] if (stream_id := resolve_stream_id(client, s)) is not None]
+    known: list[dict[str, Any]] | None = None
+    stream_ids: list[int] = []
+    stream: Any  # also what a DataFrame cell holds, beyond the StreamKey types
+    for stream in streams or []:
+        if stream is None:
+            continue
+        if isinstance(stream, str):
+            if known is None:
+                known = validate_response(client.get("/streams"), "Failed to fetch streams")["streams"]
+            stream_ids.append(_find_stream_id(known, stream))
+        # numpy has its own integers, and a DataFrame column of ids with an empty cell holds floats (7.0)
+        elif isinstance(stream, Integral) or (isinstance(stream, float) and stream.is_integer()):
+            stream_ids.append(int(stream))
+        else:
+            stream_ids.append(stream.id)
+    return stream_ids
+
+
+def _find_stream_id(known: list[dict[str, Any]], stream: str) -> int:
+    for candidate in known:
+        if candidate["name"].lower() == stream.lower() or str(candidate["id"]) == stream:
+            return candidate["id"]
+    raise ValueError(
+        f"Stream with name or id {stream} not found, available streams: {', '.join(s['name'] for s in known)}"
+    )
 
 
 def validate_storage_response(response: requests.Response, failure_message: str) -> None:

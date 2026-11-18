@@ -269,7 +269,7 @@ class SignalStats(BaseModel):
                 pass ``None`` for the whole datapool.
             limit: Maximum number of datasets. ``None`` returns all of them.
         """
-        params: dict[str, Any] = _stream_params(self._client, self._scope(stream))
+        params = _stream_params(resolve_stream_id(self._client, self._scope(stream)))
         occurrences: list[SignalOccurrence] = []
         while limit is None or len(occurrences) < limit:
             remaining = DATASETS_PAGE_SIZE if limit is None else limit - len(occurrences)
@@ -319,6 +319,7 @@ class SignalStatsDetail(SignalStats):
     streams: list[SignalStreamStats]
     """The signal per stream, most datasets first."""
 
+    # Repeated for mypy: the pydantic plugin gives each model its own keyword-only __init__
     def __init__(self, client: DBClient, stream_id: int | None = None, **kwargs):
         super().__init__(client, stream_id, **kwargs)
 
@@ -342,6 +343,12 @@ class SignalStatsList(UserList[SignalStats]):
         self.total = len(self.data) if total is None else total
         self.collected_at = collected_at
 
+    def __getitem__(self, index):  # type: ignore[override]
+        # UserList builds a slice from the data alone: carry the total and collection time over
+        if isinstance(index, slice):
+            return SignalStatsList(self.data[index], self.total, self.collected_at)
+        return self.data[index]
+
     def to_dataframe(self) -> pd.DataFrame:
         """One row per signal, one column per statistic, plus ``priority``."""
         return pd.DataFrame([{**s.model_dump(), "priority": s.priority} for s in self.data])
@@ -362,7 +369,7 @@ def search(
 ) -> SignalStatsList:
     """See :meth:`marple.db.DB.search_signals`."""
     stream_id = resolve_stream_id(client, stream)
-    params: dict[str, Any] = _search_params(stream_id, query, sort, descending)
+    params = _search_params(stream_id, query, sort, descending)
     result = SignalStatsList()
     while limit is None or len(result) < limit:
         remaining = SEARCH_PAGE_SIZE if limit is None else limit - len(result)
@@ -383,7 +390,7 @@ def get(client: DBClient, signal: SignalKey, *, stream: StreamKey | None = None)
     """See :meth:`marple.db.DB.get_signal_stats`."""
     stream_id = resolve_stream_id(client, stream)
     signal_id = resolve_signal_id(client, signal)
-    r = client.get(f"{_base(client)}/{signal_id}", params=_stream_params(client, stream_id))
+    r = client.get(f"{_base(client)}/{signal_id}", params=_stream_params(stream_id))
     if r.status_code == 404:
         scope = "the datapool" if stream_id is None else f"stream {stream_id}"
         raise ValueError(f"No signal stats for signal {_label(signal)} in {scope}")
@@ -394,7 +401,7 @@ def get_summary(
     client: DBClient, query: str | None = None, *, stream: StreamKey | None = None
 ) -> SignalStatsSummary:
     """See :meth:`marple.db.DB.get_signal_stats_summary`."""
-    params = _stream_params(client, stream)
+    params = _stream_params(resolve_stream_id(client, stream))
     if query:
         params["q"] = query
     r = client.get(f"{_base(client)}/summary", params=params)
@@ -432,7 +439,7 @@ def set_priority(
     stream: StreamKey | None = None,
 ) -> SignalPriorityResult:
     """See :meth:`marple.db.DB.set_signal_priority`."""
-    params = _stream_params(client, stream)
+    params = _stream_params(resolve_stream_id(client, stream))
     keys = [signals] if isinstance(signals, (int, str, SignalStats)) else list(signals)
     signal_ids = [resolve_signal_id(client, key) for key in keys]
     priority = "high" if high else "default"
@@ -455,7 +462,7 @@ def import_priority(
 ) -> SignalPriorityImportResult:
     """See :meth:`marple.db.DB.import_signal_priority`."""
     csv_path = Path(csv_path)
-    params = _stream_params(client, stream)
+    params = _stream_params(resolve_stream_id(client, stream))
     with open(csv_path, "rb") as f:
         r = client.post(
             f"{_base(client)}/priority/import", params=params, files={"file": (csv_path.name, f, "text/csv")}
@@ -481,8 +488,7 @@ def _base(client: DBClient) -> str:
     return f"/datapool/{client.datapool}/signal-stats"
 
 
-def _stream_params(client: DBClient, stream: StreamKey | None) -> dict[str, Any]:
-    stream_id = resolve_stream_id(client, stream)
+def _stream_params(stream_id: int | None) -> dict[str, Any]:
     return {} if stream_id is None else {"stream_id": stream_id}
 
 
@@ -493,9 +499,7 @@ def _search_params(
         sort = SignalSort(sort)
     except ValueError:
         raise ValueError(f"Cannot sort signals on {sort!r}. Choose from: {', '.join(SignalSort)}") from None
-    params: dict[str, Any] = {"sort": sort.value, "descending": descending}
-    if stream_id is not None:
-        params["stream_id"] = stream_id
+    params = {"sort": sort.value, "descending": descending, **_stream_params(stream_id)}
     if query:
         params["q"] = query
     return params

@@ -25,13 +25,18 @@ def ok(body: Any, status_code: int = 200) -> SimpleNamespace:
     return SimpleNamespace(status_code=status_code, json=lambda: body, text=str(body))
 
 
+def require_signal_stats_api(db: DB) -> None:
+    """Skip unless the server has the 3.14 signal stats endpoints."""
+    if db.client.get(f"/datapool/{db.client.datapool}/signal-stats/summary").status_code in (404, 405):
+        pytest.skip("Signal stats API not available on this Marple DB deployment (needs 3.14)")
+
+
 def require_admin_api(db: DB) -> None:
-    """Skip unless the server has the 3.14 admin endpoints and the token may use them. Changes nothing."""
+    """Skip unless the server has the 3.14 endpoints and the token may use the admin ones. Changes nothing."""
+    require_signal_stats_api(db)
     r = db.client.post(
         f"/datapool/{db.client.datapool}/signal-stats/priority", json={"signal_ids": [], "priority": "default"}
     )
-    if r.status_code in (404, 405):
-        pytest.skip("Signal stats API not available on this Marple DB deployment (needs 3.14)")
     if r.status_code == 403:
         pytest.skip("MDB_TOKEN is not an admin token; skipping admin-only test")
 

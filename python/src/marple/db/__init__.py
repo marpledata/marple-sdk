@@ -411,7 +411,7 @@ class DB:
             RuntimeError: If the statistics of the datapool are still being collected.
         """
         return signal_stats.search(
-            self.client, query, stream=self._stream_id(stream), sort=sort, descending=descending, limit=limit
+            self.client, query, stream=stream, sort=sort, descending=descending, limit=limit
         )
 
     def get_signal_stats(
@@ -427,7 +427,7 @@ class DB:
         Raises:
             ValueError: If the signal does not exist, or has no datasets in this scope.
         """
-        return signal_stats.get(self.client, signal, stream=self._stream_id(stream))
+        return signal_stats.get(self.client, signal, stream=stream)
 
     def get_signal_stats_summary(
         self, query: str | None = None, *, stream: StreamKey | None = None
@@ -439,7 +439,7 @@ class DB:
             query: Search text as for :meth:`search_signals`: the totals of the signals it finds.
             stream: Only this stream. ``None`` covers the whole datapool.
         """
-        return signal_stats.get_summary(self.client, query, stream=self._stream_id(stream))
+        return signal_stats.get_summary(self.client, query, stream=stream)
 
     def export_signal_stats(
         self,
@@ -466,9 +466,7 @@ class DB:
         Returns:
             The path of the file written.
         """
-        return signal_stats.export(
-            self.client, path, query, stream=self._stream_id(stream), sort=sort, descending=descending
-        )
+        return signal_stats.export(self.client, path, query, stream=stream, sort=sort, descending=descending)
 
     # Signal priority #
 
@@ -494,7 +492,7 @@ class DB:
             high: ``True`` for high priority, ``False`` for the default priority.
             stream: Only in this stream. ``None`` sets it in every stream that has the signal.
         """
-        return signal_stats.set_priority(self.client, signals, high, stream=self._stream_id(stream))
+        return signal_stats.set_priority(self.client, signals, high, stream=stream)
 
     def import_signal_priority(
         self, csv_path: str | Path, *, stream: StreamKey | None = None
@@ -513,7 +511,7 @@ class DB:
             csv_path: The CSV file.
             stream: Only in this stream. ``None`` sets it in every stream that has the signals.
         """
-        return signal_stats.import_priority(self.client, csv_path, stream=self._stream_id(stream))
+        return signal_stats.import_priority(self.client, csv_path, stream=stream)
 
     # Aliasing rules #
 
@@ -530,7 +528,7 @@ class DB:
             stream: Only rules that apply to this stream: it is in the rule's ``streams``, or
                 the rule applies to every stream.
         """
-        return aliasing.list_rules(self.client, signal, stream=self._stream_id(stream))
+        return aliasing.list_rules(self.client, signal, stream=stream)
 
     def create_aliasing_rule(
         self,
@@ -563,7 +561,7 @@ class DB:
             signal_name,
             signal_hierarchy,
             description=description,
-            streams=self._stream_ids(streams),
+            streams=streams,
             copy_metadata=copy_metadata,
         )
 
@@ -633,7 +631,7 @@ class DB:
             name,
             description=description,
             allowed_values=allowed_values,
-            streams=self._stream_ids(streams),
+            streams=streams,
             mandatory=mandatory,
             user_input=user_input,
         )
@@ -660,7 +658,7 @@ class DB:
             effective: For a stream: if ``False``, its own rules, with ``None`` for every rule it
                 inherits. If ``True``, the rules that apply, with inherited values filled in.
         """
-        return lifecycle.get_rules(self.client, self._stream_id(stream), effective=effective)
+        return lifecycle.get_rules(self.client, stream, effective=effective)
 
     def list_lifecycle_rules(self) -> list[LifecycleRules]:
         """The workspace rules first, then the rules of every stream that has rules of its own."""
@@ -692,23 +690,12 @@ class DB:
         """
         return lifecycle.set_rules(
             self.client,
-            self._stream_id(stream),
+            stream,
             hot_to_cold_days=hot_to_cold_days,
             cold_to_archive_days=cold_to_archive_days,
             realtime_to_cold_days=realtime_to_cold_days,
             retain_prio_signals=retain_prio_signals,
         )
-
-    def _stream_id(self, stream: StreamKey | None) -> int | None:
-        """A stream given as id, name or DataStream, resolved through the stream cache. None stays None."""
-        if stream is None or isinstance(stream, DataStream):
-            return None if stream is None else stream.id
-        return self._get_stream_id(stream)
-
-    def _stream_ids(self, streams: Iterable[StreamKey] | None) -> list[int]:
-        if isinstance(streams, (int, str, DataStream)):
-            raise TypeError("streams must be a list of streams, not a single stream")
-        return [stream_id for s in streams or [] if (stream_id := self._stream_id(s)) is not None]
 
     def _refresh_stream_cache(self, r: Response | None = None) -> None:
         if r is None:

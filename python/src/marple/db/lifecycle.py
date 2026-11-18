@@ -14,8 +14,6 @@ from marple.utils import (
     validate_response,
 )
 
-RULES = ("hot_to_cold_days", "cold_to_archive_days", "realtime_to_cold_days", "retain_prio_signals")
-
 
 class LifecycleRules(BaseModel):
     """
@@ -38,8 +36,7 @@ class LifecycleRules(BaseModel):
 
     def resolve(self, workspace: "LifecycleRules") -> "LifecycleRules":
         """These rules with every inherited (``None``) value filled in from the workspace rules."""
-        own = {rule: value for rule in RULES if (value := getattr(self, rule)) is not None}
-        return workspace.model_copy(update={"stream_id": self.stream_id, **own})
+        return workspace.model_copy(update={"stream_id": self.stream_id, **self.model_dump(exclude_none=True)})
 
 
 def list_rules(client: DBClient) -> list[LifecycleRules]:
@@ -78,7 +75,7 @@ def set_rules(
     payload: dict[str, Any] = get_rules(client, stream).model_dump()
     payload.update({rule: value for rule, value in changes.items() if not isinstance(value, Omitted)})
     if payload["stream_id"] is None:
-        unset = [rule for rule in RULES if payload[rule] is None]
+        unset = [rule for rule in changes if payload[rule] is None]
         if unset:
             raise ValueError(
                 f"Workspace lifecycle rules cannot be None ({', '.join(unset)}): there is nothing to inherit from. "

@@ -7,7 +7,7 @@ import pandas as pd
 import pytest
 
 from marple import DB
-from marple.db import AliasingRule, Signal, aliasing
+from marple.db import AliasingRule, DataStream, Signal, aliasing
 from support import (
     ingest_dataset,
     isolated_stream,
@@ -203,6 +203,48 @@ def test_upsert_aliasing_rules_accepts_dataframe_file_and_rules(tmp_path) -> Non
     frame.to_csv(path, index=False)
     aliasing.upsert_rules(client, path)
     assert _uploaded_rows(client) == expected
+
+
+def test_upsert_aliasing_rules_accepts_dataframe_with_empty_cells() -> None:
+    client = _client()
+    client.post.return_value = ok([])
+    # A missing stream turns the column into floats; pd.NA is the empty cell of the nullable dtypes
+    frame = pd.DataFrame(
+        {
+            "signal_name": ["car.speed", "car.rpm"],
+            "signal_hierarchy": [["VehSpd"], ["EngRpm"]],
+            "description": [pd.NA, "Engine speed"],
+            "streams": [7, None],
+            "copy_metadata": pd.array([True, pd.NA], dtype="boolean"),
+        }
+    )
+    aliasing.upsert_rules(client, frame)
+    rows = _uploaded_rows(client)
+    assert [row["streams"] for row in rows] == ["7,", ""]
+    assert [row["description"] for row in rows] == ["", "Engine speed"]
+    assert [row["copy_metadata"] for row in rows] == ["true", "false"]
+
+
+@pytest.mark.parametrize("text", ["NA", "null", "None", "1234", "1e5", "true", " "])
+def test_upsert_aliasing_rules_rejects_cells_the_server_would_retype(text: str) -> None:
+    client = _client()
+    with pytest.raises(ValueError, match="cannot be upserted in bulk"):
+        aliasing.upsert_rules(
+            client, [{"signal_name": "car.speed", "signal_hierarchy": ["a"], "description": text}]
+        )
+    if text.strip():
+        with pytest.raises(ValueError, match="cannot be upserted in bulk"):
+            aliasing.upsert_rules(client, [{"signal_name": text, "signal_hierarchy": ["a"]}])
+    client.post.assert_not_called()
+
+
+def test_streams_must_be_a_list() -> None:
+    client = _client()
+    stream = MagicMock(spec=DataStream)
+    with pytest.raises(TypeError, match="not a single stream"):
+        aliasing.create_rule(client, "car.speed", ["VehSpd"], streams=stream)
+    with pytest.raises(TypeError, match="not a single stream"):
+        aliasing.create_rule(client, "car.speed", ["VehSpd"], streams="Car")
 
 
 def test_upsert_aliasing_rules_rejects_bad_rows() -> None:
