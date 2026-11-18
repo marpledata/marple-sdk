@@ -99,6 +99,8 @@ class SignalOccurrence(BaseModel):
     value_mean: float | None
     count: int | None
     """Datapoints."""
+    count_text: int | None = None
+    """Datapoints with text: with no numbers either, the signal is text. ``None`` when the server does not report it."""
     duration: int | None
     """Recorded duration, ns."""
     frequency: float | None
@@ -144,8 +146,13 @@ class SignalStatsSummary(BaseModel):
     """Signals imported under an original name other than their own (renamed by an import rule)."""
     n_constant: int
     n_text: int
+    n_empty: int | None = None
+    """
+    Signals with datapoints whose values are all null: no number and no text.
+    ``None`` when the server does not report it.
+    """
     n_priority: int
-    """Signals with high import priority in every stream that has them."""
+    """Signals with high import priority in at least one stream that has them."""
     n_priority_partial: int
     n_single: int
     """Signals in exactly one dataset."""

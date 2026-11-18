@@ -392,7 +392,7 @@ class DB:
         Fields: ``name``, ``unit``, ``datasets``, ``coverage``, ``points``, ``cold``, ``archived``,
         ``frequency``, ``min``, ``max``, ``heated``, ``heated_last``, ``units``, ``sources``,
         ``imported_first``, ``imported_last``, ``rank``. Flags (``is:<flag>``): ``constant``,
-        ``text``, ``hot``, ``heated``, ``archived``, ``conflict``, ``alias``, ``priority``,
+        ``text``, ``empty``, ``hot``, ``heated``, ``archived``, ``conflict``, ``alias``, ``priority``,
         ``partial``, ``default``, ``oneoff``.
 
         Args:
